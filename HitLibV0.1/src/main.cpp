@@ -1,20 +1,5 @@
 #include "main.h"
-
-/**
- * A callback function for LLEMU's center button.
- *
- * When this callback is fired, it will toggle line 2 of the LCD text between
- * "I was pressed!" and nothing.
- */
-void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
-}
+#include "hitapi.hpp"
 
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -22,11 +7,35 @@ void on_center_button() {
  * All other competition modes are blocked by initialize; it is recommended
  * to keep execution time for this mode under a few seconds.
  */
+
+hitlib::LedStrand strand1(1, 63);
+hitlib::LedStrand strand2(2, 63);
+hitlib::LedManager ledManager;
+
+
+leds::MatchProfile myProfiles[] {
+	leds::profiles::classic,
+	leds::profiles::modern,
+	leds::profiles::showy
+};
+
+
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::set_text(1, "Hello PROS User!");
 
-	pros::lcd::register_btn1_cb(on_center_button);
+	ledManager.addStrand(&strand1);
+	ledManager.addStrand(&strand2);
+	ledManager.initialize(20);
+	leds::init(ledManager, myProfiles, 3);
+	leds::setAlliance(leds::Alliance::BLUE);
+	leds::setMatchProfile(1);
+	pros::Task ledTask([]() {
+		while (true) {
+			leds::periodic();
+			pros::delay(20);
+		}
+	});
 }
 
 /**
@@ -45,7 +54,9 @@ void disabled() {}
  * This task will exit when the robot is enabled and autonomous or opcontrol
  * starts.
  */
-void competition_initialize() {}
+void competition_initialize() {
+	leds::setAlliance(leds::Alliance::BLUE);
+}
 
 /**
  * Runs the user autonomous code. This function will be started in its own task
@@ -80,15 +91,34 @@ void opcontrol() {
 
 
 	while (true) {
-		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-		                 (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-		                 (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);  // Prints status of the emulated screen LCDs
 
 		// Arcade control scheme
 		int dir = master.get_analog(ANALOG_LEFT_Y);    // Gets amount forward/backward from left joystick
 		int turn = master.get_analog(ANALOG_RIGHT_X);  // Gets the turn left/right from right joystick
 		left_mg.move(dir - turn);                      // Sets left motor voltage
 		right_mg.move(dir + turn);                     // Sets right motor voltage
+
+		// Scraper button — holds override on while pressed
+        if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+            leds::setScraperOverride(true);
+        } else {
+            leds::setScraperOverride(false);
+        }
+
+        // Scoring button — 1.5 second flash on press
+        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+            leds::playScoringFx();
+        }
+
+        // Endgame button — triggers endgame sequence
+        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
+            leds::startEndgame();
+        } else if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+			leds::stopEndgame();
+		}
+
+
+
 		pros::delay(20);                               // Run for 20 ms then update
 	}
 }
