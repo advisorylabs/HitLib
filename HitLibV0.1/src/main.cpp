@@ -1,5 +1,5 @@
 #include "main.h"
-#include "hitapi.hpp"
+#include "hitlib/hitapi.hpp"
 
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -8,8 +8,8 @@
  * to keep execution time for this mode under a few seconds.
  */
 
-hitlib::LedStrand strand1(1, 63);
-hitlib::LedStrand strand2(2, 63);
+hitlib::LedStrand strand1(6, 63);
+hitlib::LedStrand strand2(7, 63);
 hitlib::LedManager ledManager;
 
 

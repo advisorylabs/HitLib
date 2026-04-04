@@ -241,8 +241,8 @@ void LedManager::updaterTask() {
             s->dynamicUpdate();
             s->bufferShift();
             s->flush();
+            pros::delay(refreshRateMs);
         }
-        pros::delay(refreshRateMs);
     }
 }
 
