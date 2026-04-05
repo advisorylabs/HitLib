@@ -1,5 +1,6 @@
 #include "main.h"
 #include "hitlib/hitapi.hpp"
+#include "hitlib/profiles/classic.hpp"
 
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -10,32 +11,26 @@
 
 hitlib::LedStrand strand1(5, 63);
 hitlib::LedStrand strand2(6, 63);
-hitlib::LedManager ledManager;
 
-
-leds::MatchProfile myProfiles[] {
-	leds::profiles::classic,
-	leds::profiles::modern,
-	leds::profiles::showy
-};
-
+hitlib::LedGroup group1;
+hitlib::LedGroup group2;
 
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::set_text(1, "Hello PROS User!");
 
-	ledManager.addStrand(&strand1);
-	ledManager.addStrand(&strand2);
-	ledManager.initialize(10);
-	leds::init(ledManager, myProfiles, 3);
-	leds::setAlliance(leds::Alliance::BLUE);
-	leds::setMatchProfile(1);
-	pros::Task ledTask([]() {
-		while (true) {
-			leds::periodic();
-			pros::delay(20);
-		}
-	});
+	group1.add(&strand1);
+	group2.add(&strand2);
+	group1.init(20);
+	group2.init(20);
+
+	group1.attachProfile(&hitlib::profiles::classic);
+	group2.attachProfile(&hitlib::profiles::modern);
+	group1.activateMode(1);
+	group2.activateMode(1);
+
+	group1.start();
+	group2.start();
 }
 
 /**
@@ -55,7 +50,8 @@ void disabled() {}
  * starts.
  */
 void competition_initialize() {
-	leds::setAlliance(leds::Alliance::BLUE);
+	group1.activateMode(3);
+	group2.activateMode(3);
 }
 
 /**
@@ -98,25 +94,25 @@ void opcontrol() {
 		left_mg.move(dir - turn);                      // Sets left motor voltage
 		right_mg.move(dir + turn);                     // Sets right motor voltage
 
-		// Scraper button — holds override on while pressed
-        if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-            leds::setScraperOverride(true);
-        } else {
-            leds::setScraperOverride(false);
-        }
-
-        // Scoring button — 1.5 second flash on press
-        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
-            leds::playScoringFx();
-        }
-
-        // Endgame button — triggers endgame sequence
-        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
-            leds::startEndgame();
-        } else if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-			leds::stopEndgame();
+		if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+   			group1.activateModeTimed(0, 7500);
+			group2.activateModeTimed(0, 7500);
 		}
+        // Scoring — 1.5s timed override (priority 70 beats idle/alliance)
+        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+            group1.activateModeTimed(4, 1500); // Scoring = index 3
+			group2.activateModeTimed(4, 1500);
+        }
 
+        // Endgame — persistent highest priority
+        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
+            group1.activateMode(6); // Endgame = index 5
+			group2.activateMode(6);
+        }
+        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+            group1.deactivateMode(6);
+			group2.deactivateMode(6);
+        }
 
 
 		pros::delay(20);                               // Run for 20 ms then update

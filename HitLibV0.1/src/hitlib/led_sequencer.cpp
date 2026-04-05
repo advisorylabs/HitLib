@@ -1,35 +1,26 @@
 #include "hitlib/led_sequencer.hpp"
+#include "hitlib/led_strand.hpp"
 #include "pros/rtos.hpp"
 
-namespace leds {
+namespace hitlib {
 
-Sequencer::Sequencer(const Phase* p, uint8_t count)
-    : phases(p), phaseCount(count) {}
-
-void Sequencer::start() {
-    running = true;
+void Sequencer::start(LedStrand& strand) {
+    running      = true;
     currentPhase = 0;
-    phaseStartTime = pros::millis();
-    phases[0].startFn();
+    phaseStartMs = pros::millis();
+    phases[0].startFn(strand);
 }
 
-void Sequencer::stop() {
-    running = false;
-}
+void Sequencer::stop() { running = false; }
 
-bool Sequencer::isRunning() const {
-    return running;
-}
-
-void Sequencer::update() {
+void Sequencer::update(LedStrand& strand) {
     if (!running) return;
-
     uint32_t now = pros::millis();
-    if (now - phaseStartTime >= phases[currentPhase].durationMs) {
+    if (now - phaseStartMs >= phases[currentPhase].durationMs) {
         currentPhase = (currentPhase + 1) % phaseCount;
-        phaseStartTime = now;
-        phases[currentPhase].startFn();
+        phaseStartMs = now;
+        phases[currentPhase].startFn(strand);
     }
 }
 
-}
+} // namespace hitlib

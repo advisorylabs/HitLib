@@ -1,6 +1,5 @@
 #pragma once
-
-#include "classic.hpp"
-#include "led_driver.hpp"
-#include "led_sequencer.hpp"
-#include "led_state.hpp"
+#include "hitlib/led_strand.hpp"
+#include "hitlib/led_group.hpp"
+#include "hitlib/led_profile.hpp"
+#include "hitlib/led_sequencer.hpp"
