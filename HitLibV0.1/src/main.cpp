@@ -8,8 +8,8 @@
  * to keep execution time for this mode under a few seconds.
  */
 
-hitlib::LedStrand strand1(6, 63);
-hitlib::LedStrand strand2(7, 63);
+hitlib::LedStrand strand1(5, 63);
+hitlib::LedStrand strand2(6, 63);
 hitlib::LedManager ledManager;
 
 
@@ -26,7 +26,7 @@ void initialize() {
 
 	ledManager.addStrand(&strand1);
 	ledManager.addStrand(&strand2);
-	ledManager.initialize(20);
+	ledManager.initialize(10);
 	leds::init(ledManager, myProfiles, 3);
 	leds::setAlliance(leds::Alliance::BLUE);
 	leds::setMatchProfile(1);
