@@ -12,12 +12,13 @@ public:
     // Add a strand. Must be called before init().
     void add(LedStrand* strand);
 
-    // Calls init() on every strand (hardware + per-strand task).
+    // Calls init() on every strand then starts the group refresh task.
     void init(uint32_t refreshMs = 20);
+    void start();
 
-    void start(); // Call after all groups are initialized
-
-    // ---- Raw fan-out ----
+    // ----------------------------------------------------------------
+    // Base animation fan-out
+    // ----------------------------------------------------------------
     void off();
     void setColor(uint32_t color);
     void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000);
@@ -26,7 +27,24 @@ public:
     void rainbow(uint8_t speed);
     void setBrightness(uint8_t pct);
 
-    // ---- Profile fan-out ----
+    // ----------------------------------------------------------------
+    // Overlay animation fan-out
+    // ----------------------------------------------------------------
+    void overlaySetColor(uint32_t color);
+    void overlayPulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000);
+    void overlayFlash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
+    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed);
+    void overlayRainbow(uint8_t speed);
+
+    // ----------------------------------------------------------------
+    // centerSpread fan-out
+    // ----------------------------------------------------------------
+    void centerSpread(uint8_t tickInterval = 8);
+    void centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers, uint8_t tickInterval = 8);
+
+    // ----------------------------------------------------------------
+    // Profile fan-out
+    // ----------------------------------------------------------------
     void attachProfile(const Profile* profile);
     void detachProfile();
     void activateMode(uint8_t modeIdx);

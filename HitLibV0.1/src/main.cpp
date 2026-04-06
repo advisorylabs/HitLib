@@ -13,24 +13,27 @@ hitlib::LedStrand strand1(5, 63);
 hitlib::LedStrand strand2(6, 63);
 
 hitlib::LedGroup group1;
-hitlib::LedGroup group2;
+//hitlib::LedGroup group2;
 
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::set_text(1, "Hello PROS User!");
 
 	group1.add(&strand1);
-	group2.add(&strand2);
+	group1.add(&strand2);
+	//group2.add(&strand2);
 	group1.init(20);
-	group2.init(20);
+	//group2.init(20);
 
-	group1.attachProfile(&hitlib::profiles::classic);
-	group2.attachProfile(&hitlib::profiles::modern);
-	group1.activateMode(1);
-	group2.activateMode(1);
+	//group1.attachProfile(&hitlib::profiles::classic);
+	//group2.attachProfile(&hitlib::profiles::modern);
+	//group1.activateMode(1);
+	//group2.activateMode(1);
 
 	group1.start();
-	group2.start();
+	//group2.start();
+
+	group1.pulse(0xFFFFFF, 8, 1, 0xFF0000);
 }
 
 /**
@@ -50,8 +53,8 @@ void disabled() {}
  * starts.
  */
 void competition_initialize() {
-	group1.activateMode(3);
-	group2.activateMode(3);
+	//group1.activateMode(3);
+	//group2.activateMode(3);
 }
 
 /**
@@ -82,37 +85,31 @@ void autonomous() {}
  */
 void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
-	pros::MotorGroup left_mg({1, -2, 3});    // Creates a motor group with forwards ports 1 & 3 and reversed port 2
-	pros::MotorGroup right_mg({-4, 5, -6});  // Creates a motor group with forwards port 5 and reversed ports 4 & 6
 
 
 	while (true) {
 
-		// Arcade control scheme
-		int dir = master.get_analog(ANALOG_LEFT_Y);    // Gets amount forward/backward from left joystick
-		int turn = master.get_analog(ANALOG_RIGHT_X);  // Gets the turn left/right from right joystick
-		left_mg.move(dir - turn);                      // Sets left motor voltage
-		right_mg.move(dir + turn);                     // Sets right motor voltage
 
-		if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-   			group1.activateModeTimed(0, 7500);
-			group2.activateModeTimed(0, 7500);
-		}
-        // Scoring — 1.5s timed override (priority 70 beats idle/alliance)
-        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
-            group1.activateModeTimed(4, 1500); // Scoring = index 3
-			group2.activateModeTimed(4, 1500);
-        }
 
-        // Endgame — persistent highest priority
-        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
-            group1.activateMode(6); // Endgame = index 5
-			group2.activateMode(6);
-        }
-        if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-            group1.deactivateMode(6);
-			group2.deactivateMode(6);
-        }
+		// if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
+   		// 	group1.activateModeTimed(0, 7500);
+		// 	//group2.activateModeTimed(0, 7500);
+		// }
+        // // Scoring — 1.5s timed override (priority 70 beats idle/alliance)
+        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+        //     group1.activateModeTimed(4, 1500); // Scoring = index 3
+		// 	//group2.activateModeTimed(4, 1500);
+        // }
+
+        // // Endgame — persistent highest priority
+        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
+        //     group1.activateMode(6); // Endgame = index 5
+		// 	//group2.activateMode(6);
+        // }
+        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
+        //     group1.deactivateMode(6);
+		// 	//group2.deactivateMode(6);
+        // }
 
 
 		pros::delay(20);                               // Run for 20 ms then update

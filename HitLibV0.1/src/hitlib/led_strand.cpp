@@ -4,7 +4,6 @@
 
 static pros::Mutex s_adiMutex;
 
-
 namespace hitlib {
 
 // ================================================================
@@ -20,7 +19,7 @@ LedStrand::LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_
 
 void LedStrand::init() {
     if (led) return;
-    s_adiMutex.take(TIMEOUT_MAX);   // no task may write while we configure
+    s_adiMutex.take(TIMEOUT_MAX);
     if (smartPort != 0) {
         pros::adi::ext_adi_port_pair_t pair = {smartPort, adiPort};
         led = new pros::adi::Led(pair, length);
@@ -28,7 +27,8 @@ void LedStrand::init() {
         led = new pros::adi::Led(adiPort, length);
     }
     buffer.assign(length, 0x000000);
-    pros::delay(50);                // settle inside the lock — nothing else touches ADI
+    overlayBuffer.assign(length, 0x000000);
+    pros::delay(50);
     s_adiMutex.give();
 }
 
@@ -56,14 +56,23 @@ void LedStrand::tick() {
     }
 
     mutex.take(TIMEOUT_MAX);
+
+    // Advance base animation
     if (animMode == AnimMode::SHIFT && shiftStep != 0)
         shiftBuffer();
+    else if (animMode == AnimMode::CENTER_SPREAD)
+        advanceCenterSpread();
+
+    // Advance overlay animation independently
+    if (overlayAnimMode == AnimMode::SHIFT && overlayShiftStep != 0)
+        shiftOverlayBuffer();
+
     flushBuffer();
     mutex.give();
 }
 
 // ================================================================
-// Raw animation API (locked)
+// Base animation API (public, locked)
 // ================================================================
 
 void LedStrand::off()                                                    { mutex.take(TIMEOUT_MAX); setColorNL(0x000000);         mutex.give(); }
@@ -75,7 +84,7 @@ void LedStrand::rainbow(uint8_t sp)                                      { mutex
 void LedStrand::setBrightness(uint8_t pct)                               { brightnessPct = (pct > 100) ? 100 : pct; }
 
 // ================================================================
-// Internal animation implementations (no lock)
+// Base animation implementations (no lock)
 // ================================================================
 
 void LedStrand::setColorNL(uint32_t color) {
@@ -93,8 +102,6 @@ void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t 
 }
 
 void LedStrand::flashNL(uint32_t color, uint8_t speed, uint32_t bg) {
-    // Buffer: [color x length][bg x length*speed]. Shifts by full length each tick
-    // → on for 1 tick, off for speed ticks.
     animMode  = AnimMode::SHIFT;
     shiftStep = length;
     buffer.clear();
@@ -112,6 +119,150 @@ void LedStrand::rainbowNL(uint8_t speed) {
     animMode  = AnimMode::SHIFT;
     shiftStep = speed;
     buffer    = genRainbow(length);
+}
+
+// ================================================================
+// Overlay animation API (public, locked)
+// ================================================================
+
+void LedStrand::overlaySetColor(uint32_t c)                                   { mutex.take(TIMEOUT_MAX); overlaySetColorNL(c);         mutex.give(); }
+void LedStrand::overlayPulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg) { mutex.take(TIMEOUT_MAX); overlayPulseNL(c, r, sp, bg); mutex.give(); }
+void LedStrand::overlayFlash(uint32_t c, uint8_t sp, uint32_t bg)            { mutex.take(TIMEOUT_MAX); overlayFlashNL(c, sp, bg);    mutex.give(); }
+void LedStrand::overlayFlow(uint32_t c1, uint32_t c2, uint8_t sp)            { mutex.take(TIMEOUT_MAX); overlayFlowNL(c1, c2, sp);    mutex.give(); }
+void LedStrand::overlayRainbow(uint8_t sp)                                    { mutex.take(TIMEOUT_MAX); overlayRainbowNL(sp);         mutex.give(); }
+
+// ================================================================
+// Overlay animation implementations (no lock)
+// ================================================================
+
+void LedStrand::overlaySetColorNL(uint32_t color) {
+    overlayAnimMode  = AnimMode::STATIC;
+    overlayShiftStep = 0;
+    overlayBuffer.assign(length, color);
+}
+
+void LedStrand::overlayPulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg) {
+    overlayAnimMode  = AnimMode::SHIFT;
+    overlayShiftStep = speed;
+    overlayBuffer.assign(length, bg);
+    uint8_t safe = std::min(runLen, length);
+    for (uint8_t i = 0; i < safe; i++) overlayBuffer[i] = color;
+}
+
+void LedStrand::overlayFlashNL(uint32_t color, uint8_t speed, uint32_t bg) {
+    overlayAnimMode  = AnimMode::SHIFT;
+    overlayShiftStep = length;
+    overlayBuffer.clear();
+    overlayBuffer.insert(overlayBuffer.end(), length, color);
+    overlayBuffer.insert(overlayBuffer.end(), (size_t)length * speed, bg);
+}
+
+void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed) {
+    overlayAnimMode  = AnimMode::SHIFT;
+    overlayShiftStep = speed;
+    overlayBuffer    = genGradient(c1, c2, length);
+}
+
+void LedStrand::overlayRainbowNL(uint8_t speed) {
+    overlayAnimMode  = AnimMode::SHIFT;
+    overlayShiftStep = speed;
+    overlayBuffer    = genRainbow(length);
+}
+
+void LedStrand::shiftOverlayBuffer() {
+    if (overlayBuffer.empty() || overlayShiftStep <= 0) return;
+    size_t step = (size_t)overlayShiftStep % overlayBuffer.size();
+    if (step) std::rotate(overlayBuffer.rbegin(), overlayBuffer.rbegin() + (ptrdiff_t)step, overlayBuffer.rend());
+}
+
+// ================================================================
+// centerSpread
+// ================================================================
+
+void LedStrand::centerSpread(uint8_t tickInterval) {
+    mutex.take(TIMEOUT_MAX);
+    animMode           = AnimMode::CENTER_SPREAD;
+    spreadPos          = 0;
+    spreadTickCounter  = 0;
+    spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
+    spreadLayers.clear();
+    spreadLayerIdx     = 0;
+    spreadMask.assign(length, false);
+    mutex.give();
+}
+
+void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval) {
+    if (layers.size() < 2) return;
+    mutex.take(TIMEOUT_MAX);
+    animMode           = AnimMode::CENTER_SPREAD;
+    spreadLayers       = layers;
+    spreadLayerIdx     = 0;
+    spreadPos          = 0;
+    spreadTickCounter  = 0;
+    spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
+    spreadMask.assign(length, false);
+
+    // Base buffer = layer[0], overlay buffer = layer[1]
+    spreadLayers[0](*this);
+    overlayBuffer = buffer;              // capture what layer[0] wrote
+    spreadLayers[1](*this);              // layer[1] writes into buffer
+    std::swap(buffer, overlayBuffer);    // buffer = layer[0] (base), overlayBuffer = layer[1] (spreading)
+
+    mutex.give();
+}
+
+void LedStrand::advanceCenterSpread() {
+    // Throttle: only step every spreadTickInterval ticks
+    if (++spreadTickCounter < spreadTickInterval) return;
+    spreadTickCounter = 0;
+
+    int center    = length / 2;
+    int maxSpread = std::max(center, (int)length - 1 - center);
+
+    // Update mask: pixels within spreadPos of center show overlay
+    for (int i = 0; i < (int)length; i++)
+        spreadMask[i] = (std::abs(i - center) <= (int)spreadPos);
+
+    spreadPos++;
+
+    // Spread complete — overlay now fully covers the strip
+    if ((int)spreadPos > maxSpread) {
+        spreadPos = 0;
+        spreadMask.assign(length, false);
+
+        // Promote overlay to base
+        std::swap(buffer, overlayBuffer);
+        overlayAnimMode  = overlayAnimMode; // overlay keeps its own animation state
+        overlayShiftStep = overlayShiftStep;
+
+        // If stacked, set up the next layer into overlayBuffer
+        if (!spreadLayers.empty()) {
+            spreadLayerIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
+            uint8_t nextIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
+
+            // Save base buffer, run next setup fn, capture result into overlayBuffer, restore base
+            std::vector<uint32_t> savedBase = buffer;
+            AnimMode              savedMode = animMode;
+            int                   savedStep = shiftStep;
+
+            spreadLayers[nextIdx](*this);
+            overlayBuffer    = buffer;
+            overlayAnimMode  = animMode;
+            overlayShiftStep = shiftStep;
+
+            buffer    = savedBase;
+            animMode  = savedMode;
+            shiftStep = savedStep;
+        }
+    }
+}
+
+// ================================================================
+// Composite
+// ================================================================
+
+uint32_t LedStrand::composite(uint32_t base, uint32_t overlay, bool useOverlay) const {
+    return useOverlay ? overlay : base;
 }
 
 // ================================================================
@@ -200,12 +351,21 @@ void LedStrand::shiftBuffer() {
 
 void LedStrand::flushBuffer() {
     if (!led || buffer.empty()) return;
-    size_t sz = buffer.size();
+    bool hasMask = (animMode == AnimMode::CENTER_SPREAD && !spreadMask.empty());
+    size_t baseSz    = buffer.size();
+    size_t overlaySz = overlayBuffer.size();
+
     s_adiMutex.take(TIMEOUT_MAX);
-    for (uint8_t i = 0; i < length; i++)
-        led->set_pixel(applyBrightness(buffer[i % sz]), i);
+    for (uint8_t i = 0; i < length; i++) {
+        uint32_t px;
+        if (hasMask && overlaySz > 0)
+            px = composite(buffer[i % baseSz], overlayBuffer[i % overlaySz], spreadMask[i]);
+        else
+            px = buffer[i % baseSz];
+        led->set_pixel(applyBrightness(px), i);
+    }
     led->update();
-    pros::delay(10);                // inside the lock — enforces minimum gap between any two ADI writes
+    pros::delay(10);
     s_adiMutex.give();
 }
 

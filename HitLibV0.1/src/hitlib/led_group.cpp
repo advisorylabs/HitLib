@@ -6,14 +6,12 @@ void LedGroup::add(LedStrand* s) { strands.push_back(s); }
 
 void LedGroup::init(uint32_t refreshMs) {
     this->refreshMs = refreshMs;
-    for (auto* s : strands) s->init(); // s_adiMutex serializes + settles each one
+    for (auto* s : strands) s->init();
 }
 
 void LedGroup::groupTask() {
     while (true) {
-        for (auto* s : strands) {
-            s->tick();
-        }
+        for (auto* s : strands) s->tick();
         pros::delay(refreshMs);
     }
 }
@@ -22,6 +20,10 @@ void LedGroup::start() {
     pros::Task([this]() { groupTask(); });
 }
 
+// ----------------------------------------------------------------
+// Base animation fan-out
+// ----------------------------------------------------------------
+
 void LedGroup::off()                                                   { for (auto* s : strands) s->off(); }
 void LedGroup::setColor(uint32_t c)                                    { for (auto* s : strands) s->setColor(c); }
 void LedGroup::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg)  { for (auto* s : strands) s->pulse(c, r, sp, bg); }
@@ -29,6 +31,32 @@ void LedGroup::flash(uint32_t c, uint8_t sp, uint32_t bg)             { for (aut
 void LedGroup::flow(uint32_t c1, uint32_t c2, uint8_t sp)             { for (auto* s : strands) s->flow(c1, c2, sp); }
 void LedGroup::rainbow(uint8_t sp)                                     { for (auto* s : strands) s->rainbow(sp); }
 void LedGroup::setBrightness(uint8_t p)                                { for (auto* s : strands) s->setBrightness(p); }
+
+// ----------------------------------------------------------------
+// Overlay animation fan-out
+// ----------------------------------------------------------------
+
+void LedGroup::overlaySetColor(uint32_t c)                                   { for (auto* s : strands) s->overlaySetColor(c); }
+void LedGroup::overlayPulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg) { for (auto* s : strands) s->overlayPulse(c, r, sp, bg); }
+void LedGroup::overlayFlash(uint32_t c, uint8_t sp, uint32_t bg)            { for (auto* s : strands) s->overlayFlash(c, sp, bg); }
+void LedGroup::overlayFlow(uint32_t c1, uint32_t c2, uint8_t sp)            { for (auto* s : strands) s->overlayFlow(c1, c2, sp); }
+void LedGroup::overlayRainbow(uint8_t sp)                                    { for (auto* s : strands) s->overlayRainbow(sp); }
+
+// ----------------------------------------------------------------
+// centerSpread fan-out
+// ----------------------------------------------------------------
+
+void LedGroup::centerSpread(uint8_t tickInterval) {
+    for (auto* s : strands) s->centerSpread(tickInterval);
+}
+
+void LedGroup::centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers, uint8_t tickInterval) {
+    for (auto* s : strands) s->centerSpreadStacked(layers, tickInterval);
+}
+
+// ----------------------------------------------------------------
+// Profile fan-out
+// ----------------------------------------------------------------
 
 void LedGroup::attachProfile(const Profile* p)              { for (auto* s : strands) s->attachProfile(p); }
 void LedGroup::detachProfile()                              { for (auto* s : strands) s->detachProfile(); }
