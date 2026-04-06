@@ -86,41 +86,46 @@ void autonomous() {}
 
 static void layerBlue    (hitlib::LedStrand& s) { s.setColor(0xFFFFFF); }
 static void layerRainbow (hitlib::LedStrand& s) { s.rainbow(1); }
+static void layerGreen    (hitlib::LedStrand& s) { s.setColor(0x00FF00); }
 
 static void phase1(hitlib::LedStrand& s) {
-	s.centerSpreadStacked({layerBlue, layerRainbow}, 1);
+	s.centerSpreadStacked({layerBlue, layerRainbow, layerGreen}, 1);
 }
+
+static void phase2(hitlib::LedStrand& s) {
+	s.centerSpreadStacked({layerBlue, layerRainbow, layerGreen}, 1, true);
+}
+
+static void phase3(hitlib::LedStrand& s) {
+	s.centerSpreadBounceStacked({layerBlue, layerRainbow, layerGreen}, 1);
+}
+
+static void phase4(hitlib::LedStrand& s) {
+	s.centerSpreadBounceStacked({layerBlue, layerRainbow, layerGreen}, 1, true);
+}
+
 
 void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
-
-	for (size_t i = 0; i < group1.size(); i++)
-    phase1(*group1[i]);
 	
 	while (true) {
 
-
-
-		// if (master.get_digital(pros::E_CONTROLLER_DIGITAL_L1)) {
-   		// 	group1.activateModeTimed(0, 7500);
-		// 	//group2.activateModeTimed(0, 7500);
-		// }
-        // // Scoring — 1.5s timed override (priority 70 beats idle/alliance)
-        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
-        //     group1.activateModeTimed(4, 1500); // Scoring = index 3
-		// 	//group2.activateModeTimed(4, 1500);
-        // }
-
-        // // Endgame — persistent highest priority
-        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) {
-        //     group1.activateMode(6); // Endgame = index 5
-		// 	//group2.activateMode(6);
-        // }
-        // if (master.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) {
-        //     group1.deactivateMode(6);
-		// 	//group2.deactivateMode(6);
-        // }
-
+		if (master.get_digital_new_press(DIGITAL_X)) {
+			for (size_t i = 0; i < group1.size(); i++)
+    		phase1(*group1[i]);
+		}
+		if (master.get_digital_new_press(DIGITAL_A)) {
+			for (size_t i = 0; i < group1.size(); i++)
+    		phase2(*group1[i]);
+		}
+		if (master.get_digital_new_press(DIGITAL_B)) {
+			for (size_t i = 0; i < group1.size(); i++)
+    		phase3(*group1[i]);
+		}
+		if (master.get_digital_new_press(DIGITAL_Y)) {
+			for (size_t i = 0; i < group1.size(); i++)
+    		phase4(*group1[i]);
+		}
 
 		pros::delay(20);                               // Run for 20 ms then update
 	}

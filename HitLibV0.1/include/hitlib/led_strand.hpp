@@ -49,18 +49,28 @@ public:
     // centerSpread() to begin masking.
     //
     // tickInterval: ticks between each pixel step (higher = slower).
-    // At refreshMs=20, tickInterval=10 → 200ms/pixel, ~6s for 63 LEDs.
+    // At refreshMs=20, tickInterval=10 -> 200ms/pixel, ~6s for 63 LEDs.
+    //
+    // invert: when true, reveals from the edges inward instead of center outward.
     //
     // centerSpreadStacked(): cycles through a list of AnimSetupFn callbacks.
     // Each fn is called with the strand when it becomes the next spreading layer.
+    //
+    // centerSpreadBounce(): expands the mask fully, then contracts it back before
+    // swapping layers. Gives a "wipe in, wipe out, next" rhythm.
     // ----------------------------------------------------------------
     using AnimSetupFn = void (*)(LedStrand&);
 
-    void centerSpread(uint8_t tickInterval = 8);
-    void centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval = 8);
+    void centerSpread(uint8_t tickInterval = 8, bool invert = false);
+    void centerSpreadStacked(const std::vector<AnimSetupFn>& layers,
+                             uint8_t tickInterval = 8, bool invert = false);
+
+    void centerSpreadBounce(uint8_t tickInterval = 8, bool invert = false);
+    void centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers,
+                                   uint8_t tickInterval = 8, bool invert = false);
 
     // ----------------------------------------------------------------
-    // Brightness (0–100)
+    // Brightness (0-100)
     // Applied at flush time; does not modify the buffer.
     // ----------------------------------------------------------------
     void    setBrightness(uint8_t pct);
@@ -112,6 +122,9 @@ private:
     uint8_t                  spreadTickCounter  = 0;
     std::vector<AnimSetupFn> spreadLayers;
     uint8_t                  spreadLayerIdx     = 0;
+    bool                     spreadInvert       = false;
+    bool                     spreadBounce       = false;
+    bool                     spreadReturning    = false;
 
     // ----------------------------------------------------------------
     // Brightness
@@ -151,6 +164,7 @@ private:
 
     // centerSpread
     void advanceCenterSpread();
+    void doLayerSwap();     // shared by spread and bounce on completion
 
     // Buffer helpers
     void     shiftBuffer();

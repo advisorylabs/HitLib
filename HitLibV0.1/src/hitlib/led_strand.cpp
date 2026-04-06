@@ -185,7 +185,7 @@ void LedStrand::shiftOverlayBuffer() {
 // centerSpread
 // ================================================================
 
-void LedStrand::centerSpread(uint8_t tickInterval) {
+void LedStrand::centerSpread(uint8_t tickInterval, bool invert) {
     mutex.take(TIMEOUT_MAX);
     animMode           = AnimMode::CENTER_SPREAD;
     spreadPos          = 0;
@@ -194,10 +194,14 @@ void LedStrand::centerSpread(uint8_t tickInterval) {
     spreadLayers.clear();
     spreadLayerIdx     = 0;
     spreadMask.assign(length, false);
+    spreadInvert       = invert;
+    spreadBounce       = false;
+    spreadReturning    = false;
     mutex.give();
 }
 
-void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval) {
+void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers,
+                                    uint8_t tickInterval, bool invert) {
     if (layers.size() < 2) return;
 
     // Call layer fns outside the lock — they take it themselves
@@ -226,8 +230,102 @@ void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint
     spreadTickCounter  = 0;
     spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
     spreadMask.assign(length, false);
+    spreadInvert       = invert;
+    spreadBounce       = false;
+    spreadReturning    = false;
     mutex.give();
 }
+
+void LedStrand::centerSpreadBounce(uint8_t tickInterval, bool invert) {
+    mutex.take(TIMEOUT_MAX);
+    animMode           = AnimMode::CENTER_SPREAD;
+    spreadPos          = 0;
+    spreadTickCounter  = 0;
+    spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
+    spreadLayers.clear();
+    spreadLayerIdx     = 0;
+    spreadMask.assign(length, false);
+    spreadInvert       = invert;
+    spreadBounce       = true;
+    spreadReturning    = false;
+    mutex.give();
+}
+
+void LedStrand::centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers,
+                                          uint8_t tickInterval, bool invert) {
+    if (layers.size() < 2) return;
+
+    // Call layer fns outside the lock — they take it themselves
+    layers[0](*this);
+
+    mutex.take(TIMEOUT_MAX);
+    std::vector<uint32_t> savedBuffer = buffer;
+    AnimMode              savedMode   = animMode;
+    int                   savedStep   = shiftStep;
+    mutex.give();
+
+    layers[1](*this);
+
+    mutex.take(TIMEOUT_MAX);
+    overlayBuffer    = buffer;
+    overlayAnimMode  = animMode;
+    overlayShiftStep = shiftStep;
+
+    buffer    = savedBuffer;
+    animMode  = AnimMode::CENTER_SPREAD;
+    shiftStep = savedStep;
+
+    spreadLayers       = layers;
+    spreadLayerIdx     = 0;
+    spreadPos          = 0;
+    spreadTickCounter  = 0;
+    spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
+    spreadMask.assign(length, false);
+    spreadInvert       = invert;
+    spreadBounce       = true;
+    spreadReturning    = false;
+    mutex.give();
+}
+
+// ================================================================
+// doLayerSwap — shared by spread and bounce on completion (no lock)
+// ================================================================
+
+void LedStrand::doLayerSwap() {
+    // Promote overlay → base, then set up the next overlay layer
+    std::swap(buffer, overlayBuffer);
+    std::swap(animMode, overlayAnimMode);
+    std::swap(shiftStep, overlayShiftStep);
+    animMode = AnimMode::CENTER_SPREAD;
+
+    if (!spreadLayers.empty()) {
+        spreadLayerIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
+        uint8_t nextIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
+
+        std::vector<uint32_t> savedBase     = buffer;
+        AnimMode              savedAnimMode  = animMode;
+        int                   savedShiftStep = shiftStep;
+
+        // Release lock — setup fn takes it itself
+        mutex.give();
+        spreadLayers[nextIdx](*this);
+        mutex.take(TIMEOUT_MAX);
+
+        // Capture what the fn wrote as the new overlay
+        overlayBuffer    = buffer;
+        overlayAnimMode  = animMode;
+        overlayShiftStep = shiftStep;
+
+        // Restore the base
+        buffer    = savedBase;
+        animMode  = AnimMode::CENTER_SPREAD;
+        shiftStep = savedShiftStep;
+    }
+}
+
+// ================================================================
+// advanceCenterSpread (no lock — called from tick() under mutex)
+// ================================================================
 
 void LedStrand::advanceCenterSpread() {
     if (++spreadTickCounter < spreadTickInterval) return;
@@ -236,46 +334,41 @@ void LedStrand::advanceCenterSpread() {
     int center    = length / 2;
     int maxSpread = std::max(center, (int)length - 1 - center);
 
-    for (int i = 0; i < (int)length; i++)
-        spreadMask[i] = (std::abs(i - center) <= (int)spreadPos);
-
-    spreadPos++;
-
-    if ((int)spreadPos > maxSpread) {
-        spreadPos = 0;
-        spreadMask.assign(length, false);
-
-        // Promote overlay to base — swap buffers and animation state
-        std::swap(buffer, overlayBuffer);
-        std::swap(animMode, overlayAnimMode);
-        std::swap(shiftStep, overlayShiftStep);
-        animMode = AnimMode::CENTER_SPREAD;
-
-        if (!spreadLayers.empty()) {
-            spreadLayerIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
-            uint8_t nextIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
-
-            // Save the live base before calling the setup fn —
-            // the fn writes into buffer directly which would flash on screen
-            std::vector<uint32_t> savedBase     = buffer;
-            AnimMode              savedAnimMode  = animMode;
-            int                   savedShiftStep = shiftStep;
-
-            // Release lock — setup fn takes it itself
-            mutex.give();
-            spreadLayers[nextIdx](*this);
-            mutex.take(TIMEOUT_MAX);
-
-            // Capture what the fn wrote as the new overlay
-            overlayBuffer    = buffer;
-            overlayAnimMode  = animMode;
-            overlayShiftStep = shiftStep;
-
-            // Restore the base
-            buffer    = savedBase;
-            animMode  = AnimMode::CENTER_SPREAD;
-            shiftStep = savedShiftStep;
+    // ---- Advance position ----
+    if (spreadBounce && spreadReturning) {
+        if (spreadPos > 0) --spreadPos;
+        if (spreadPos == 0) {
+            // Fully contracted — commit the layer swap and restart
+            spreadReturning = false;
+            spreadMask.assign(length, false);
+            doLayerSwap();
+            return;
         }
+    } else {
+        ++spreadPos;
+    }
+
+    // ---- Compute mask ----
+    for (int i = 0; i < (int)length; i++) {
+        if (!spreadInvert)
+            // Normal: center → edges — reveal where distance ≤ spreadPos
+            spreadMask[i] = (std::abs(i - center) <= (int)spreadPos);
+        else
+            // Inverted: edges → center — reveal where distance ≥ (maxSpread − spreadPos)
+            spreadMask[i] = (std::abs(i - center) >= (maxSpread - (int)spreadPos));
+    }
+
+    // ---- Phase transition ----
+    if (!spreadBounce) {
+        // Standard: swap as soon as fully expanded
+        if ((int)spreadPos > maxSpread) {
+            spreadPos = 0;
+            spreadMask.assign(length, false);
+            doLayerSwap();
+        }
+    } else if (!spreadReturning && (int)spreadPos >= maxSpread) {
+        // Bounce: begin contracting instead of swapping immediately
+        spreadReturning = true;
     }
 }
 

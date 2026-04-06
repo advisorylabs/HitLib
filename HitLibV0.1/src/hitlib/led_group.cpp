@@ -46,12 +46,22 @@ void LedGroup::overlayRainbow(uint8_t sp)                                    { f
 // centerSpread fan-out
 // ----------------------------------------------------------------
 
-void LedGroup::centerSpread(uint8_t tickInterval) {
-    for (auto* s : strands) s->centerSpread(tickInterval);
+void LedGroup::centerSpread(uint8_t tickInterval, bool invert) {
+    for (auto* s : strands) s->centerSpread(tickInterval, invert);
 }
 
-void LedGroup::centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers, uint8_t tickInterval) {
-    for (auto* s : strands) s->centerSpreadStacked(layers, tickInterval);
+void LedGroup::centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
+                                   uint8_t tickInterval, bool invert) {
+    for (auto* s : strands) s->centerSpreadStacked(layers, tickInterval, invert);
+}
+
+void LedGroup::centerSpreadBounce(uint8_t tickInterval, bool invert) {
+    for (auto* s : strands) s->centerSpreadBounce(tickInterval, invert);
+}
+
+void LedGroup::centerSpreadBounceStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
+                                         uint8_t tickInterval, bool invert) {
+    for (auto* s : strands) s->centerSpreadBounceStacked(layers, tickInterval, invert);
 }
 
 // ----------------------------------------------------------------

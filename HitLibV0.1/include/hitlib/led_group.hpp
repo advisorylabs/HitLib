@@ -38,9 +38,18 @@ public:
 
     // ----------------------------------------------------------------
     // centerSpread fan-out
+    //
+    // invert: when true, reveals from the edges inward instead of center outward.
+    //
+    // centerSpreadBounce: expands fully then contracts before swapping layers.
     // ----------------------------------------------------------------
-    void centerSpread(uint8_t tickInterval = 8);
-    void centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers, uint8_t tickInterval = 8);
+    void centerSpread(uint8_t tickInterval = 8, bool invert = false);
+    void centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
+                             uint8_t tickInterval = 8, bool invert = false);
+
+    void centerSpreadBounce(uint8_t tickInterval = 8, bool invert = false);
+    void centerSpreadBounceStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
+                                   uint8_t tickInterval = 8, bool invert = false);
 
     // ----------------------------------------------------------------
     // Profile fan-out
