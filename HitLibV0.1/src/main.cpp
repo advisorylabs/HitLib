@@ -83,10 +83,20 @@ void autonomous() {}
  * operator control task will be stopped. Re-enabling the robot will restart the
  * task, not resume it from where it left off.
  */
+
+static void layerBlue    (hitlib::LedStrand& s) { s.setColor(0xFFFFFF); }
+static void layerRainbow (hitlib::LedStrand& s) { s.rainbow(1); }
+
+static void phase1(hitlib::LedStrand& s) {
+	s.centerSpreadStacked({layerBlue, layerRainbow}, 1);
+}
+
 void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
 
-
+	for (size_t i = 0; i < group1.size(); i++)
+    phase1(*group1[i]);
+	
 	while (true) {
 
 

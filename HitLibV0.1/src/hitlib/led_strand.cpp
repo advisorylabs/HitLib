@@ -57,11 +57,17 @@ void LedStrand::tick() {
 
     mutex.take(TIMEOUT_MAX);
 
-    // Advance base animation
-    if (animMode == AnimMode::SHIFT && shiftStep != 0)
-        shiftBuffer();
-    else if (animMode == AnimMode::CENTER_SPREAD)
+    // Advance base animation.
+    // When CENTER_SPREAD is active we also shift the base if it has a shift
+    // animation — otherwise a shifting base (e.g. rainbow) would freeze once
+    // it becomes the current layer.
+    if (animMode == AnimMode::CENTER_SPREAD) {
         advanceCenterSpread();
+        if (shiftStep != 0)
+            shiftBuffer();
+    } else if (animMode == AnimMode::SHIFT && shiftStep != 0) {
+        shiftBuffer();
+    }
 
     // Advance overlay animation independently
     if (overlayAnimMode == AnimMode::SHIFT && overlayShiftStep != 0)
@@ -193,66 +199,82 @@ void LedStrand::centerSpread(uint8_t tickInterval) {
 
 void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval) {
     if (layers.size() < 2) return;
+
+    // Call layer fns outside the lock — they take it themselves
+    layers[0](*this);
+
     mutex.take(TIMEOUT_MAX);
-    animMode           = AnimMode::CENTER_SPREAD;
+    std::vector<uint32_t> savedBuffer = buffer;
+    AnimMode              savedMode   = animMode;
+    int                   savedStep   = shiftStep;
+    mutex.give();
+
+    layers[1](*this);
+
+    mutex.take(TIMEOUT_MAX);
+    overlayBuffer    = buffer;
+    overlayAnimMode  = animMode;
+    overlayShiftStep = shiftStep;
+
+    buffer    = savedBuffer;
+    animMode  = AnimMode::CENTER_SPREAD;
+    shiftStep = savedStep;
+
     spreadLayers       = layers;
     spreadLayerIdx     = 0;
     spreadPos          = 0;
     spreadTickCounter  = 0;
     spreadTickInterval = (tickInterval < 1) ? 1 : tickInterval;
     spreadMask.assign(length, false);
-
-    // Base buffer = layer[0], overlay buffer = layer[1]
-    spreadLayers[0](*this);
-    overlayBuffer = buffer;              // capture what layer[0] wrote
-    spreadLayers[1](*this);              // layer[1] writes into buffer
-    std::swap(buffer, overlayBuffer);    // buffer = layer[0] (base), overlayBuffer = layer[1] (spreading)
-
     mutex.give();
 }
 
 void LedStrand::advanceCenterSpread() {
-    // Throttle: only step every spreadTickInterval ticks
     if (++spreadTickCounter < spreadTickInterval) return;
     spreadTickCounter = 0;
 
     int center    = length / 2;
     int maxSpread = std::max(center, (int)length - 1 - center);
 
-    // Update mask: pixels within spreadPos of center show overlay
     for (int i = 0; i < (int)length; i++)
         spreadMask[i] = (std::abs(i - center) <= (int)spreadPos);
 
     spreadPos++;
 
-    // Spread complete — overlay now fully covers the strip
     if ((int)spreadPos > maxSpread) {
         spreadPos = 0;
         spreadMask.assign(length, false);
 
-        // Promote overlay to base
+        // Promote overlay to base — swap buffers and animation state
         std::swap(buffer, overlayBuffer);
-        overlayAnimMode  = overlayAnimMode; // overlay keeps its own animation state
-        overlayShiftStep = overlayShiftStep;
+        std::swap(animMode, overlayAnimMode);
+        std::swap(shiftStep, overlayShiftStep);
+        animMode = AnimMode::CENTER_SPREAD;
 
-        // If stacked, set up the next layer into overlayBuffer
         if (!spreadLayers.empty()) {
             spreadLayerIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
             uint8_t nextIdx = (spreadLayerIdx + 1) % (uint8_t)spreadLayers.size();
 
-            // Save base buffer, run next setup fn, capture result into overlayBuffer, restore base
-            std::vector<uint32_t> savedBase = buffer;
-            AnimMode              savedMode = animMode;
-            int                   savedStep = shiftStep;
+            // Save the live base before calling the setup fn —
+            // the fn writes into buffer directly which would flash on screen
+            std::vector<uint32_t> savedBase     = buffer;
+            AnimMode              savedAnimMode  = animMode;
+            int                   savedShiftStep = shiftStep;
 
+            // Release lock — setup fn takes it itself
+            mutex.give();
             spreadLayers[nextIdx](*this);
+            mutex.take(TIMEOUT_MAX);
+
+            // Capture what the fn wrote as the new overlay
             overlayBuffer    = buffer;
             overlayAnimMode  = animMode;
             overlayShiftStep = shiftStep;
 
+            // Restore the base
             buffer    = savedBase;
-            animMode  = savedMode;
-            shiftStep = savedStep;
+            animMode  = AnimMode::CENTER_SPREAD;
+            shiftStep = savedShiftStep;
         }
     }
 }
@@ -351,7 +373,7 @@ void LedStrand::shiftBuffer() {
 
 void LedStrand::flushBuffer() {
     if (!led || buffer.empty()) return;
-    bool hasMask = (animMode == AnimMode::CENTER_SPREAD && !spreadMask.empty());
+    bool   hasMask   = (animMode == AnimMode::CENTER_SPREAD && !spreadMask.empty());
     size_t baseSz    = buffer.size();
     size_t overlaySz = overlayBuffer.size();
 
