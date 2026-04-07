@@ -21,10 +21,14 @@ public:
     // ----------------------------------------------------------------
     void off();
     void setColor(uint32_t color);
-    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000);
+    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000, bool invert = false);
     void flash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
-    void flow(uint32_t color1, uint32_t color2, uint8_t speed);
+    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
     void rainbow(uint8_t speed);
+    void twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
+                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+    void bitscroll(const std::vector<LedStrand::BitScrollSegment>& segments, uint8_t speed,
+                   bool invert = false, uint32_t bgColor = 0x000000);
     void setBrightness(uint8_t pct);
 
     // ----------------------------------------------------------------

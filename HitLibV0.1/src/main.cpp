@@ -9,8 +9,9 @@
  * to keep execution time for this mode under a few seconds.
  */
 
-hitlib::LedStrand strand1(5, 63);
-hitlib::LedStrand strand2(6, 63);
+hitlib::LedStrand strand1(6, 63);
+hitlib::LedStrand strand2(7, 63);
+hitlib::LedStrand strand3(8, 63);
 
 hitlib::LedGroup group1;
 //hitlib::LedGroup group2;
@@ -21,8 +22,9 @@ void initialize() {
 
 	group1.add(&strand1);
 	group1.add(&strand2);
+	group1.add(&strand3);
 	//group2.add(&strand2);
-	group1.init(20);
+	group1.init(0);
 	//group2.init(20);
 
 	//group1.attachProfile(&hitlib::profiles::classic);
@@ -33,7 +35,6 @@ void initialize() {
 	group1.start();
 	//group2.start();
 
-	group1.pulse(0xFFFFFF, 8, 1, 0xFF0000);
 }
 
 /**
@@ -88,45 +89,15 @@ static void layerBlue    (hitlib::LedStrand& s) { s.setColor(0xFFFFFF); }
 static void layerRainbow (hitlib::LedStrand& s) { s.rainbow(1); }
 static void layerGreen    (hitlib::LedStrand& s) { s.setColor(0x00FF00); }
 
-static void phase1(hitlib::LedStrand& s) {
-	s.centerSpreadStacked({layerBlue, layerRainbow, layerGreen}, 1);
-}
-
-static void phase2(hitlib::LedStrand& s) {
-	s.centerSpreadStacked({layerBlue, layerRainbow, layerGreen}, 1, true);
-}
-
-static void phase3(hitlib::LedStrand& s) {
-	s.centerSpreadBounceStacked({layerBlue, layerRainbow, layerGreen}, 1);
-}
-
-static void phase4(hitlib::LedStrand& s) {
-	s.centerSpreadBounceStacked({layerBlue, layerRainbow, layerGreen}, 1, true);
-}
 
 
 void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
-	
-	while (true) {
 
-		if (master.get_digital_new_press(DIGITAL_X)) {
-			for (size_t i = 0; i < group1.size(); i++)
-    		phase1(*group1[i]);
-		}
-		if (master.get_digital_new_press(DIGITAL_A)) {
-			for (size_t i = 0; i < group1.size(); i++)
-    		phase2(*group1[i]);
-		}
-		if (master.get_digital_new_press(DIGITAL_B)) {
-			for (size_t i = 0; i < group1.size(); i++)
-    		phase3(*group1[i]);
-		}
-		if (master.get_digital_new_press(DIGITAL_Y)) {
-			for (size_t i = 0; i < group1.size(); i++)
-    		phase4(*group1[i]);
-		}
-
-		pros::delay(20);                               // Run for 20 ms then update
-	}
+	group1.bitscroll({{0xFF0000, 4},
+	                    	    {0x000000, 4},
+							    {0x0000FF, 4},
+							    {0x000000, 4},
+							    {0x00FF00, 4},
+							    {0x000000, 4}}, 2);
 }

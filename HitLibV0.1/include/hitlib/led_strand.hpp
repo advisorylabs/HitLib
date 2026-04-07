@@ -9,6 +9,11 @@ namespace hitlib {
 
 class LedStrand {
 public:
+    struct BitScrollSegment {
+        uint32_t color;
+        uint8_t  width;
+    };
+
     // Standard ADI port
     LedStrand(uint8_t adiPort, uint8_t length, uint32_t refreshMs = 20);
     // ADI expander (smart port + adi port)
@@ -26,10 +31,14 @@ public:
     // ----------------------------------------------------------------
     void off();
     void setColor(uint32_t color);
-    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000);
+    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000, bool invert = false);
     void flash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
-    void flow(uint32_t color1, uint32_t color2, uint8_t speed);
+    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
     void rainbow(uint8_t speed);
+    void twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
+                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+    void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+                   bool invert = false, uint32_t bgColor = 0x000000);
 
     // ----------------------------------------------------------------
     // Overlay animation API
@@ -100,11 +109,19 @@ private:
     // ----------------------------------------------------------------
     // Base buffer
     // ----------------------------------------------------------------
-    enum class AnimMode : uint8_t { STATIC, SHIFT, CENTER_SPREAD };
+    enum class AnimMode : uint8_t { STATIC, SHIFT, CENTER_SPREAD, TWINKLE };
 
     AnimMode              animMode  = AnimMode::STATIC;
     int                   shiftStep = 0;
     std::vector<uint32_t> buffer;
+    std::vector<uint8_t>  twinkleLevel;
+    std::vector<uint8_t>  twinkleTarget;
+    std::vector<uint8_t>  twinkleColorIdx;
+    std::vector<uint8_t>  twinkleHoldTicks;
+    std::vector<uint32_t> twinklePalette;
+    uint8_t               twinkleDensityPct = 30;
+    uint8_t               twinkleFadeStep   = 16;
+    uint32_t              twinkleBgColor    = 0x000000;
 
     // ----------------------------------------------------------------
     // Overlay buffer
@@ -150,10 +167,13 @@ private:
 
     // Base
     void setColorNL(uint32_t color);
-    void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg);
+    void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert);
     void flashNL(uint32_t color, uint8_t speed, uint32_t bg);
-    void flowNL(uint32_t c1, uint32_t c2, uint8_t speed);
+    void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert);
     void rainbowNL(uint8_t speed);
+    void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
+                   uint8_t fadeStep, uint32_t bgColor);
+    void bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed, bool invert, uint32_t bgColor);
 
     // Overlay
     void overlaySetColorNL(uint32_t color);
@@ -164,6 +184,7 @@ private:
 
     // centerSpread
     void advanceCenterSpread();
+    void advanceTwinkle();
     void doLayerSwap();     // shared by spread and bounce on completion
 
     // Buffer helpers

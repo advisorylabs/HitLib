@@ -1,6 +1,7 @@
 #include "hitlib/led_strand.hpp"
 #include "pros/rtos.hpp"
 #include <algorithm>
+#include <cstdlib>
 
 static pros::Mutex s_adiMutex;
 
@@ -65,6 +66,8 @@ void LedStrand::tick() {
         advanceCenterSpread();
         if (shiftStep != 0)
             shiftBuffer();
+    } else if (animMode == AnimMode::TWINKLE) {
+        advanceTwinkle();
     } else if (animMode == AnimMode::SHIFT && shiftStep != 0) {
         shiftBuffer();
     }
@@ -83,10 +86,22 @@ void LedStrand::tick() {
 
 void LedStrand::off()                                                    { mutex.take(TIMEOUT_MAX); setColorNL(0x000000);         mutex.give(); }
 void LedStrand::setColor(uint32_t c)                                     { mutex.take(TIMEOUT_MAX); setColorNL(c);               mutex.give(); }
-void LedStrand::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg)   { mutex.take(TIMEOUT_MAX); pulseNL(c, r, sp, bg);       mutex.give(); }
+void LedStrand::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg, bool invert) { mutex.take(TIMEOUT_MAX); pulseNL(c, r, sp, bg, invert); mutex.give(); }
 void LedStrand::flash(uint32_t c, uint8_t sp, uint32_t bg)              { mutex.take(TIMEOUT_MAX); flashNL(c, sp, bg);          mutex.give(); }
-void LedStrand::flow(uint32_t c1, uint32_t c2, uint8_t sp)              { mutex.take(TIMEOUT_MAX); flowNL(c1, c2, sp);          mutex.give(); }
+void LedStrand::flow(uint32_t c1, uint32_t c2, uint8_t sp, bool invert) { mutex.take(TIMEOUT_MAX); flowNL(c1, c2, sp, invert);  mutex.give(); }
 void LedStrand::rainbow(uint8_t sp)                                      { mutex.take(TIMEOUT_MAX); rainbowNL(sp);               mutex.give(); }
+void LedStrand::twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct,
+                        uint8_t fadeStep, uint32_t bgColor) {
+    mutex.take(TIMEOUT_MAX);
+    twinkleNL(colors, densityPct, fadeStep, bgColor);
+    mutex.give();
+}
+void LedStrand::bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+                          bool invert, uint32_t bgColor) {
+    mutex.take(TIMEOUT_MAX);
+    bitscrollNL(segments, speed, invert, bgColor);
+    mutex.give();
+}
 void LedStrand::setBrightness(uint8_t pct)                               { brightnessPct = (pct > 100) ? 100 : pct; }
 
 // ================================================================
@@ -99,9 +114,9 @@ void LedStrand::setColorNL(uint32_t color) {
     buffer.assign(length, color);
 }
 
-void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg) {
+void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert) {
     animMode  = AnimMode::SHIFT;
-    shiftStep = speed;
+    shiftStep = invert ? -(int)speed : (int)speed;
     buffer.assign(length, bg);
     uint8_t safe = std::min(runLen, length);
     for (uint8_t i = 0; i < safe; i++) buffer[i] = color;
@@ -115,9 +130,9 @@ void LedStrand::flashNL(uint32_t color, uint8_t speed, uint32_t bg) {
     buffer.insert(buffer.end(), (size_t)length * speed, bg);
 }
 
-void LedStrand::flowNL(uint32_t c1, uint32_t c2, uint8_t speed) {
+void LedStrand::flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert) {
     animMode  = AnimMode::SHIFT;
-    shiftStep = speed;
+    shiftStep = invert ? -(int)speed : (int)speed;
     buffer    = genGradient(c1, c2, length);
 }
 
@@ -125,6 +140,53 @@ void LedStrand::rainbowNL(uint8_t speed) {
     animMode  = AnimMode::SHIFT;
     shiftStep = speed;
     buffer    = genRainbow(length);
+}
+
+void LedStrand::twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
+                          uint8_t fadeStep, uint32_t bgColor) {
+    animMode = AnimMode::TWINKLE;
+    shiftStep = 0;
+    twinklePalette = colors;
+    if (twinklePalette.empty())
+        twinklePalette.push_back(0xFFFFFF);
+
+    twinkleDensityPct = (densityPct > 100) ? 100 : densityPct;
+    twinkleFadeStep   = (fadeStep == 0) ? 1 : fadeStep;
+    twinkleBgColor    = bgColor;
+
+    buffer.assign(length, twinkleBgColor);
+    twinkleLevel.assign(length, 0);
+    twinkleTarget.assign(length, 0);
+    twinkleColorIdx.assign(length, 0);
+    twinkleHoldTicks.assign(length, 0);
+}
+
+void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+                            bool invert, uint32_t bgColor) {
+    animMode = AnimMode::SHIFT;
+    shiftStep = invert ? -(int)speed : (int)speed;
+    buffer.clear();
+
+    if (segments.empty()) {
+        buffer.assign(length, bgColor);
+        return;
+    }
+
+    // Expand the segments repeatedly until the strand is fully covered.
+    // This keeps the scrolling pattern continuous instead of "one pass then bg".
+    size_t segIdx = 0;
+    uint8_t remainingInSeg = (segments[0].width == 0) ? 1 : segments[0].width;
+
+    buffer.reserve(length);
+    for (uint8_t i = 0; i < length; i++) {
+        const auto& seg = segments[segIdx];
+        buffer.push_back(seg.color);
+
+        if (--remainingInSeg == 0) {
+            segIdx = (segIdx + 1) % segments.size();
+            remainingInSeg = (segments[segIdx].width == 0) ? 1 : segments[segIdx].width;
+        }
+    }
 }
 
 // ================================================================
@@ -176,9 +238,13 @@ void LedStrand::overlayRainbowNL(uint8_t speed) {
 }
 
 void LedStrand::shiftOverlayBuffer() {
-    if (overlayBuffer.empty() || overlayShiftStep <= 0) return;
-    size_t step = (size_t)overlayShiftStep % overlayBuffer.size();
-    if (step) std::rotate(overlayBuffer.rbegin(), overlayBuffer.rbegin() + (ptrdiff_t)step, overlayBuffer.rend());
+    if (overlayBuffer.empty() || overlayShiftStep == 0) return;
+    size_t step = (size_t)std::abs(overlayShiftStep) % overlayBuffer.size();
+    if (!step) return;
+    if (overlayShiftStep > 0)
+        std::rotate(overlayBuffer.rbegin(), overlayBuffer.rbegin() + (ptrdiff_t)step, overlayBuffer.rend());
+    else
+        std::rotate(overlayBuffer.begin(), overlayBuffer.begin() + (ptrdiff_t)step, overlayBuffer.end());
 }
 
 // ================================================================
@@ -372,6 +438,84 @@ void LedStrand::advanceCenterSpread() {
     }
 }
 
+void LedStrand::advanceTwinkle() {
+    if (twinkleLevel.size() != length || twinkleTarget.size() != length ||
+        twinkleColorIdx.size() != length || twinkleHoldTicks.size() != length ||
+        twinklePalette.empty()) {
+        return;
+    }
+
+    // Compute current lit cap and count.
+    uint8_t maxLit = (uint8_t)((uint16_t)length * twinkleDensityPct / 100);
+    uint8_t currentLit = 0;
+    for (uint8_t i = 0; i < length; i++) {
+        if (twinkleLevel[i] > 0 || twinkleTarget[i] > 0)
+            ++currentLit;
+    }
+
+    // Step 1: advance existing sparkles (fade in/out, and hold at peak)
+    for (uint8_t i = 0; i < length; i++) {
+        uint8_t lvl  = twinkleLevel[i];
+        uint8_t tgt  = twinkleTarget[i];
+        uint8_t step = twinkleFadeStep;
+
+        if (lvl < tgt) {
+            int next = (int)lvl + (int)step;
+            lvl = (uint8_t)((next > (int)tgt) ? tgt : next);
+        } else if (lvl > tgt) {
+            int next = (int)lvl - (int)step;
+            lvl = (uint8_t)((next < (int)tgt) ? tgt : next);
+        } else if (lvl == 255) {
+            // Hold at peak for a few ticks to break synchronization.
+            if (twinkleHoldTicks[i] > 0) {
+                --twinkleHoldTicks[i];
+            } else {
+                twinkleTarget[i] = 0; // begin fade-out
+            }
+        }
+
+        twinkleLevel[i] = lvl;
+
+        if (lvl == 0) {
+            buffer[i] = twinkleBgColor;
+        } else {
+            uint32_t baseColor = twinklePalette[twinkleColorIdx[i] % twinklePalette.size()];
+            uint32_t r = (((baseColor >> 16) & 0xFF) * lvl) / 255;
+            uint32_t g = (((baseColor >> 8) & 0xFF) * lvl) / 255;
+            uint32_t b = (((baseColor >> 0) & 0xFF) * lvl) / 255;
+            buffer[i] = (r << 16) | (g << 8) | b;
+        }
+    }
+
+    // Step 2: spawn a few new sparkles at random dark pixels (stagger starts).
+    if (maxLit == 0 || currentLit >= maxLit) return;
+
+    // Strongly stagger new sparkles: at most one spawn per tick.
+    uint8_t spawnLimit = 1;
+    uint8_t spawned = 0;
+
+    // Try a bounded number of random picks to find dark pixels.
+    uint16_t tries = (uint16_t)length * 2;
+    while (spawned < spawnLimit && currentLit < maxLit && tries--) {
+        uint8_t idx = (uint8_t)(std::rand() % length);
+        if (twinkleLevel[idx] != 0 || twinkleTarget[idx] != 0) continue;
+
+        // Use densityPct as "sparkle activity" probability; cap still enforces darkness.
+        if ((std::rand() % 100) >= twinkleDensityPct) continue;
+
+        twinkleColorIdx[idx]  = (uint8_t)(std::rand() % twinklePalette.size());
+        twinkleHoldTicks[idx] = (uint8_t)(std::rand() % 6); // 0-5 ticks hold
+
+        // Fully randomize starting brightness to maximize phase offset.
+        uint8_t startLvl = (uint8_t)(std::rand() % 256);
+        twinkleLevel[idx]  = startLvl;
+        twinkleTarget[idx] = 255;
+
+        ++spawned;
+        ++currentLit;
+    }
+}
+
 // ================================================================
 // Composite
 // ================================================================
@@ -459,9 +603,13 @@ void LedStrand::pruneExpired(uint32_t now) {
 // ================================================================
 
 void LedStrand::shiftBuffer() {
-    if (buffer.empty() || shiftStep <= 0) return;
-    size_t step = (size_t)shiftStep % buffer.size();
-    if (step) std::rotate(buffer.rbegin(), buffer.rbegin() + (ptrdiff_t)step, buffer.rend());
+    if (buffer.empty() || shiftStep == 0) return;
+    size_t step = (size_t)std::abs(shiftStep) % buffer.size();
+    if (!step) return;
+    if (shiftStep > 0)
+        std::rotate(buffer.rbegin(), buffer.rbegin() + (ptrdiff_t)step, buffer.rend());
+    else
+        std::rotate(buffer.begin(), buffer.begin() + (ptrdiff_t)step, buffer.end());
 }
 
 void LedStrand::flushBuffer() {
@@ -480,7 +628,8 @@ void LedStrand::flushBuffer() {
         led->set_pixel(applyBrightness(px), i);
     }
     led->update();
-    pros::delay(10);
+    // Give the ADI LED driver some breathing room between updates.
+    pros::delay(12);
     s_adiMutex.give();
 }
 
