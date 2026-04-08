@@ -31,14 +31,24 @@ public:
     // ----------------------------------------------------------------
     void off();
     void setColor(uint32_t color);
-    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000, bool invert = false);
+    void pulse(uint32_t color, uint8_t runLength, uint8_t speed, uint32_t bgColor = 0x000000,
+               bool invert = false, bool bounce = false);
     void flash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
     void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
     void rainbow(uint8_t speed);
     void twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
                  uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
     void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
-                   bool invert = false, uint32_t bgColor = 0x000000);
+                   bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
+                   uint8_t spacing = 0, bool repeating = true);
+
+    // Splice mask: splits the strip into (sections+1) equal bins; masked bins show bgColor,
+    // others show the active animation. sections==0 disables.
+    // invert: swap which bins are masked (e.g. first vs second half when sections==1).
+    // alternating + altPeriodMs: toggles invert every altPeriodMs (e.g. 100 -> every 100ms).
+    void spliceMask(uint8_t sections, bool invert = false, bool alternating = false,
+                    uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000);
+    void clearSpliceMask();
 
     // ----------------------------------------------------------------
     // Overlay animation API
@@ -113,7 +123,23 @@ private:
 
     AnimMode              animMode  = AnimMode::STATIC;
     int                   shiftStep = 0;
+    // 0 = circular shift (flow/rainbow/non-bounce pulse/bitscroll); 1 = pulse bounce; 2 = bitscroll bounce
+    uint8_t               shiftVariant = 0;
     std::vector<uint32_t> buffer;
+
+    // pulse bounce
+    uint8_t  pulseRunLen   = 0;
+    uint32_t pulseColor    = 0;
+    uint32_t pulseBg       = 0;
+    uint8_t  pulseSpeed    = 1;
+    int16_t  pulseOffset   = 0;
+    int8_t   pulseDir      = 1;
+
+    // bitscroll bounce (master pattern one strand long, shifted by bounceScrollPos)
+    std::vector<uint32_t> bitscrollMaster;
+    int16_t               bounceScrollPos = 0;
+    int8_t                bounceScrollDir = 1;
+    uint8_t               bounceSpeed     = 1;
     std::vector<uint8_t>  twinkleLevel;
     std::vector<uint8_t>  twinkleTarget;
     std::vector<uint8_t>  twinkleColorIdx;
@@ -122,6 +148,17 @@ private:
     uint8_t               twinkleDensityPct = 30;
     uint8_t               twinkleFadeStep   = 16;
     uint32_t              twinkleBgColor    = 0x000000;
+
+    // splice mask (applied after centerSpread composite)
+    bool                  spliceActive      = false;
+    uint8_t               spliceSections    = 0;
+    bool                  spliceInvert      = false;
+    bool                  spliceAlternating = false;
+    uint32_t              spliceAltMs       = 100;
+    uint32_t              spliceBgColor       = 0x000000;
+    bool                  spliceAltPhase      = false;
+    uint32_t              spliceLastToggleMs  = 0;
+    std::vector<bool>     spliceShowAnim;
 
     // ----------------------------------------------------------------
     // Overlay buffer
@@ -167,13 +204,14 @@ private:
 
     // Base
     void setColorNL(uint32_t color);
-    void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert);
+    void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert, bool bounce);
     void flashNL(uint32_t color, uint8_t speed, uint32_t bg);
     void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert);
     void rainbowNL(uint8_t speed);
     void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
                    uint8_t fadeStep, uint32_t bgColor);
-    void bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed, bool invert, uint32_t bgColor);
+    void bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed, bool invert, uint32_t bgColor,
+                     bool bounce, uint8_t spacing, bool repeating);
 
     // Overlay
     void overlaySetColorNL(uint32_t color);
@@ -185,6 +223,11 @@ private:
     // centerSpread
     void advanceCenterSpread();
     void advanceTwinkle();
+    void advancePulseBounce();
+    void advanceBitscrollBounce();
+    void fillBitscrollFromMaster();
+    void advanceSpliceAlternating(uint32_t nowMs);
+    void rebuildSpliceMask();
     void doLayerSwap();     // shared by spread and bounce on completion
 
     // Buffer helpers

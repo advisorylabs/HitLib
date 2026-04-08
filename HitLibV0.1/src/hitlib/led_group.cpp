@@ -26,7 +26,9 @@ void LedGroup::start() {
 
 void LedGroup::off()                                                   { for (auto* s : strands) s->off(); }
 void LedGroup::setColor(uint32_t c)                                    { for (auto* s : strands) s->setColor(c); }
-void LedGroup::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg, bool invert)  { for (auto* s : strands) s->pulse(c, r, sp, bg, invert); }
+void LedGroup::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg, bool invert, bool bounce) {
+    for (auto* s : strands) s->pulse(c, r, sp, bg, invert, bounce);
+}
 void LedGroup::flash(uint32_t c, uint8_t sp, uint32_t bg)             { for (auto* s : strands) s->flash(c, sp, bg); }
 void LedGroup::flow(uint32_t c1, uint32_t c2, uint8_t sp, bool invert){ for (auto* s : strands) s->flow(c1, c2, sp, invert); }
 void LedGroup::rainbow(uint8_t sp)                                     { for (auto* s : strands) s->rainbow(sp); }
@@ -35,8 +37,16 @@ void LedGroup::twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct,
     for (auto* s : strands) s->twinkle(colors, densityPct, fadeStep, bgColor);
 }
 void LedGroup::bitscroll(const std::vector<LedStrand::BitScrollSegment>& segments, uint8_t speed,
-                         bool invert, uint32_t bgColor) {
-    for (auto* s : strands) s->bitscroll(segments, speed, invert, bgColor);
+                         bool invert, uint32_t bgColor, bool bounce, uint8_t spacing, bool repeating) {
+    for (auto* s : strands) s->bitscroll(segments, speed, invert, bgColor, bounce, spacing, repeating);
+}
+
+void LedGroup::spliceMask(uint8_t sections, bool invert, bool alternating, uint32_t altPeriodMs, uint32_t bgColor) {
+    for (auto* s : strands) s->spliceMask(sections, invert, alternating, altPeriodMs, bgColor);
+}
+
+void LedGroup::clearSpliceMask() {
+    for (auto* s : strands) s->clearSpliceMask();
 }
 void LedGroup::setBrightness(uint8_t p)                                { for (auto* s : strands) s->setBrightness(p); }
 

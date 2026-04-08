@@ -68,13 +68,20 @@ void LedStrand::tick() {
             shiftBuffer();
     } else if (animMode == AnimMode::TWINKLE) {
         advanceTwinkle();
-    } else if (animMode == AnimMode::SHIFT && shiftStep != 0) {
-        shiftBuffer();
+    } else if (animMode == AnimMode::SHIFT) {
+        if (shiftVariant == 1)
+            advancePulseBounce();
+        else if (shiftVariant == 2)
+            advanceBitscrollBounce();
+        else if (shiftStep != 0)
+            shiftBuffer();
     }
 
     // Advance overlay animation independently
     if (overlayAnimMode == AnimMode::SHIFT && overlayShiftStep != 0)
         shiftOverlayBuffer();
+
+    advanceSpliceAlternating(pros::millis());
 
     flushBuffer();
     mutex.give();
@@ -86,7 +93,11 @@ void LedStrand::tick() {
 
 void LedStrand::off()                                                    { mutex.take(TIMEOUT_MAX); setColorNL(0x000000);         mutex.give(); }
 void LedStrand::setColor(uint32_t c)                                     { mutex.take(TIMEOUT_MAX); setColorNL(c);               mutex.give(); }
-void LedStrand::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg, bool invert) { mutex.take(TIMEOUT_MAX); pulseNL(c, r, sp, bg, invert); mutex.give(); }
+void LedStrand::pulse(uint32_t c, uint8_t r, uint8_t sp, uint32_t bg, bool invert, bool bounce) {
+    mutex.take(TIMEOUT_MAX);
+    pulseNL(c, r, sp, bg, invert, bounce);
+    mutex.give();
+}
 void LedStrand::flash(uint32_t c, uint8_t sp, uint32_t bg)              { mutex.take(TIMEOUT_MAX); flashNL(c, sp, bg);          mutex.give(); }
 void LedStrand::flow(uint32_t c1, uint32_t c2, uint8_t sp, bool invert) { mutex.take(TIMEOUT_MAX); flowNL(c1, c2, sp, invert);  mutex.give(); }
 void LedStrand::rainbow(uint8_t sp)                                      { mutex.take(TIMEOUT_MAX); rainbowNL(sp);               mutex.give(); }
@@ -97,11 +108,41 @@ void LedStrand::twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct,
     mutex.give();
 }
 void LedStrand::bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
-                          bool invert, uint32_t bgColor) {
+                          bool invert, uint32_t bgColor, bool bounce, uint8_t spacing, bool repeating) {
     mutex.take(TIMEOUT_MAX);
-    bitscrollNL(segments, speed, invert, bgColor);
+    bitscrollNL(segments, speed, invert, bgColor, bounce, spacing, repeating);
     mutex.give();
 }
+
+void LedStrand::spliceMask(uint8_t sections, bool invert, bool alternating, uint32_t altPeriodMs, uint32_t bgColor) {
+    mutex.take(TIMEOUT_MAX);
+    if (sections == 0) {
+        spliceActive = false;
+        spliceSections = 0;
+        spliceShowAnim.clear();
+        mutex.give();
+        return;
+    }
+    spliceActive       = true;
+    spliceSections     = sections;
+    spliceInvert       = invert;
+    spliceAlternating  = alternating;
+    spliceAltMs        = (altPeriodMs == 0) ? 100 : altPeriodMs;
+    spliceBgColor      = bgColor;
+    spliceAltPhase     = false;
+    spliceLastToggleMs = pros::millis();
+    rebuildSpliceMask();
+    mutex.give();
+}
+
+void LedStrand::clearSpliceMask() {
+    mutex.take(TIMEOUT_MAX);
+    spliceActive   = false;
+    spliceSections = 0;
+    spliceShowAnim.clear();
+    mutex.give();
+}
+
 void LedStrand::setBrightness(uint8_t pct)                               { brightnessPct = (pct > 100) ? 100 : pct; }
 
 // ================================================================
@@ -111,10 +152,49 @@ void LedStrand::setBrightness(uint8_t pct)                               { brigh
 void LedStrand::setColorNL(uint32_t color) {
     animMode  = AnimMode::STATIC;
     shiftStep = 0;
+    shiftVariant = 0;
+    bitscrollMaster.clear();
     buffer.assign(length, color);
 }
 
-void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert) {
+void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert, bool bounce) {
+    bitscrollMaster.clear();
+
+    if (bounce) {
+        animMode     = AnimMode::SHIFT;
+        shiftVariant = 1;
+        shiftStep    = 0;
+        pulseRunLen  = std::min(runLen, length);
+        pulseColor   = color;
+        pulseBg      = bg;
+        pulseSpeed   = (speed == 0) ? 1 : speed;
+
+        if (pulseRunLen == 0) {
+            buffer.assign(length, bg);
+            shiftVariant = 0;
+            return;
+        }
+
+        int maxOff = (int)length - (int)pulseRunLen;
+        if (maxOff < 0) maxOff = 0;
+
+        if (!invert) {
+            pulseOffset = 0;
+            pulseDir    = 1;
+        } else {
+            pulseOffset = (int16_t)maxOff;
+            pulseDir    = -1;
+        }
+
+        buffer.assign(length, pulseBg);
+        for (uint8_t i = 0; i < pulseRunLen; i++) {
+            int idx = (int)pulseOffset + (int)i;
+            if (idx >= 0 && idx < (int)length) buffer[(uint8_t)idx] = pulseColor;
+        }
+        return;
+    }
+
+    shiftVariant = 0;
     animMode  = AnimMode::SHIFT;
     shiftStep = invert ? -(int)speed : (int)speed;
     buffer.assign(length, bg);
@@ -123,6 +203,8 @@ void LedStrand::pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t 
 }
 
 void LedStrand::flashNL(uint32_t color, uint8_t speed, uint32_t bg) {
+    shiftVariant = 0;
+    bitscrollMaster.clear();
     animMode  = AnimMode::SHIFT;
     shiftStep = length;
     buffer.clear();
@@ -131,12 +213,16 @@ void LedStrand::flashNL(uint32_t color, uint8_t speed, uint32_t bg) {
 }
 
 void LedStrand::flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert) {
+    shiftVariant = 0;
+    bitscrollMaster.clear();
     animMode  = AnimMode::SHIFT;
     shiftStep = invert ? -(int)speed : (int)speed;
     buffer    = genGradient(c1, c2, length);
 }
 
 void LedStrand::rainbowNL(uint8_t speed) {
+    shiftVariant = 0;
+    bitscrollMaster.clear();
     animMode  = AnimMode::SHIFT;
     shiftStep = speed;
     buffer    = genRainbow(length);
@@ -146,6 +232,8 @@ void LedStrand::twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPc
                           uint8_t fadeStep, uint32_t bgColor) {
     animMode = AnimMode::TWINKLE;
     shiftStep = 0;
+    shiftVariant = 0;
+    bitscrollMaster.clear();
     twinklePalette = colors;
     if (twinklePalette.empty())
         twinklePalette.push_back(0xFFFFFF);
@@ -162,30 +250,56 @@ void LedStrand::twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPc
 }
 
 void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed,
-                            bool invert, uint32_t bgColor) {
-    animMode = AnimMode::SHIFT;
-    shiftStep = invert ? -(int)speed : (int)speed;
+                            bool invert, uint32_t bgColor, bool bounce, uint8_t spacing, bool repeating) {
+    animMode    = AnimMode::SHIFT;
+    bounceSpeed = (speed == 0) ? 1 : speed;
+
     buffer.clear();
+    bitscrollMaster.clear();
 
     if (segments.empty()) {
+        shiftVariant = 0;
+        shiftStep    = 0;
         buffer.assign(length, bgColor);
         return;
     }
 
-    // Expand the segments repeatedly until the strand is fully covered.
-    // This keeps the scrolling pattern continuous instead of "one pass then bg".
-    size_t segIdx = 0;
-    uint8_t remainingInSeg = (segments[0].width == 0) ? 1 : segments[0].width;
+    // Build one pattern cycle from explicit segments + optional uniform spacing.
+    std::vector<uint32_t> pattern;
+    for (size_t si = 0; si < segments.size(); si++) {
+        uint8_t width = (segments[si].width == 0) ? 1 : segments[si].width;
+        pattern.insert(pattern.end(), width, segments[si].color);
+        if (spacing > 0)
+            pattern.insert(pattern.end(), spacing, bgColor);
+    }
+    if (pattern.empty())
+        pattern.push_back(bgColor);
 
-    buffer.reserve(length);
-    for (uint8_t i = 0; i < length; i++) {
-        const auto& seg = segments[segIdx];
-        buffer.push_back(seg.color);
-
-        if (--remainingInSeg == 0) {
-            segIdx = (segIdx + 1) % segments.size();
-            remainingInSeg = (segments[segIdx].width == 0) ? 1 : segments[segIdx].width;
+    if (repeating) {
+        // Tile the pattern across the whole strand.
+        buffer.reserve(length);
+        for (uint8_t i = 0; i < length; i++) {
+            buffer.push_back(pattern[i % pattern.size()]);
         }
+    } else {
+        // Single pass then background.
+        buffer.assign(length, bgColor);
+        uint8_t fill = (uint8_t)std::min<size_t>(length, pattern.size());
+        for (uint8_t i = 0; i < fill; i++) {
+            buffer[i] = pattern[i];
+        }
+    }
+
+    if (bounce) {
+        bitscrollMaster   = buffer;
+        shiftVariant      = 2;
+        shiftStep         = 0;
+        bounceScrollPos   = 0;
+        bounceScrollDir   = invert ? (int8_t)-1 : (int8_t)1;
+        fillBitscrollFromMaster();
+    } else {
+        shiftVariant = 0;
+        shiftStep    = invert ? -(int)speed : (int)speed;
     }
 }
 
@@ -516,6 +630,101 @@ void LedStrand::advanceTwinkle() {
     }
 }
 
+void LedStrand::advancePulseBounce() {
+    uint8_t run = pulseRunLen;
+    if (run == 0 || run > length) run = length;
+    int maxOff = (int)length - (int)run;
+    if (maxOff < 0) maxOff = 0;
+
+    int speed = (int)pulseSpeed;
+    if (speed < 1) speed = 1;
+
+    int pos = (int)pulseOffset + (int)pulseDir * speed;
+    int dir = (int)pulseDir;
+
+    while (pos > maxOff) {
+        pos = maxOff - (pos - maxOff);
+        dir = -dir;
+    }
+    while (pos < 0) {
+        pos = -pos;
+        dir = -dir;
+    }
+
+    pulseOffset = (int16_t)pos;
+    pulseDir    = (int8_t)dir;
+
+    buffer.assign(length, pulseBg);
+    for (uint8_t i = 0; i < run; i++) {
+        int idx = (int)pulseOffset + (int)i;
+        if (idx >= 0 && idx < (int)length) buffer[(uint8_t)idx] = pulseColor;
+    }
+}
+
+void LedStrand::fillBitscrollFromMaster() {
+    int L = (int)bitscrollMaster.size();
+    if (L <= 0 || buffer.size() != (size_t)length) return;
+
+    for (uint8_t i = 0; i < length; i++) {
+        int idx = ((int)i + (int)bounceScrollPos) % L;
+        if (idx < 0) idx += L;
+        buffer[i] = bitscrollMaster[(size_t)idx];
+    }
+}
+
+void LedStrand::advanceBitscrollBounce() {
+    int L = (int)bitscrollMaster.size();
+    if (L <= 0 || L != (int)length) return;
+
+    int maxOff = L - 1;
+    if (maxOff < 0) maxOff = 0;
+
+    int speed = (int)bounceSpeed;
+    if (speed < 1) speed = 1;
+
+    int pos = (int)bounceScrollPos + (int)bounceScrollDir * speed;
+    int dir = (int)bounceScrollDir;
+
+    while (pos > maxOff) {
+        pos = maxOff - (pos - maxOff);
+        dir = -dir;
+    }
+    while (pos < 0) {
+        pos = -pos;
+        dir = -dir;
+    }
+
+    bounceScrollPos = (int16_t)pos;
+    bounceScrollDir = (int8_t)dir;
+    fillBitscrollFromMaster();
+}
+
+void LedStrand::rebuildSpliceMask() {
+    if (!spliceActive || spliceSections == 0) {
+        spliceShowAnim.clear();
+        return;
+    }
+
+    spliceShowAnim.assign(length, true);
+    uint8_t bins = (uint8_t)(spliceSections + 1);
+    bool    inv  = spliceInvert ^ spliceAltPhase;
+
+    for (uint8_t i = 0; i < length; i++) {
+        uint8_t bin = (uint8_t)(((uint16_t)i * bins) / length);
+        if (bin >= bins) bin = bins - 1;
+        bool covered = (bin % 2 == 0) ^ inv;
+        spliceShowAnim[i] = !covered;
+    }
+}
+
+void LedStrand::advanceSpliceAlternating(uint32_t nowMs) {
+    if (!spliceActive || !spliceAlternating || spliceSections == 0) return;
+    if (nowMs - spliceLastToggleMs < spliceAltMs) return;
+    spliceLastToggleMs = nowMs;
+    spliceAltPhase     = !spliceAltPhase;
+    rebuildSpliceMask();
+}
+
 // ================================================================
 // Composite
 // ================================================================
@@ -615,6 +824,7 @@ void LedStrand::shiftBuffer() {
 void LedStrand::flushBuffer() {
     if (!led || buffer.empty()) return;
     bool   hasMask   = (animMode == AnimMode::CENTER_SPREAD && !spreadMask.empty());
+    bool   hasSplice = spliceActive && spliceShowAnim.size() == (size_t)length;
     size_t baseSz    = buffer.size();
     size_t overlaySz = overlayBuffer.size();
 
@@ -625,6 +835,12 @@ void LedStrand::flushBuffer() {
             px = composite(buffer[i % baseSz], overlayBuffer[i % overlaySz], spreadMask[i]);
         else
             px = buffer[i % baseSz];
+        if (hasSplice && !spliceShowAnim[i]) {
+            if (overlaySz > 0)
+                px = overlayBuffer[i % overlaySz];
+            else
+                px = spliceBgColor;
+        }
         led->set_pixel(applyBrightness(px), i);
     }
     led->update();

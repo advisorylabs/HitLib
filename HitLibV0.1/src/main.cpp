@@ -14,18 +14,18 @@ hitlib::LedStrand strand2(7, 63);
 hitlib::LedStrand strand3(8, 63);
 
 hitlib::LedGroup group1;
-//hitlib::LedGroup group2;
+hitlib::LedGroup group2;
 
 void initialize() {
 	pros::lcd::initialize();
 	pros::lcd::set_text(1, "Hello PROS User!");
 
 	group1.add(&strand1);
-	group1.add(&strand2);
 	group1.add(&strand3);
-	//group2.add(&strand2);
+	// group1.add(&strand3);
+	group2.add(&strand2);
 	group1.init(0);
-	//group2.init(20);
+	group2.init(0);
 
 	//group1.attachProfile(&hitlib::profiles::classic);
 	//group2.attachProfile(&hitlib::profiles::modern);
@@ -33,7 +33,7 @@ void initialize() {
 	//group2.activateMode(1);
 
 	group1.start();
-	//group2.start();
+	group2.start();
 
 }
 
@@ -95,9 +95,9 @@ void opcontrol() {
 	pros::Controller master(pros::E_CONTROLLER_MASTER);
 
 	group1.bitscroll({{0xFF0000, 4},
-	                    	    {0x000000, 4},
 							    {0x0000FF, 4},
-							    {0x000000, 4},
+							    {0x00FF00, 4}}, 2, true, 0x000000, false, 5, false);
+	group2.bitscroll({{0x0000FF, 4},
 							    {0x00FF00, 4},
-							    {0x000000, 4}}, 2);
+							    {0xFF0000, 4}}, 2, false, 0x000000, false, 5, false);
 }
