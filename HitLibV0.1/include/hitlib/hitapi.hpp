@@ -3,3 +3,4 @@
 #include "hitlib/led_group.hpp"
 #include "hitlib/led_profile.hpp"
 #include "hitlib/led_sequencer.hpp"
+// Includes all include files for simplicity

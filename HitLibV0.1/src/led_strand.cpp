@@ -60,7 +60,7 @@ void LedStrand::tick() {
 
     // Advance base animation.
     // When CENTER_SPREAD is active we also shift the base if it has a shift
-    // animation — otherwise a shifting base (e.g. rainbow) would freeze once
+    // animation, otherwise a shifting base (e.g. rainbow) would freeze once
     // it becomes the current layer.
     if (animMode == AnimMode::CENTER_SPREAD) {
         advanceCenterSpread();
@@ -384,7 +384,7 @@ void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers,
                                     uint8_t tickInterval, bool invert) {
     if (layers.size() < 2) return;
 
-    // Call layer fns outside the lock — they take it themselves
+    // Call layer fns outside the lock, they take it themselves
     layers[0](*this);
 
     mutex.take(TIMEOUT_MAX);
@@ -435,7 +435,7 @@ void LedStrand::centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers
                                           uint8_t tickInterval, bool invert) {
     if (layers.size() < 2) return;
 
-    // Call layer fns outside the lock — they take it themselves
+    // Call layer fns outside the lock, they take it themselves
     layers[0](*this);
 
     mutex.take(TIMEOUT_MAX);
@@ -468,11 +468,11 @@ void LedStrand::centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers
 }
 
 // ================================================================
-// doLayerSwap — shared by spread and bounce on completion (no lock)
+// doLayerSwap, shared by spread and bounce on completion (no lock)
 // ================================================================
 
 void LedStrand::doLayerSwap() {
-    // Promote overlay → base, then set up the next overlay layer
+    // Promote overlay -> base, then set up the next overlay layer
     std::swap(buffer, overlayBuffer);
     std::swap(animMode, overlayAnimMode);
     std::swap(shiftStep, overlayShiftStep);
@@ -486,7 +486,7 @@ void LedStrand::doLayerSwap() {
         AnimMode              savedAnimMode  = animMode;
         int                   savedShiftStep = shiftStep;
 
-        // Release lock — setup fn takes it itself
+        // Release lock, setup fn takes it itself
         mutex.give();
         spreadLayers[nextIdx](*this);
         mutex.take(TIMEOUT_MAX);
@@ -504,7 +504,7 @@ void LedStrand::doLayerSwap() {
 }
 
 // ================================================================
-// advanceCenterSpread (no lock — called from tick() under mutex)
+// advanceCenterSpread (no lock, called from tick() under mutex)
 // ================================================================
 
 void LedStrand::advanceCenterSpread() {
@@ -518,7 +518,7 @@ void LedStrand::advanceCenterSpread() {
     if (spreadBounce && spreadReturning) {
         if (spreadPos > 0) --spreadPos;
         if (spreadPos == 0) {
-            // Fully contracted — commit the layer swap and restart
+            // Fully contracted, commit the layer swap and restart
             spreadReturning = false;
             spreadMask.assign(length, false);
             doLayerSwap();
@@ -531,10 +531,10 @@ void LedStrand::advanceCenterSpread() {
     // ---- Compute mask ----
     for (int i = 0; i < (int)length; i++) {
         if (!spreadInvert)
-            // Normal: center → edges — reveal where distance ≤ spreadPos
+            // Normal: center -> edges, reveal where distance <= spreadPos
             spreadMask[i] = (std::abs(i - center) <= (int)spreadPos);
         else
-            // Inverted: edges → center — reveal where distance ≥ (maxSpread − spreadPos)
+            // Inverted: edges -> center, reveal where distance >= (maxSpread − spreadPos)
             spreadMask[i] = (std::abs(i - center) >= (maxSpread - (int)spreadPos));
     }
 
@@ -614,7 +614,7 @@ void LedStrand::advanceTwinkle() {
         uint8_t idx = (uint8_t)(std::rand() % length);
         if (twinkleLevel[idx] != 0 || twinkleTarget[idx] != 0) continue;
 
-        // Use densityPct as "sparkle activity" probability; cap still enforces darkness.
+        // Use densityPct as "sparkle activity" probability, cap still enforces darkness.
         if ((std::rand() % 100) >= twinkleDensityPct) continue;
 
         twinkleColorIdx[idx]  = (uint8_t)(std::rand() % twinklePalette.size());

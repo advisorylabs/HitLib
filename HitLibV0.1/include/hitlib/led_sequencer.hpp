@@ -6,7 +6,7 @@ namespace hitlib {
 class LedStrand;
 
 // Multi-phase timed animation driver.
-// Phases receive the strand they're running on — no global state needed.
+// Phases receive the strand they're running on, no global state needed.
 // Typical use: seq.start(s) in onActivate, seq.update(s) in onTick.
 class Sequencer {
 public:

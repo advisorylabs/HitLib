@@ -2,6 +2,8 @@
 #include "hitlib/led_strand.hpp"
 #include "pros/rtos.hpp"
 
+// Sequencer for multi-phased animations, allows user to run multiple
+// animations at timed intervals.
 namespace hitlib {
 
 void Sequencer::start(LedStrand& strand) {
