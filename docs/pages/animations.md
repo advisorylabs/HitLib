@@ -23,7 +23,7 @@ strand.flow(0xFF00DD, 0x000000, /*speed*/ 1);
 strand.flow(0xFF00DD, 0x000000, /*speed*/ 1, /*invert*/ true);
 ```
 
-Generates a gradient between two colours and scrolls it continuously.
+Generates a gradient between two colors and scrolls it continuously.
 `invert` reverses the scroll direction.
 
 ---
@@ -41,11 +41,11 @@ Full HSV rainbow scrolled across the strip.
 ## Pulse
 
 ```cpp
-// Moving run of colour over a background
+// Moving run of color over a background
 strand.pulse(0xFF0000, /*runLength*/ 5, /*speed*/ 1);
 strand.pulse(0xFF0000, 5, 1, /*bgColor*/ 0x330000);
 
-// Bounce — run reverses direction at each end
+// Bounce, run reverses direction at each end
 strand.pulse(0xFF0000, 5, 1, 0x000000, /*invert*/ false, /*bounce*/ true);
 ```
 
@@ -67,7 +67,7 @@ creating a repeating flash effect.
 
 ```cpp
 strand.twinkle(
-    {0xFFFFFF, 0xFFDD88},   // colour palette
+    {0xFFFFFF, 0xFFDD88},   // color palette
     /*densityPct*/ 30,       // 0–100, percentage of LEDs lit at once
     /*fadeStep*/   16,        // brightness step per tick (higher = faster fade)
     /*bgColor*/    0x000000
@@ -123,7 +123,7 @@ strand.flow(0xFF00DD, 0x000000, 1);
 strand.overlayRainbow(1);
 strand.centerSpread(/*tickInterval*/ 8);
 
-// Edges → center
+// Edges -> center
 strand.centerSpread(8, /*invert*/ true);
 
 // Bounce: expand fully, contract, then swap layers
@@ -148,7 +148,7 @@ buffer if one is active), unmasked bins show the base animation.
 // Two halves: left shows animation, right shows bgColor
 strand.spliceMask(1);
 
-// Alternating — toggles every 100 ms (creates a strobe/interleave effect)
+// Alternating, toggles every 100 ms (creates a strobe/interleave effect)
 strand.spliceMask(3, false, /*alternating*/ true, /*periodMs*/ 100);
 
 // Clear
@@ -160,6 +160,6 @@ strand.clearSpliceMask();
 ## Brightness
 
 ```cpp
-strand.setBrightness(60);   // 60% — applied non-destructively at flush time
+strand.setBrightness(60);   // 60% applied non-destructively at flush time
 strand.setBrightness(100);  // restore full brightness
 ```

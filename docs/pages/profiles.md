@@ -14,20 +14,20 @@ Three ready-made profiles are available in `hitlib/profiles/classic.hpp`.
 
 | Index | Name | Classic | Modern | Showy |
 |---|---|---|---|---|
-| 0 | Showoff | rainbow | rainbow | — |
+| 0 | Showoff | rainbow | rainbow | - |
 | 1 | Idle | magenta flow | pink pulse | purple flow |
 | 2 | Alliance Red | red pulse | red pulse + orange bg | white pulse / red bg |
 | 3 | Alliance Blue | blue pulse | blue pulse + cyan bg | white pulse / blue bg |
 | 4 | Scoring | green pulse | green flash | teal pulse |
-| 5 | Matchloading | yellow pulse | yellow pulse | — |
-| 6 | Endgame | warn → white → cycle | solid green → pulse | yellow → rainbow |
+| 5 | Matchloading | yellow pulse | yellow pulse | - |
+| 6 | Endgame | warn -> white -> cycle | solid green -> pulse | yellow -> rainbow |
 
 ```cpp
 #include "hitlib/profiles/classic.hpp"
 
 strand.attachProfile(&hitlib::profiles::classic);
-strand.activateMode(1);                   // Idle — persistent
-strand.activateModeTimed(4, 1500);        // Scoring — expires after 1.5 s
+strand.activateMode(1);                   // Idle - persistent
+strand.activateModeTimed(4, 1500);        // Scoring - expires after 1.5 s
 strand.deactivateMode(1);                 // remove Idle from stack
 strand.detachProfile();                   // detach and turn off
 ```
@@ -65,7 +65,7 @@ strand.activateMode(0);   // Idle
 ## Mode Stack Rules
 
 - Modes are stored in a **priority stack**; the highest-priority active mode wins.
-- Multiple modes can be active simultaneously — the winner updates every tick.
+- Multiple modes can be active simultaneously, the winner updates every tick.
 - Timed modes auto-expire; persistent modes stay until `deactivateMode()` is called.
 - Calling `activateModeTimed()` on an already-timed mode extends its deadline rather
   than creating a duplicate entry.

@@ -1,8 +1,8 @@
-# hitlib {#mainpage}
+# HitLib {#mainpage}
 
-**hitlib** is a VEX V5 LED animation library for [PROS](https://pros.cs.purdue.edu/).
-It drives WS2812B-compatible LED strips connected to ADI ports — including strips on
-ADI expanders — with a fully thread-safe, task-driven animation engine.
+**HitLib** is a VEX V5 LED animation library for [PROS](https://pros.cs.purdue.edu/).
+It drives WS2812B-compatible LED strips connected to ADI ports, including strips on
+ADI expanders, with a fully thread-safe, task-driven animation engine.
 
 ---
 
@@ -15,7 +15,7 @@ ADI expanders — with a fully thread-safe, task-driven animation engine.
 | **Overlay system** | Two independent animation layers composited by a spread mask |
 | **Center spread** | Wipe animations expanding from center outward (or edges inward) |
 | **Splice mask** | Split the strip into alternating sections showing different content |
-| **Profiles** | Priority-based mode stack — activate/deactivate named modes at runtime |
+| **Profiles** | Priority-based mode stack, activate/deactivate named modes at runtime |
 | **Sequencer** | Multi-phase timed animation driver for endgame / match sequences |
 | **Groups** | Fan-out one call to multiple strands simultaneously |
 | **Brightness** | Global per-strand brightness 0–100%, applied non-destructively at flush |
@@ -27,7 +27,7 @@ ADI expanders — with a fully thread-safe, task-driven animation engine.
 ### 1. Install
 
 ```bash
-pros c fetch https://github.com/YOUR_ORG/hitlib/releases/download/v1.0.0/hitlib@1.0.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/v0.7.0/hitlib@0.7.0.zip
 pros c apply hitlib
 ```
 
@@ -43,7 +43,7 @@ hitlib::LedGroup  group;
 void initialize() {
     group.add(&strand1);
     group.add(&strand2);
-    group.init();   // initialises hardware + starts refresh task
+    group.init();   // initializes hardware + starts refresh task
     group.start();
 }
 ```
@@ -90,10 +90,10 @@ void opcontrol() {
 
 ```
 LedGroup
- └─ LedStrand  ←─── tick() called by group task every refreshMs
+ └─ LedStrand <---- tick() called by group task every refreshMs
       ├─ base buffer     (flow / rainbow / pulse / bitscroll / twinkle …)
       ├─ overlay buffer  (second animation layer)
-      ├─ spreadMask      (CENTER_SPREAD composites base ↔ overlay)
+      ├─ spreadMask      (CENTER_SPREAD composites base <-> overlay)
       ├─ spliceMask      (splits strip into alternating sections)
       └─ Profile / Sequencer  (event-driven mode stack)
 ```
