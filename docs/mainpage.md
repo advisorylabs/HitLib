@@ -27,7 +27,7 @@ ADI expanders, with a fully thread-safe, task-driven animation engine.
 ### 1. Install
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/v0.7.4/hitlib@0.7.4.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/v0.6.0/hitlib@0.6.0.zip
 pros c apply hitlib
 ```
 

@@ -7,9 +7,9 @@
 # Project
 #---------------------------------------------------------------------------
 PROJECT_NAME           = "HitLib"
-PROJECT_NUMBER         = "0.7.4"
+PROJECT_NUMBER         = "0.7.5"
 PROJECT_BRIEF          = "VEX V5 LED animation library for PROS"
-PROJECT_LOGO           =
+PROJECT_LOGO           = docs/hitliblogo.png
 OUTPUT_DIRECTORY       = docs/generated
 CREATE_SUBDIRS         = NO
 ALLOW_UNICODE_NAMES    = NO
