@@ -27,7 +27,7 @@ ADI expanders, with a fully thread-safe, task-driven animation engine.
 ### 1. Install
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/v0.7.0/hitlib@0.7.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/v0.7.4/hitlib@0.7.4.zip
 pros c apply hitlib
 ```
 
@@ -43,7 +43,7 @@ hitlib::LedGroup  group;
 void initialize() {
     group.add(&strand1);
     group.add(&strand2);
-    group.init();   // initializes hardware + starts refresh task
+    group.init();
     group.start();
 }
 ```
@@ -52,14 +52,10 @@ void initialize() {
 
 ```cpp
 void opcontrol() {
-    // Scrolling RGB segments
     group.bitscroll(
         {{0xFF0000, 4}, {0x00FF00, 4}, {0x0000FF, 4}},
         /*speed*/ 2
     );
-
-    // Or a simple rainbow
-    group.rainbow(1);
 }
 ```
 
@@ -90,8 +86,8 @@ void opcontrol() {
 
 ```
 LedGroup
- └─ LedStrand <---- tick() called by group task every refreshMs
-      ├─ base buffer     (flow / rainbow / pulse / bitscroll / twinkle …)
+ └─ LedStrand <----- tick() called by group task every refreshMs
+      ├─ base buffer     (flow / rainbow / pulse / bitscroll / twinkle)
       ├─ overlay buffer  (second animation layer)
       ├─ spreadMask      (CENTER_SPREAD composites base <-> overlay)
       ├─ spliceMask      (splits strip into alternating sections)
@@ -102,7 +98,7 @@ LedGroup
 
 ## Pages
 
-- \subpage animations  "Animation Reference"
-- \subpage profiles_page "Profiles & Modes"
-- \subpage groups_page  "Groups"
-- \subpage install_page "Installation"
+- \subpage install_page    "Installation"
+- \subpage animations      "Animation Reference"
+- \subpage profiles_page   "Profiles & Modes"
+- \subpage groups_page     "Groups"

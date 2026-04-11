@@ -1,7 +1,7 @@
 {
   "py/object": "pros.conductor.project.Project",
   "py/state": {
-    "project_name": "HitLibV0.7",
+    "project_name": "HitLibV0.7.4",
     "target": "v5",
     "templates": {
       "kernel": {
