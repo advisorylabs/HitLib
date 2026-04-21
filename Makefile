@@ -26,7 +26,7 @@ EXCLUDE_COLD_LIBRARIES:=
 # Set this to 1 to add additional rules to compile your project as a PROS library template
 IS_LIBRARY:=1
 LIBNAME:=hitlib
-VERSION:=1.0.2
+VERSION:=1.0.4
 
 # Exclude any top-level entry point files from the library archive
 EXCLUDE_SRC_FROM_LIB+=$(foreach file, $(SRCDIR)/main $(SRCDIR)/autonomous $(SRCDIR)/opcontrol $(SRCDIR)/initialize,\
