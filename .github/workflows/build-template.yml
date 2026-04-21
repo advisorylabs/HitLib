@@ -1,0 +1,35 @@
+name: Build PROS Template
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PROS toolchain
+        run: |
+          pip install pros-cli
+
+      - name: Build library
+        run: make
+
+      - name: Package template
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
+          mkdir -p template_pkg/include template_pkg/lib
+          cp -r include/ template_pkg/
+          cp bin/libhitlib.a template_pkg/lib/   # adjust path to your .a file
+          cp template.pros template_pkg/
+          cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitlib-template
+          path: hitlib@*.zip

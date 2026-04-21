@@ -1,9 +1,9 @@
 {
   "name": "HitLib",
-  "version": "0.7.6",
+  "version": "1.0.0",
   "target": "v5",
   "description": "HITLIB LED animation and control library for VEX V5",
-  "keywords": ["led", "animation", "control", vex"],
+  "keywords": ["led", "animation", "control", "vex"],
   "homepage": "https://github.com/advisorylabs/HitLib",
   "license": "AGPL-3.0",
   "library": true
