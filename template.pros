@@ -7,4 +7,5 @@
   "homepage": "https://github.com/advisorylabs/HitLib",
   "license": "AGPL-3.0",
   "library": true
+  "supported_kernels": ">=3.0.0"
 }
