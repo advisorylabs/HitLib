@@ -51,6 +51,28 @@ class LedStrand {
 public:
 
     // ========================================================================
+    /// @name Types
+    /// @{
+
+    /**
+     * @brief One colored segment in a bitscroll pattern.
+     */
+    struct BitScrollSegment {
+        uint32_t color; ///< Segment color (0xRRGGBB).
+        uint8_t  width; ///< Width in pixels.
+    };
+
+    /**
+     * @brief Signature for animation-setup callbacks used by stacked spreads.
+     *
+     * Called with the strand when a new layer is about to become active.
+     * The callback should call any animation method (rainbow, flow, etc.).
+     */
+    using AnimSetupFn = void (*)(LedStrand&);
+
+    /// @}
+
+    // ========================================================================
     /// @name Construction
     /// @{
 
@@ -183,7 +205,7 @@ public:
      * @param repeating  Tile the pattern across the whole strip (@c true) or
      *                   scroll a single pass (@c false).
      */
-    void bitscroll(const std::vector<struct BitScrollSegment>& segments, uint8_t speed,
+    void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
                    bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
                    uint8_t spacing = 0, bool repeating = true);
 
@@ -251,14 +273,6 @@ public:
     /// Reveals the overlay buffer from the center outward (or edges inward),
     /// then swaps layers and repeats.
     /// @{
-
-    /**
-     * @brief Signature for animation-setup callbacks used by stacked spreads.
-     *
-     * Called with the strand when a new layer is about to become active.
-     * The callback should call any animation method (rainbow, flow, etc.).
-     */
-    using AnimSetupFn = void (*)(LedStrand&);
 
     /**
      * @brief Begin a center-outward reveal of the overlay buffer.
@@ -386,20 +400,6 @@ public:
 
     /** @brief Return the number of LEDs in this strand. */
     uint8_t getLength() const { return length; }
-
-    /// @}
-
-    // ========================================================================
-    /// @name Types
-    /// @{
-
-    /**
-     * @brief One colored segment in a bitscroll pattern.
-     */
-    struct BitScrollSegment {
-        uint32_t color; ///< Segment color (0xRRGGBB).
-        uint8_t  width; ///< Width in pixels.
-    };
 
     /// @}
 
