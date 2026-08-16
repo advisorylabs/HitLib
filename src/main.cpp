@@ -22,7 +22,6 @@ void initialize() {
 
 	group1.add(&strand1);
 	group1.add(&strand3);
-	// group1.add(&strand3);
 	group2.add(&strand2);
 	group1.init(0);
 	group2.init(0);
@@ -85,19 +84,9 @@ void autonomous() {}
  * task, not resume it from where it left off.
  */
 
-static void layerBlue    (hitlib::LedStrand& s) { s.setColor(0xFFFFFF); }
-static void layerRainbow (hitlib::LedStrand& s) { s.rainbow(1); }
-static void layerGreen    (hitlib::LedStrand& s) { s.setColor(0x00FF00); }
-
-
-
 void opcontrol() {
-	pros::Controller master(pros::E_CONTROLLER_MASTER);
-
 	group1.bitscroll({{0xFF0000, 4},
 							    {0x0000FF, 4},
 							    {0x00FF00, 4}}, 2, true, 0x000000, false, 5, false);
-	group2.bitscroll({{0x0000FF, 4},
-							    {0x00FF00, 4},
-							    {0xFF0000, 4}}, 2, false, 0x000000, false, 5, false);
+	group2.setColor(0x0000FF);
 }
