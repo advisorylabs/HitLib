@@ -460,8 +460,9 @@ private:
     std::vector<bool> spliceShowAnim;
 
     // Overlay buffer
-    AnimMode              overlayAnimMode  = AnimMode::STATIC;
-    int                   overlayShiftStep = 0;
+    AnimMode              overlayAnimMode   = AnimMode::STATIC;
+    int                   overlayShiftStep  = 0;
+    uint8_t               overlayShiftSpeed = 0;
     std::vector<uint32_t> overlayBuffer;
 
     // Center spread
