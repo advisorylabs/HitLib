@@ -6,13 +6,21 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install PROS toolchain
+      - name: Install ARM embedded toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi
+
+      - name: Install PROS CLI
         run: |
           pip install pros-cli
 
@@ -24,7 +32,7 @@ jobs:
           VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
           mkdir -p template_pkg/include template_pkg/lib
           cp -r include/ template_pkg/
-          cp bin/libhitlib.a template_pkg/lib/   # adjust path to your .a file
+          cp bin/hitlib.a template_pkg/lib/
           cp template.pros template_pkg/
           cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
 
@@ -33,3 +41,9 @@ jobs:
         with:
           name: hitlib-template
           path: hitlib@*.zip
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" hitlib@*.zip --clobber

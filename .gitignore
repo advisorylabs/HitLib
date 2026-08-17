@@ -8,6 +8,7 @@
 
 # PROS
 bin/
+lib/
 .vscode/
 .cache/
 compile_commands.json
@@ -15,5 +16,28 @@ temp.log
 temp.errors
 *.ini
 .d/
+project.pros
 
 docs/generated/
+
+# Packaged release artifacts (built by CI, not committed)
+hitlib@*.zip
+
+# Editor/backup files
+*.bak
+
+# Python virtualenvs
+.venv*/
+venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# PyInstaller build output for pattern_studio (built by CI, not committed --
+# the verified .spec file itself IS committed)
+tools/pattern_studio/build/
+tools/pattern_studio/dist/
+/.claude
