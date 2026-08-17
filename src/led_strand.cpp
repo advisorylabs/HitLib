@@ -4,6 +4,12 @@
 #include <cmath>
 #include <cstdlib>
 
+// Shared across every LedStrand instance (all groups). The V5 ADI/Smart Port
+// link can't keep up with back-to-back or concurrent led->update() calls from
+// multiple strands/tasks -- serializing them here and pacing each one gives
+// the ADI LED driver breathing room so updates don't queue up and lag behind.
+static pros::Mutex s_adiMutex;
+
 namespace hitlib {
 
 namespace {
@@ -305,8 +311,9 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
     for (const auto& seg : segments) {
         for (uint8_t k = 0; k < seg.width && unit.size() < MAX_LEDS; ++k) unit.push_back(seg.color);
         if (unit.size() >= MAX_LEDS) break;
+        for (uint8_t k = 0; k < spacing && unit.size() < MAX_LEDS; ++k) unit.push_back(bgColor);
+        if (unit.size() >= MAX_LEDS) break;
     }
-    for (uint8_t k = 0; k < spacing && unit.size() < MAX_LEDS; ++k) unit.push_back(bgColor);
     if (unit.empty()) unit.push_back(bgColor);
 
     if (!bounce) {
@@ -730,6 +737,7 @@ void LedStrand::flushBuffer() {
     bool spreadActive = (animMode == AnimMode::CENTER_SPREAD);
     size_t bufSize = buffer.size();
 
+    s_adiMutex.take();
     for (uint8_t i = 0; i < length; ++i) {
         uint32_t baseColor;
         if (!spreadActive && animMode == AnimMode::SHIFT && bufSize > 0) {
@@ -748,6 +756,9 @@ void LedStrand::flushBuffer() {
         led->set_pixel(applyBrightness(color), i);
     }
     led->update();
+    // Give the ADI LED driver some breathing room between updates.
+    pros::delay(12);
+    s_adiMutex.give();
 }
 
 // ============================================================================
