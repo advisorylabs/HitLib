@@ -40,3 +40,4 @@ __pycache__/
 # the verified .spec file itself IS committed)
 tools/pattern_studio/build/
 tools/pattern_studio/dist/
+/.claude
