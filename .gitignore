@@ -29,3 +29,14 @@ hitlib@*.zip
 # Python virtualenvs
 .venv*/
 venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# PyInstaller build output for pattern_studio (built by CI, not committed --
+# the verified .spec file itself IS committed)
+tools/pattern_studio/build/
+tools/pattern_studio/dist/
