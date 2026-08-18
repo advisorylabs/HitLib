@@ -7,6 +7,7 @@ native dialog widget.
 
 from pathlib import Path
 
+from pattern_studio import __version__
 from pattern_studio.main_window import MainWindow
 from pattern_studio.models import AnimationKind
 from pattern_studio.serialization import load_document, save_document
@@ -84,4 +85,4 @@ def test_new_resets_to_single_default_strand(qapp, tmp_path):
 
     assert len(win.sessions) == 1
     assert win._current_file_path is None
-    assert win.windowTitle() == "HitLib Pattern Studio"
+    assert win.windowTitle() == f"HitLib Pattern Studio v{__version__}"
