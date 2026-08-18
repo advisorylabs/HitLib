@@ -16,7 +16,9 @@ temp.log
 temp.errors
 *.ini
 .d/
-project.pros
+# NOTE: project.pros must stay TRACKED -- it is the file the PROS CLI and the
+# VS Code extension use to recognize this directory as a PROS project. Ignoring
+# it means a fresh clone is not a PROS project until it is hand-restored.
 
 docs/generated/
 
