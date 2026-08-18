@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
 from .canvas import StripCanvas
 from .codegen import generate_cpp, validate_for_export
 from .inspector import InspectorPanel
@@ -35,12 +36,11 @@ _CPP_FILE_FILTER = "C++ Header (*.hpp);;All Files (*)"
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HitLib Pattern Studio")
-
         self.sessions: list[StrandSession] = []
         self._current_index = -1
         self._running = True
         self._current_file_path: Path | None = None
+        self._update_title()
 
         self.canvas = StripCanvas()
         self.strand_list = StrandListPanel()
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         suffix = f" -- {self._current_file_path.name}" if self._current_file_path else ""
-        self.setWindowTitle(f"HitLib Pattern Studio{suffix}")
+        self.setWindowTitle(f"HitLib Pattern Studio v{__version__}{suffix}")
 
     # ------------------------------------------------------------------
     # C++ export
@@ -279,6 +279,7 @@ class MainWindow(QMainWindow):
         self.sessions.append(session)
         if self._running:
             session.start()
+        self.canvas.update()
         self._refresh_list()
         self.strand_list.select(len(self.sessions) - 1)
         return session
