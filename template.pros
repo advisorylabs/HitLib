@@ -1,6 +1,6 @@
 {
   "name": "HitLib",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "target": "v5",
   "description": "HITLIB LED animation and control library for VEX V5",
   "keywords": ["led", "animation", "control", "vex"],

@@ -1,10 +1,6 @@
 """Strand settings / animation / splice-mask editor for the currently selected strand.
 
-StrandSettingsPanel is laid out as a compact horizontal strip (MainWindow
-places it above the preview canvas, not in the right-hand column) since its
-fields are "set once" hardware identity, not something tweaked as often as
-the animation. AnimationPanel/SpliceMaskPanel/ModesPanel stay in the
-resizable right column. Each owns a `changed` signal; StrandSettingsPanel's
+Each panel owns a `changed` signal; StrandSettingsPanel's
 changes require recreating the engine Strand (length/port/refresh_ms affect
 buffer sizing), the others only need re-issuing the animation call, so
 InspectorPanel re-exposes them as two signals matching StrandSession's
@@ -22,6 +18,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -30,7 +28,18 @@ from PySide6.QtWidgets import (
 # ModesPanel imports AnimationPanel/SpliceMaskPanel from this module, so it must
 # be imported lazily inside InspectorPanel to avoid a circular import.
 
-from .models import ANIMATION_KIND_LABELS, AnimationConfig, AnimationKind, SpliceMaskConfig, StrandConfig
+from .models import (
+    ANIMATION_KIND_LABELS,
+    OVERLAY_ANIMATION_KIND_LABELS,
+    AnimationConfig,
+    AnimationKind,
+    OverlayAnimationConfig,
+    OverlayAnimationKind,
+    SpliceMaskConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
 from .widgets import ColorButton, format_palette, parse_palette
 
 _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
@@ -59,9 +68,7 @@ class StrandSettingsPanel(QWidget):
 
         # No explicit width caps on the spinboxes: QSpinBox's own sizeHint()
         # already reserves the right amount of room for its increment/
-        # decrement arrows alongside the digits/suffix -- an earlier version
-        # of this row capped them tighter than that and the arrows ended up
-        # overlapping the numbers. The scroll area MainWindow wraps this
+        # decrement arrows alongside the digits/suffix. The scroll area MainWindow wraps this
         # strip in handles the case where the row as a whole doesn't fit.
         self.name_edit = QLineEdit()
         self.name_edit.setMaximumWidth(120)
@@ -257,16 +264,149 @@ class AnimationPanel(QGroupBox):
         a.repeating = self.repeating_check.isChecked()
 
 
+_OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
+    OverlayAnimationKind.OFF: set(),
+    OverlayAnimationKind.SOLID: {"color"},
+    OverlayAnimationKind.PULSE: {"color", "bg_color", "run_length", "speed"},
+    OverlayAnimationKind.FLASH: {"color", "bg_color", "speed"},
+    OverlayAnimationKind.FLOW: {"color", "color2", "speed"},
+    OverlayAnimationKind.RAINBOW: {"speed"},
+}
+
+
+class OverlayAnimationPanel(QGroupBox):
+    """Editor for an OverlayAnimationConfig -- reused for two different
+    things that happen to share the same overlay*() vocabulary: Split mode's
+    single shared overlay buffer (SpliceMaskConfig.overlay), and each Custom
+    region's own independent animation (SpliceRegionConfig.animation). The
+    `title` param exists so the group box can say which one it is.
+    """
+
+    changed = Signal()
+
+    def __init__(self, title: str = "Overlay Animation", parent=None):
+        super().__init__(title, parent)
+        self._suspend = False
+        outer = QVBoxLayout(self)
+
+        self.kind_combo = QComboBox()
+        for kind in OverlayAnimationKind:
+            self.kind_combo.addItem(OVERLAY_ANIMATION_KIND_LABELS[kind], kind)
+        outer.addWidget(self.kind_combo)
+
+        form = QFormLayout()
+        outer.addLayout(form)
+
+        self.color_btn = ColorButton(0xFFFFFF)
+        self.color2_btn = ColorButton(0x0000FF)
+        self.bg_btn = ColorButton(0x000000)
+        self.run_length_spin = QSpinBox()
+        self.run_length_spin.setRange(1, 64)
+        self.speed_spin = QSpinBox()
+        self.speed_spin.setRange(1, 64)
+
+        self._rows: dict[str, tuple] = {}
+
+        def add_row(name: str, label: str, widget) -> None:
+            form.addRow(label, widget)
+            self._rows[name] = (form.labelForField(widget), widget)
+
+        add_row("color", "Color", self.color_btn)
+        add_row("color2", "Color 2", self.color2_btn)
+        add_row("bg_color", "Background", self.bg_btn)
+        add_row("run_length", "Run Length", self.run_length_spin)
+        add_row("speed", "Speed", self.speed_spin)
+
+        self.kind_combo.currentIndexChanged.connect(self._on_kind_changed)
+        for widget, signal_name in (
+            (self.color_btn, "color_changed"),
+            (self.color2_btn, "color_changed"),
+            (self.bg_btn, "color_changed"),
+            (self.run_length_spin, "valueChanged"),
+            (self.speed_spin, "valueChanged"),
+        ):
+            getattr(widget, signal_name).connect(self._emit_changed)
+
+        self._update_visibility()
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
+
+    def _on_kind_changed(self, *_args) -> None:
+        self._update_visibility()
+        self._emit_changed()
+
+    def _update_visibility(self) -> None:
+        kind = self.kind_combo.currentData()
+        visible = _OVERLAY_VISIBLE_FIELDS.get(kind, set())
+        for name, (label, widget) in self._rows.items():
+            show = name in visible
+            widget.setVisible(show)
+            if label is not None:
+                label.setVisible(show)
+
+    def load(self, o: OverlayAnimationConfig) -> None:
+        self._suspend = True
+        idx = self.kind_combo.findData(o.kind)
+        if idx >= 0:
+            self.kind_combo.setCurrentIndex(idx)
+        self.color_btn.set_color(o.color)
+        self.color2_btn.set_color(o.color2)
+        self.bg_btn.set_color(o.bg_color)
+        self.run_length_spin.setValue(o.run_length)
+        self.speed_spin.setValue(o.speed)
+        self._suspend = False
+        self._update_visibility()
+
+    def save(self, o: OverlayAnimationConfig) -> None:
+        o.kind = self.kind_combo.currentData()
+        o.color = self.color_btn.color()
+        o.color2 = self.color2_btn.color()
+        o.bg_color = self.bg_btn.color()
+        o.run_length = self.run_length_spin.value()
+        o.speed = self.speed_spin.value()
+
+
 class SpliceMaskPanel(QGroupBox):
+    """Splits the strip into equal alternating bins sharing one overlay
+    (Split) or lets each region be placed/sized freely with its own
+    independent animation (Custom) -- see SpliceMaskConfig. Custom regions
+    are edited like ModesPanel's mode/phase lists: Add/Remove buttons plus an
+    editor (start/width fields + a per-region OverlayAnimationPanel) bound to
+    whichever region is selected. Region edits mutate the loaded
+    SpliceMaskConfig's `regions` list in place rather than a local copy, so
+    save() intentionally leaves `regions` untouched -- callers are expected
+    (as ModesPanel does) to call save() with the same config object that was
+    last passed to load().
+    """
+
     changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Splice Mask", parent)
         self._suspend = False
+        self._splice: SpliceMaskConfig | None = None
+        self._region_idx = -1
         self.setCheckable(True)
         self.setChecked(False)
-        form = QFormLayout(self)
+        outer = QVBoxLayout(self)
 
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Split", SpliceModeKind.SPLIT)
+        self.mode_combo.addItem("Custom", SpliceModeKind.CUSTOM)
+        mode_row.addWidget(self.mode_combo)
+        mode_row.addStretch(1)
+        outer.addLayout(mode_row)
+
+        # --- Split mode: sections + 1 equal bins, optionally alternating,
+        # sharing a single overlay animation across every masked bin ---
+        self.split_widget = QWidget()
+        split_layout = QVBoxLayout(self.split_widget)
+        split_layout.setContentsMargins(0, 0, 0, 0)
+        split_form = QFormLayout()
         self.sections_spin = QSpinBox()
         self.sections_spin.setRange(0, 16)
         self.invert_check = QCheckBox()
@@ -274,42 +414,220 @@ class SpliceMaskPanel(QGroupBox):
         self.alt_period_spin = QSpinBox()
         self.alt_period_spin.setRange(50, 5000)
         self.alt_period_spin.setSuffix(" ms")
-        self.bg_btn = ColorButton(0x000000)
+        self.split_content_combo = QComboBox()
+        self.split_content_combo.addItem("Solid Color", False)
+        self.split_content_combo.addItem("Animation", True)
+        self.split_bg_btn = ColorButton(0x000000)
+        split_form.addRow("Sections", self.sections_spin)
+        split_form.addRow("Invert", self.invert_check)
+        split_form.addRow("Alternating", self.alternating_check)
+        split_form.addRow("Alt. Period", self.alt_period_spin)
+        split_form.addRow("Content", self.split_content_combo)
+        split_form.addRow("Background", self.split_bg_btn)
+        split_layout.addLayout(split_form)
+        # Shared overlay animation, shown only when Content == "Animation".
+        self.overlay_panel = OverlayAnimationPanel("Overlay Animation")
+        split_layout.addWidget(self.overlay_panel)
+        outer.addWidget(self.split_widget)
 
-        form.addRow("Sections", self.sections_spin)
-        form.addRow("Invert", self.invert_check)
-        form.addRow("Alternating", self.alternating_check)
-        form.addRow("Alt. Period", self.alt_period_spin)
-        form.addRow("Background", self.bg_btn)
+        # --- Custom mode: arbitrarily placed/sized regions, each with its
+        # own independent animation ---
+        self.custom_widget = QWidget()
+        custom_layout = QVBoxLayout(self.custom_widget)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        custom_layout.addWidget(QLabel("Regions"))
+        self.region_list = QListWidget()
+        custom_layout.addWidget(self.region_list)
+        region_btn_row = QHBoxLayout()
+        self.add_region_btn = QPushButton("Add")
+        self.remove_region_btn = QPushButton("Remove")
+        region_btn_row.addWidget(self.add_region_btn)
+        region_btn_row.addWidget(self.remove_region_btn)
+        custom_layout.addLayout(region_btn_row)
+
+        self.region_editor = QWidget()
+        region_editor_layout = QVBoxLayout(self.region_editor)
+        region_editor_layout.setContentsMargins(0, 0, 0, 0)
+        region_form = QFormLayout()
+        self.region_start_spin = QSpinBox()
+        self.region_start_spin.setRange(0, 63)
+        self.region_width_spin = QSpinBox()
+        self.region_width_spin.setRange(1, 64)
+        region_form.addRow("Start", self.region_start_spin)
+        region_form.addRow("Width", self.region_width_spin)
+        region_editor_layout.addLayout(region_form)
+        # This region's own animation -- independent of every other region.
+        self.region_anim_panel = OverlayAnimationPanel("Region Animation")
+        region_editor_layout.addWidget(self.region_anim_panel)
+        custom_layout.addWidget(self.region_editor)
+        self.region_editor.setEnabled(False)
+        outer.addWidget(self.custom_widget)
 
         self.toggled.connect(self._emit_changed)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.sections_spin.valueChanged.connect(self._emit_changed)
         self.invert_check.toggled.connect(self._emit_changed)
         self.alternating_check.toggled.connect(self._emit_changed)
         self.alt_period_spin.valueChanged.connect(self._emit_changed)
-        self.bg_btn.color_changed.connect(self._emit_changed)
+        self.split_content_combo.currentIndexChanged.connect(self._on_split_content_changed)
+        self.split_bg_btn.color_changed.connect(self._emit_changed)
+        self.overlay_panel.changed.connect(self._emit_changed)
+
+        self.region_list.currentRowChanged.connect(self._on_region_selected)
+        self.add_region_btn.clicked.connect(self._add_region)
+        self.remove_region_btn.clicked.connect(self._remove_region)
+        self.region_start_spin.valueChanged.connect(self._on_region_field_changed)
+        self.region_width_spin.valueChanged.connect(self._on_region_field_changed)
+        self.region_anim_panel.changed.connect(self._on_region_anim_changed)
+
+        self._update_mode_visibility()
+        self._update_overlay_visibility()
 
     def _emit_changed(self, *_args) -> None:
         if not self._suspend:
             self.changed.emit()
 
+    # ------------------------------------------------------------------
+    # Mode switching
+    # ------------------------------------------------------------------
+
+    def _on_mode_changed(self, *_args) -> None:
+        self._update_mode_visibility()
+        self._update_overlay_visibility()
+        self._emit_changed()
+
+    def _update_mode_visibility(self) -> None:
+        is_split = self.mode_combo.currentData() == SpliceModeKind.SPLIT
+        self.split_widget.setVisible(is_split)
+        self.custom_widget.setVisible(not is_split)
+
+    def _update_overlay_visibility(self) -> None:
+        # Custom mode's per-region animation lives inside region_editor and
+        # is always relevant there -- only Split's shared overlay needs to
+        # hide/show based on the Content choice.
+        self.overlay_panel.setVisible(bool(self.split_content_combo.currentData()))
+
+    def _on_split_content_changed(self, *_args) -> None:
+        is_animation = bool(self.split_content_combo.currentData())
+        self.split_bg_btn.setVisible(not is_animation)
+        self._update_overlay_visibility()
+        self._emit_changed()
+
+    # ------------------------------------------------------------------
+    # Custom region list
+    # ------------------------------------------------------------------
+
+    def _region_label(self, r: SpliceRegionConfig) -> str:
+        kind_label = OVERLAY_ANIMATION_KIND_LABELS[r.animation.kind]
+        return f"{r.start}-{r.start + r.width - 1}  {kind_label}"
+
+    def _refresh_region_list(self) -> None:
+        self.region_list.blockSignals(True)
+        current = self.region_list.currentRow()
+        self.region_list.clear()
+        if self._splice is not None:
+            for r in self._splice.regions:
+                self.region_list.addItem(self._region_label(r))
+        if 0 <= current < self.region_list.count():
+            self.region_list.setCurrentRow(current)
+        self.region_list.blockSignals(False)
+
+    def _add_region(self) -> None:
+        if self._splice is None:
+            return
+        self._splice.regions.append(SpliceRegionConfig())
+        self._refresh_region_list()
+        self.region_list.setCurrentRow(len(self._splice.regions) - 1)
+        self._emit_changed()
+
+    def _remove_region(self) -> None:
+        if self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+            return
+        del self._splice.regions[self._region_idx]
+        self._refresh_region_list()
+        if self._splice.regions:
+            self.region_list.setCurrentRow(min(self._region_idx, len(self._splice.regions) - 1))
+        else:
+            self._region_idx = -1
+            self.region_editor.setEnabled(False)
+        self._emit_changed()
+
+    def _on_region_selected(self, row: int) -> None:
+        self._region_idx = row
+        if self._splice is None or not (0 <= row < len(self._splice.regions)):
+            self.region_editor.setEnabled(False)
+            return
+        self.region_editor.setEnabled(True)
+        r = self._splice.regions[row]
+        was_suspend = self._suspend
+        self._suspend = True
+        try:
+            self.region_start_spin.setValue(r.start)
+            self.region_width_spin.setValue(r.width)
+            self.region_anim_panel.load(r.animation)
+        finally:
+            self._suspend = was_suspend
+
+    def _on_region_field_changed(self, *_args) -> None:
+        if self._suspend or self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+            return
+        r = self._splice.regions[self._region_idx]
+        r.start = self.region_start_spin.value()
+        r.width = self.region_width_spin.value()
+        self._refresh_region_list()
+        self.region_list.setCurrentRow(self._region_idx)
+        self._emit_changed()
+
+    def _on_region_anim_changed(self) -> None:
+        if self._suspend or self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+            return
+        r = self._splice.regions[self._region_idx]
+        self.region_anim_panel.save(r.animation)
+        self._refresh_region_list()
+        self._emit_changed()
+
+    # ------------------------------------------------------------------
+    # Load / save
+    # ------------------------------------------------------------------
+
     def load(self, s: SpliceMaskConfig) -> None:
         self._suspend = True
+        self._splice = s
+        self._region_idx = -1
         self.setChecked(s.enabled)
+        idx = self.mode_combo.findData(s.mode)
+        if idx >= 0:
+            self.mode_combo.setCurrentIndex(idx)
         self.sections_spin.setValue(s.sections)
         self.invert_check.setChecked(s.invert)
         self.alternating_check.setChecked(s.alternating)
         self.alt_period_spin.setValue(s.alt_period_ms)
-        self.bg_btn.set_color(s.bg_color)
+        content_idx = self.split_content_combo.findData(s.use_overlay)
+        if content_idx >= 0:
+            self.split_content_combo.setCurrentIndex(content_idx)
+        self.split_bg_btn.set_color(s.bg_color)
+        self.split_bg_btn.setVisible(not s.use_overlay)
+        self.overlay_panel.load(s.overlay)
+        self._refresh_region_list()
+        if s.regions:
+            self.region_list.setCurrentRow(0)
+        else:
+            self.region_editor.setEnabled(False)
+        self._update_mode_visibility()
+        self._update_overlay_visibility()
         self._suspend = False
 
     def save(self, s: SpliceMaskConfig) -> None:
         s.enabled = self.isChecked()
+        s.mode = self.mode_combo.currentData()
         s.sections = self.sections_spin.value()
         s.invert = self.invert_check.isChecked()
         s.alternating = self.alternating_check.isChecked()
         s.alt_period_ms = self.alt_period_spin.value()
-        s.bg_color = self.bg_btn.color()
+        s.use_overlay = bool(self.split_content_combo.currentData())
+        s.bg_color = self.split_bg_btn.color()
+        self.overlay_panel.save(s.overlay)
+        # s.regions is not touched here -- see class docstring.
 
 
 class InspectorPanel(QWidget):

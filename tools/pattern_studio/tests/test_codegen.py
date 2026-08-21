@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 
 from pattern_studio.codegen import generate_cpp, validate_for_export
-from pattern_studio.models import AnimationKind, ModeConfig, PhaseConfig, StrandConfig
+from pattern_studio.models import (
+    AnimationKind,
+    ModeConfig,
+    OverlayAnimationKind,
+    PhaseConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -92,6 +100,23 @@ def test_single_animation_without_profile_validates_via_synthetic_mode():
     assert validate_for_export(cfg) == []
 
 
+def test_custom_splice_with_no_regions_is_caught():
+    cfg = StrandConfig(use_profile=False)
+    cfg.splice.enabled = True
+    cfg.splice.mode = SpliceModeKind.CUSTOM
+    errors = validate_for_export(cfg)
+    assert any("region" in e.lower() for e in errors)
+
+
+def test_custom_splice_region_zero_width_is_caught():
+    cfg = StrandConfig(use_profile=False)
+    cfg.splice.enabled = True
+    cfg.splice.mode = SpliceModeKind.CUSTOM
+    cfg.splice.regions = [SpliceRegionConfig(start=0, width=0)]
+    errors = validate_for_export(cfg)
+    assert any("width" in e.lower() for e in errors)
+
+
 # ============================================================================
 # Codegen shape / identifier handling
 # ============================================================================
@@ -104,7 +129,7 @@ def test_generates_expected_structure():
     assert 'inline const Profile classicDemo = {"Classic Demo", classicDemoModes, 5};' in out
     assert "s.flow(0xFF00DD, 0x0000FF, 1, false);" in out  # color2 left at its AnimationConfig default
     assert "s.twinkle({0xFF0000, 0x00FF00, 0x0000FF}, 30, 16, 0x000000);" in out
-    assert "s.spliceMask(2, false, false, 400, 0x000000);" in out
+    assert "s.spliceMask(2, false, false, 400, 0x000000, false);" in out
     assert "LedStrand::BitScrollSegment{0x00FFAA, 3}" in out
     assert "endgameSeq.start(s);" in out
     assert "endgameSeq.update(s);" in out
@@ -132,12 +157,70 @@ def test_single_animation_export_wraps_as_default_mode():
     out = generate_cpp(cfg)
     assert "s.rainbow(2);" in out
     assert '{"Default", 100,' in out
+    # The synthetic mode's *display* name is "Default", but the generated
+    # function identifier must not be the bare word "default" -- that's a
+    # reserved C++ keyword and won't compile.
+    assert "void default(" not in out
+    assert "void defaultMode(" in out
 
 
-# ============================================================================
-# Real compile check -- the actual correctness bar per the project plan.
-# Skips gracefully if the PROS ARM toolchain isn't installed on this machine.
-# ============================================================================
+def test_mode_named_with_a_cpp_keyword_gets_a_safe_identifier():
+    cfg = StrandConfig(use_profile=True)
+    mode = ModeConfig(name="switch")
+    mode.animation.kind = AnimationKind.SOLID
+    cfg.profile_modes = [mode]
+    out = generate_cpp(cfg)
+    assert "void switch(" not in out
+    assert "void switchMode(" in out
+
+
+def test_split_splice_with_overlay_emits_overlay_setup_before_splice_call():
+    cfg = StrandConfig(name="Overlay Split", use_profile=False)
+    cfg.animation.kind = AnimationKind.FLOW
+    cfg.splice.enabled = True
+    cfg.splice.mode = SpliceModeKind.SPLIT
+    cfg.splice.sections = 1
+    cfg.splice.use_overlay = True
+    cfg.splice.overlay.kind = OverlayAnimationKind.RAINBOW
+    cfg.splice.overlay.speed = 3
+    out = generate_cpp(cfg)
+    assert "s.overlayRainbow(3);" in out
+    assert "s.spliceMask(1, false, false, 400, 0x000000, true);" in out
+    # Overlay must be primed before the splice call that reveals it.
+    assert out.index("s.overlayRainbow(3);") < out.index("s.spliceMask(1,")
+
+
+def test_custom_splice_emits_independent_region_literals_and_never_shared_overlay():
+    cfg = StrandConfig(name="Custom Splice", use_profile=False)
+    cfg.animation.kind = AnimationKind.RAINBOW
+    cfg.splice.enabled = True
+    cfg.splice.mode = SpliceModeKind.CUSTOM
+
+    region1 = SpliceRegionConfig(start=0, width=5)
+    region1.animation.kind = OverlayAnimationKind.SOLID
+    region1.animation.color = 0xFF0000
+    region2 = SpliceRegionConfig(start=20, width=8)
+    region2.animation.kind = OverlayAnimationKind.RAINBOW
+    region2.animation.speed = 2
+    cfg.splice.regions = [region1, region2]
+
+    # Split mode's shared overlay config is unrelated to Custom mode --
+    # setting it must not leak an overlaySetColor()/overlayRainbow() call,
+    # since each region below carries its own independent animation instead.
+    cfg.splice.overlay.kind = OverlayAnimationKind.SOLID
+    cfg.splice.overlay.color = 0x00FF00
+
+    out = generate_cpp(cfg)
+    assert "overlaySetColor" not in out
+    assert "overlayRainbow" not in out
+    assert (
+        "s.spliceMaskCustom({"
+        "{.start = 0, .width = 5, .kind = LedStrand::SpliceRegionAnimKind::SOLID, "
+        ".color = 0xFF0000, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 1}, "
+        "{.start = 20, .width = 8, .kind = LedStrand::SpliceRegionAnimKind::RAINBOW, "
+        ".color = 0xFFFFFF, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 2}"
+        "});"
+    ) in out
 
 
 def _find_toolchain_compiler() -> str | None:
@@ -167,6 +250,53 @@ def test_generated_profile_compiles_against_real_hitlib_headers(tmp_path):
         "hitlib::LedStrand testStrand(1, 30);\n\n"
         "void useProfile() {\n"
         "    testStrand.attachProfile(&hitlib::profiles::classicDemo);\n"
+        "    testStrand.activateMode(0);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            compiler, "-c",
+            "-mcpu=cortex-a9", "-mfpu=neon-fp16", "-mfloat-abi=hard", "-Os", "-g", "-mthumb",
+            "-D_POSIX_THREADS", "-D_UNIX98_THREAD_MUTEX_ATTRIBUTES",
+            "-D_POSIX_TIMERS", "-D_POSIX_MONOTONIC_CLOCK",
+            "-D_PROS_INCLUDE_LIBLVGL_LLEMU_H", "-D_PROS_INCLUDE_LIBLVGL_LLEMU_HPP",
+            "-Wno-psabi", "-ffunction-sections", "-fdata-sections", "-funwind-tables",
+            "--std=gnu++20",
+            "-iquote", str(REPO_ROOT / "include"),
+            "-iquote", str(tmp_path),
+            "-o", str(tmp_path / "compile_check.o"),
+            str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert (tmp_path / "compile_check.o").exists()
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_non_profile_export_compiles_despite_default_mode_name(tmp_path):
+    # Regression test: _effective_modes() names the synthetic single-animation
+    # mode "Default", which used to sanitize to the bare identifier `default`
+    # -- a reserved C++ keyword -- and failed to compile.
+    compiler = _find_toolchain_compiler()
+    cfg = StrandConfig(name="Solo", use_profile=False)
+    cfg.animation.kind = AnimationKind.RAINBOW
+
+    header_path = tmp_path / "generated_profile.hpp"
+    header_path.write_text(generate_cpp(cfg), encoding="utf-8")
+
+    source_path = tmp_path / "compile_check.cpp"
+    source_path.write_text(
+        '#include "hitlib/hitapi.hpp"\n'
+        '#include "generated_profile.hpp"\n\n'
+        "hitlib::LedStrand testStrand(1, 30);\n\n"
+        "void useProfile() {\n"
+        "    testStrand.attachProfile(&hitlib::profiles::solo);\n"
         "    testStrand.activateMode(0);\n"
         "}\n",
         encoding="utf-8",

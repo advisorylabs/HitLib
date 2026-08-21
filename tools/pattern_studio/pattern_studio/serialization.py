@@ -12,7 +12,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import AnimationConfig, AnimationKind, ModeConfig, PhaseConfig, SpliceMaskConfig, StrandConfig
+from .models import (
+    AnimationConfig,
+    AnimationKind,
+    ModeConfig,
+    OverlayAnimationConfig,
+    OverlayAnimationKind,
+    PhaseConfig,
+    SpliceMaskConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
 
 SCHEMA_VERSION = 1
 
@@ -56,14 +67,58 @@ def _animation_from_dict(d: dict) -> AnimationConfig:
     )
 
 
+def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
+    return {
+        "kind": o.kind.value,
+        "color": o.color,
+        "color2": o.color2,
+        "bg_color": o.bg_color,
+        "run_length": o.run_length,
+        "speed": o.speed,
+    }
+
+
+def _overlay_from_dict(d: dict) -> OverlayAnimationConfig:
+    default = OverlayAnimationConfig()
+    return OverlayAnimationConfig(
+        kind=OverlayAnimationKind(d.get("kind", default.kind.value)),
+        color=d.get("color", default.color),
+        color2=d.get("color2", default.color2),
+        bg_color=d.get("bg_color", default.bg_color),
+        run_length=d.get("run_length", default.run_length),
+        speed=d.get("speed", default.speed),
+    )
+
+
+def _region_to_dict(r: SpliceRegionConfig) -> dict:
+    return {
+        "start": r.start,
+        "width": r.width,
+        "animation": _overlay_to_dict(r.animation),
+    }
+
+
+def _region_from_dict(d: dict) -> SpliceRegionConfig:
+    default = SpliceRegionConfig()
+    return SpliceRegionConfig(
+        start=d.get("start", default.start),
+        width=d.get("width", default.width),
+        animation=_overlay_from_dict(d.get("animation", {})),
+    )
+
+
 def _splice_to_dict(s: SpliceMaskConfig) -> dict:
     return {
         "enabled": s.enabled,
+        "mode": s.mode.value,
         "sections": s.sections,
         "invert": s.invert,
         "alternating": s.alternating,
         "alt_period_ms": s.alt_period_ms,
         "bg_color": s.bg_color,
+        "use_overlay": s.use_overlay,
+        "regions": [_region_to_dict(r) for r in s.regions],
+        "overlay": _overlay_to_dict(s.overlay),
     }
 
 
@@ -71,11 +126,15 @@ def _splice_from_dict(d: dict) -> SpliceMaskConfig:
     default = SpliceMaskConfig()
     return SpliceMaskConfig(
         enabled=d.get("enabled", default.enabled),
+        mode=SpliceModeKind(d.get("mode", default.mode.value)),
         sections=d.get("sections", default.sections),
         invert=d.get("invert", default.invert),
         alternating=d.get("alternating", default.alternating),
         alt_period_ms=d.get("alt_period_ms", default.alt_period_ms),
         bg_color=d.get("bg_color", default.bg_color),
+        use_overlay=d.get("use_overlay", default.use_overlay),
+        regions=[_region_from_dict(r) for r in d.get("regions", [])],
+        overlay=_overlay_from_dict(d.get("overlay", {})),
     )
 
 

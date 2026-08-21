@@ -65,8 +65,12 @@ void LedGroup::bitscroll(const std::vector<LedStrand::BitScrollSegment>& segment
 }
 
 void LedGroup::spliceMask(uint8_t sections, bool invert, bool alternating,
-                           uint32_t altPeriodMs, uint32_t bgColor) {
-    for (LedStrand* s : strands) s->spliceMask(sections, invert, alternating, altPeriodMs, bgColor);
+                           uint32_t altPeriodMs, uint32_t bgColor, bool useOverlay) {
+    for (LedStrand* s : strands) s->spliceMask(sections, invert, alternating, altPeriodMs, bgColor, useOverlay);
+}
+
+void LedGroup::spliceMaskCustom(const std::vector<LedStrand::SpliceRegion>& regions) {
+    for (LedStrand* s : strands) s->spliceMaskCustom(regions);
 }
 
 void LedGroup::clearSpliceMask() {

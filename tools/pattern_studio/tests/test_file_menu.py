@@ -1,8 +1,6 @@
 """Exercises the File menu actions (New/Open/Save/Save As/Import) through
-MainWindow itself, bypassing the file-picker dialogs (which need a display)
-by calling the same private handlers the dialogs would call into with a
-concrete path -- what's under test is the save/load/session wiring, not Qt's
-native dialog widget.
+MainWindow itself, bypassing the file-picker dialogs by calling the same 
+private handlers the dialogs would call into with a concrete path.
 """
 
 from pathlib import Path

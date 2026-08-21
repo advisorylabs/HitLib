@@ -47,6 +47,9 @@ LedStrand::LedStrand(uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
     buffer.assign(length, 0);
     overlayBuffer.assign(length, 0);
     spliceShowAnim.assign(length, true);
+    splicePixelBg.assign(length, 0);
+    splicePixelUseOverlay.assign(length, false);
+    splicePixelRegionIdx.assign(length, -1);
     spreadMask.assign(length, false);
 }
 
@@ -56,6 +59,9 @@ LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint
     buffer.assign(length, 0);
     overlayBuffer.assign(length, 0);
     spliceShowAnim.assign(length, true);
+    splicePixelBg.assign(length, 0);
+    splicePixelUseOverlay.assign(length, false);
+    splicePixelRegionIdx.assign(length, -1);
     spreadMask.assign(length, false);
 }
 
@@ -88,6 +94,7 @@ void LedStrand::tick() {
     if (animMode == AnimMode::CENTER_SPREAD) advanceCenterSpread();
 
     advanceSpliceAlternating(now);
+    advanceSpliceRegions();
 
     int16_t effectiveIdx = computeEffectiveMode();
     bool modeChanged = (effectiveIdx != lastModeIdx);
@@ -376,17 +383,83 @@ void LedStrand::shiftBuffer() {
 // ============================================================================
 
 void LedStrand::spliceMask(uint8_t sections, bool invert, bool alternating, uint32_t altPeriodMs,
-                            uint32_t bgColor) {
+                            uint32_t bgColor, bool useOverlay) {
     mutex.take();
+    spliceMode = SpliceMode::SPLIT;
+    spliceRegions.clear();
     spliceSections = sections;
     spliceInvert = invert;
     spliceAlternating = alternating;
     spliceAltMs = (altPeriodMs > 0) ? altPeriodMs : 1;
     spliceBgColor = bgColor;
+    spliceUseOverlay = useOverlay;
     spliceActive = (sections != 0);
     spliceAltPhase = false;
     spliceLastToggleMs = pros::millis();
     rebuildSpliceMask();
+    mutex.give();
+}
+
+void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
+    mutex.take();
+    spliceMode = SpliceMode::CUSTOM;
+    spliceAlternating = false;
+    std::fill(spliceShowAnim.begin(), spliceShowAnim.end(), true);
+    std::fill(splicePixelRegionIdx.begin(), splicePixelRegionIdx.end(), (int16_t)-1);
+    spliceRegions.clear();
+
+    for (const SpliceRegion& r : regions) {
+        if (r.start >= length) continue;
+        uint16_t end = (uint16_t)r.start + (uint16_t)r.width;
+        if (end > length) end = length;
+        uint8_t regionWidth = (uint8_t)(end - r.start);
+
+        int16_t regionIdx = -1;
+        uint32_t fallbackColor = 0x000000;
+
+        if (r.kind == SpliceRegionAnimKind::SOLID) {
+            fallbackColor = r.color;
+        } else if (r.kind != SpliceRegionAnimKind::OFF) {
+            SpliceRegionState state;
+            state.start = r.start;
+            switch (r.kind) {
+                case SpliceRegionAnimKind::PULSE: {
+                    state.buffer.assign(regionWidth, r.bgColor);
+                    uint8_t rl = std::min<uint8_t>(r.runLength, regionWidth);
+                    std::fill_n(state.buffer.begin(), rl, r.color);
+                    state.shiftSpeed = r.speed;
+                    break;
+                }
+                case SpliceRegionAnimKind::FLASH: {
+                    uint8_t reps = std::min<uint8_t>(r.speed, 32);
+                    state.buffer.assign((size_t)regionWidth * (1 + reps), r.bgColor);
+                    std::fill_n(state.buffer.begin(), regionWidth, r.color);
+                    state.shiftSpeed = 1;
+                    break;
+                }
+                case SpliceRegionAnimKind::FLOW:
+                    state.buffer = genGradient(r.color, r.color2, regionWidth);
+                    state.shiftSpeed = r.speed;
+                    break;
+                case SpliceRegionAnimKind::RAINBOW:
+                    state.buffer = genRainbow(regionWidth);
+                    state.shiftSpeed = r.speed;
+                    break;
+                default:
+                    break;
+            }
+            spliceRegions.push_back(std::move(state));
+            regionIdx = (int16_t)(spliceRegions.size() - 1);
+        }
+
+        for (uint16_t i = r.start; i < end; ++i) {
+            spliceShowAnim[i] = false;
+            splicePixelBg[i] = fallbackColor;
+            splicePixelUseOverlay[i] = false;
+            splicePixelRegionIdx[i] = regionIdx;
+        }
+    }
+    spliceActive = !regions.empty();
     mutex.give();
 }
 
@@ -404,16 +477,31 @@ void LedStrand::rebuildSpliceMask() {
     for (uint16_t b = 0; b < binCount && idx < length; ++b) {
         uint8_t binSize = base + (b < rem ? 1 : 0);
         bool showAnim = ((b % 2) == 1) != spliceInvert;
-        for (uint8_t k = 0; k < binSize && idx < length; ++k) spliceShowAnim[idx++] = showAnim;
+        for (uint8_t k = 0; k < binSize && idx < length; ++k) {
+            spliceShowAnim[idx] = showAnim;
+            splicePixelBg[idx] = spliceBgColor;
+            splicePixelUseOverlay[idx] = spliceUseOverlay;
+            splicePixelRegionIdx[idx] = -1;
+            idx++;
+        }
     }
 }
 
 void LedStrand::advanceSpliceAlternating(uint32_t nowMs) {
-    if (!spliceActive || !spliceAlternating) return;
+    if (!spliceActive || spliceMode != SpliceMode::SPLIT || !spliceAlternating) return;
     if (nowMs - spliceLastToggleMs >= spliceAltMs) {
         spliceInvert = !spliceInvert;
         spliceLastToggleMs = nowMs;
         rebuildSpliceMask();
+    }
+}
+
+void LedStrand::advanceSpliceRegions() {
+    if (!spliceActive || spliceMode != SpliceMode::CUSTOM) return;
+    for (SpliceRegionState& state : spliceRegions) {
+        size_t bufSize = state.buffer.size();
+        if (bufSize == 0 || state.shiftSpeed == 0) continue;
+        state.shiftStep = (int)((state.shiftStep + state.shiftSpeed) % (int)bufSize);
     }
 }
 
@@ -736,6 +824,7 @@ uint32_t LedStrand::composite(uint32_t base, uint32_t overlay, bool useOverlay) 
 void LedStrand::flushBuffer() {
     bool spreadActive = (animMode == AnimMode::CENTER_SPREAD);
     size_t bufSize = buffer.size();
+    size_t overlayBufSize = overlayBuffer.size();
 
     s_adiMutex.take();
     for (uint8_t i = 0; i < length; ++i) {
@@ -746,11 +835,34 @@ void LedStrand::flushBuffer() {
             baseColor = buffer[i];
         }
 
+        // Mirrors baseColor above -- without this, overlayShiftStep (advanced
+        // every tick by shiftOverlayBuffer()) is computed but never actually
+        // read, so overlay animations render as a single frozen frame instead
+        // of animating.
+        uint32_t overlayColor;
+        if (overlayAnimMode == AnimMode::SHIFT && overlayBufSize > 0) {
+            overlayColor = overlayBuffer[((size_t)i + (size_t)overlayShiftStep) % overlayBufSize];
+        } else {
+            overlayColor = overlayBuffer[i];
+        }
+
         bool showOverlay = spreadActive && spreadMask[i];
-        uint32_t color = composite(baseColor, overlayBuffer[i], showOverlay);
+        uint32_t color = composite(baseColor, overlayColor, showOverlay);
 
         if (spliceActive && !spliceShowAnim[i]) {
-            color = spreadActive ? overlayBuffer[i] : spliceBgColor;
+            int16_t regionIdx = splicePixelRegionIdx[i];
+            if (regionIdx >= 0) {
+                const SpliceRegionState& state = spliceRegions[regionIdx];
+                size_t regionBufSize = state.buffer.size();
+                if (regionBufSize > 0) {
+                    uint8_t localOffset = (uint8_t)(i - state.start);
+                    color = state.buffer[((size_t)localOffset + (size_t)state.shiftStep) % regionBufSize];
+                } else {
+                    color = splicePixelBg[i];
+                }
+            } else {
+                color = splicePixelUseOverlay[i] ? overlayColor : splicePixelBg[i];
+            }
         }
 
         led->set_pixel(applyBrightness(color), i);

@@ -110,7 +110,11 @@ public:
 
     /** @copydoc LedStrand::spliceMask */
     void spliceMask(uint8_t sections, bool invert = false, bool alternating = false,
-                    uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000);
+                    uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000,
+                    bool useOverlay = false);
+
+    /** @copydoc LedStrand::spliceMaskCustom */
+    void spliceMaskCustom(const std::vector<LedStrand::SpliceRegion>& regions);
 
     /** @copydoc LedStrand::clearSpliceMask */
     void clearSpliceMask();

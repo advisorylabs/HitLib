@@ -2,9 +2,41 @@
 
 from __future__ import annotations
 
-from hitlib_sim import BitScrollSegment, Phase, Profile, ProfileMode, Sequencer, Strand
+from hitlib_sim import (
+    BitScrollSegment,
+    Phase,
+    Profile,
+    ProfileMode,
+    Sequencer,
+    SpliceRegion,
+    SpliceRegionAnimKind,
+    Strand,
+)
 
-from .models import AnimationConfig, AnimationKind, ModeConfig, PhaseConfig, SpliceMaskConfig, StrandConfig
+from .models import (
+    AnimationConfig,
+    AnimationKind,
+    ModeConfig,
+    OverlayAnimationConfig,
+    OverlayAnimationKind,
+    PhaseConfig,
+    SpliceMaskConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
+
+# OverlayAnimationConfig.kind (Pattern Studio's serializable model) -> the
+# sim/C++ SpliceRegionAnimKind used to build a custom region's own buffer.
+# Both enumerate the same overlay* vocabulary, just as separate types.
+_REGION_ANIM_KIND = {
+    OverlayAnimationKind.OFF: SpliceRegionAnimKind.OFF,
+    OverlayAnimationKind.SOLID: SpliceRegionAnimKind.SOLID,
+    OverlayAnimationKind.PULSE: SpliceRegionAnimKind.PULSE,
+    OverlayAnimationKind.FLASH: SpliceRegionAnimKind.FLASH,
+    OverlayAnimationKind.FLOW: SpliceRegionAnimKind.FLOW,
+    OverlayAnimationKind.RAINBOW: SpliceRegionAnimKind.RAINBOW,
+}
 
 
 def make_strand(config: StrandConfig) -> Strand:
@@ -86,8 +118,43 @@ def _apply_animation(strand: Strand, a: AnimationConfig) -> None:
         strand.bitscroll(segments, a.speed, a.invert, a.bg_color, a.bounce, a.spacing, a.repeating)
 
 
+def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
+    if o.kind == OverlayAnimationKind.OFF:
+        strand.overlay_set_color(0)
+    elif o.kind == OverlayAnimationKind.SOLID:
+        strand.overlay_set_color(o.color)
+    elif o.kind == OverlayAnimationKind.PULSE:
+        strand.overlay_pulse(o.color, o.run_length, o.speed, o.bg_color)
+    elif o.kind == OverlayAnimationKind.FLASH:
+        strand.overlay_flash(o.color, o.speed, o.bg_color)
+    elif o.kind == OverlayAnimationKind.FLOW:
+        strand.overlay_flow(o.color, o.color2, o.speed)
+    elif o.kind == OverlayAnimationKind.RAINBOW:
+        strand.overlay_rainbow(o.speed)
+
+
+def _make_sim_region(r: SpliceRegionConfig) -> SpliceRegion:
+    a = r.animation
+    return SpliceRegion(
+        start=r.start,
+        width=r.width,
+        kind=_REGION_ANIM_KIND[a.kind],
+        color=a.color,
+        color2=a.color2,
+        bg_color=a.bg_color,
+        run_length=a.run_length,
+        speed=a.speed,
+    )
+
+
 def _apply_splice(strand: Strand, s: SpliceMaskConfig) -> None:
-    if s.enabled:
-        strand.splice_mask(s.sections, s.invert, s.alternating, s.alt_period_ms, s.bg_color)
-    else:
+    if not s.enabled:
         strand.clear_splice_mask()
+        return
+
+    if s.mode == SpliceModeKind.SPLIT:
+        if s.needs_overlay():
+            _apply_overlay(strand, s.overlay)
+        strand.splice_mask(s.sections, s.invert, s.alternating, s.alt_period_ms, s.bg_color, s.use_overlay)
+    else:
+        strand.splice_mask_custom([_make_sim_region(r) for r in s.regions])

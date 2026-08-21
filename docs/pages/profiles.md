@@ -64,9 +64,9 @@ strand.activateMode(0);   // Idle
 
 ## Mode Stack Rules
 
-- Modes are stored in a **priority stack**; the highest-priority active mode wins.
+- Modes are stored in a **priority stack**, the highest-priority active mode wins.
 - Multiple modes can be active simultaneously, the winner updates every tick.
-- Timed modes auto-expire; persistent modes stay until `deactivateMode()` is called.
+- Timed modes auto-expire, persistent modes stay until `deactivateMode()` is called.
 - Calling `activateModeTimed()` on an already-timed mode extends its deadline rather
   than creating a duplicate entry.
 

@@ -26,7 +26,8 @@ namespace hitlib {
  * base buffer      <- flow / rainbow / pulse / bitscroll / twinkle
  * overlay buffer   <- second independent animation
  * spreadMask       <- CENTER_SPREAD composites base <-> overlay per-pixel
- * spliceMask       <- final per-pixel override (bgColor or overlay)
+ * spliceMask       <- final per-pixel override (bgColor or overlay), by
+ *                     equal alternating bins or by arbitrary regions
  * ```
  *
  * ### Typical setup
@@ -60,6 +61,32 @@ public:
     struct BitScrollSegment {
         uint32_t color; ///< Segment color (0xRRGGBB).
         uint8_t  width; ///< Width in pixels.
+    };
+
+    /**
+     * @brief What a custom splice mask region shows -- mirrors the overlay*()
+     * animation vocabulary (see @ref overlaySetColor "Overlay Animations"),
+     * since each region gets a buffer built and animated the same way.
+     */
+    enum class SpliceRegionAnimKind : uint8_t { OFF, SOLID, PULSE, FLASH, FLOW, RAINBOW };
+
+    /**
+     * @brief One independently placed override region for a custom splice mask.
+     *
+     * Each region gets its own animation buffer, generated over just that
+     * region's width, and animates independently of every other region and
+     * of the base/overlay buffers -- unlike spliceMask()'s single shared
+     * overlay, every region here can show something different at once.
+     */
+    struct SpliceRegion {
+        uint8_t  start;                                        ///< First pixel index covered by this region.
+        uint8_t  width;                                         ///< Number of pixels covered.
+        SpliceRegionAnimKind kind = SpliceRegionAnimKind::OFF;  ///< What this region shows.
+        uint32_t color     = 0xFFFFFF; ///< Foreground color (SOLID/PULSE/FLASH/FLOW start).
+        uint32_t color2    = 0x0000FF; ///< FLOW end color.
+        uint32_t bgColor   = 0x000000; ///< PULSE/FLASH background. OFF always shows black.
+        uint8_t  runLength = 5;        ///< PULSE run length.
+        uint8_t  speed     = 1;        ///< PULSE/FLASH/FLOW/RAINBOW animation speed.
     };
 
     /**
@@ -214,29 +241,49 @@ public:
     // ========================================================================
     /// @name Splice Mask
     ///
-    /// Splits the strip into equal-width bins and applies a per-bin override.
+    /// Overrides part of the strip, either as equal alternating bins sharing
+    /// one overlay buffer (spliceMask) or as arbitrarily placed regions that
+    /// each animate independently (spliceMaskCustom). The two are mutually
+    /// exclusive -- whichever was called most recently is what's active.
     /// @{
 
     /**
-     * @brief Apply a splice mask that overrides alternating sections.
+     * @brief Apply a splice mask that overrides alternating equal-width bins.
      *
      * The strip is divided into `sections + 1` equal bins.  Even-indexed bins
-     * (or their complement when @p invert is @c true) show @p bgColor instead
-     * of the active base animation.  If an overlay buffer is active those bins
-     * show the overlay instead.
+     * (or their complement when @p invert is @c true) show @p bgColor, or the
+     * overlay buffer when @p useOverlay is @c true, instead of the active base
+     * animation.
      *
      * @param sections      Number of divider boundaries (e.g. 1 = two halves).
      *                      Pass @c 0 to disable.
      * @param invert        Swap which bins are overridden (default @c false).
      * @param alternating   Toggle @p invert automatically every @p altPeriodMs.
      * @param altPeriodMs   Toggle period when @p alternating is @c true (ms).
-     * @param bgColor       Color shown in masked bins when no overlay is active.
+     * @param bgColor       Color shown in masked bins when @p useOverlay is @c false.
+     * @param useOverlay    Show the overlay buffer in masked bins instead of @p bgColor.
      */
     void spliceMask(uint8_t sections, bool invert = false, bool alternating = false,
-                    uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000);
+                    uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000,
+                    bool useOverlay = false);
 
     /**
-     * @brief Remove the active splice mask.
+     * @brief Apply a splice mask made of independently placed/sized regions,
+     * each running its own animation.
+     *
+     * Unlike spliceMask(), regions can start and end anywhere on the strip,
+     * don't alternate, and each gets a dedicated buffer generated over just
+     * its own width -- so e.g. one region can rainbow-scroll while another
+     * pulses, simultaneously. Regions stay fixed until spliceMaskCustom() or
+     * clearSpliceMask() is called again. Later entries win where regions
+     * overlap.
+     *
+     * @param regions  Override regions to apply.
+     */
+    void spliceMaskCustom(const std::vector<SpliceRegion>& regions);
+
+    /**
+     * @brief Remove the active splice mask, whichever kind is active.
      */
     void clearSpliceMask();
 
@@ -449,15 +496,33 @@ private:
     uint32_t              twinkleBgColor    = 0x000000;
 
     // Splice mask
+    enum class SpliceMode : uint8_t { SPLIT, CUSTOM };
+
+    // Runtime animation state for one CUSTOM-mode region -- a scaled-down
+    // version of the overlay buffer (buffer + shift step/speed), but one per
+    // region instead of shared.
+    struct SpliceRegionState {
+        uint8_t                start = 0;
+        std::vector<uint32_t>  buffer;
+        int                    shiftStep  = 0;
+        uint8_t                shiftSpeed = 0;
+    };
+
     bool              spliceActive      = false;
+    SpliceMode        spliceMode        = SpliceMode::SPLIT;
     uint8_t           spliceSections    = 0;
     bool              spliceInvert      = false;
     bool              spliceAlternating = false;
     uint32_t          spliceAltMs       = 100;
     uint32_t          spliceBgColor     = 0x000000;
+    bool              spliceUseOverlay  = false;
     bool              spliceAltPhase    = false;
     uint32_t          spliceLastToggleMs = 0;
-    std::vector<bool> spliceShowAnim;
+    std::vector<bool>     spliceShowAnim;
+    std::vector<uint32_t> splicePixelBg;
+    std::vector<bool>     splicePixelUseOverlay;
+    std::vector<int16_t>  splicePixelRegionIdx;  // CUSTOM mode: index into spliceRegions, or -1
+    std::vector<SpliceRegionState> spliceRegions; // CUSTOM mode only
 
     // Overlay buffer
     AnimMode              overlayAnimMode   = AnimMode::STATIC;
@@ -512,6 +577,7 @@ private:
     void advanceBitscrollBounce();
     void fillBitscrollFromMaster();
     void advanceSpliceAlternating(uint32_t nowMs);
+    void advanceSpliceRegions();
     void rebuildSpliceMask();
     void doLayerSwap();
 

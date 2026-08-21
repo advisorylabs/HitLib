@@ -1,6 +1,6 @@
 """End-to-end wiring checks for the GUI shell: selection, edits propagating to
 the engine, add/remove, play/pause. Runs headless via the offscreen Qt
-platform (see conftest.py) -- no real display required.
+platform.
 """
 
 from pattern_studio.main_window import MainWindow

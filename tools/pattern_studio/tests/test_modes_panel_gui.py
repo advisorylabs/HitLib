@@ -1,6 +1,5 @@
-"""End-to-end checks for the Phase 3 mode/profile editor, driven through the
-actual widgets (not by mutating config directly) so the signal wiring itself
-is what's under test.
+"""End-to-end checks for the mode/profile editor, driven through the
+actual widgets (not by mutating config directly).
 """
 
 from PySide6.QtCore import Qt

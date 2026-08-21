@@ -1,7 +1,7 @@
 # Groups {#groups_page}
 
 A **LedGroup** owns a set of LedStrand pointers and fans every animation command
-out to all of them simultaneously.  Each group runs its own PROS task, multiple
+out to all of them simultaneously. Each group runs its own PROS task, multiple
 independent groups are fully supported with no shared state between them.
 
 ---

@@ -92,7 +92,7 @@ strand.bitscroll(
     /*repeating*/ true     // tile pattern vs single pass
 );
 
-// Bounce — pattern rocks back and forth
+// Bounce: pattern rocks back and forth
 strand.bitscroll(segments, 2, false, 0, /*bounce*/ true);
 ```
 
@@ -100,8 +100,10 @@ strand.bitscroll(segments, 2, false, 0, /*bounce*/ true);
 
 ## Overlay Animations
 
-A second animation buffer that is composited over the base by the
-[center spread](\ref LedStrand::centerSpread) mask.
+A second animation buffer, independent of the base animation. It's composited
+over the base by the [center spread](\ref LedStrand::centerSpread) mask, and/or
+shown directly in [splice mask](\ref LedStrand::spliceMask) regions that set
+`useOverlay`.
 
 ```cpp
 strand.overlaySetColor(0xFFFFFF);
@@ -141,8 +143,11 @@ pixel every 200 ms (~6 s across 63 LEDs).
 
 ## Splice Mask
 
-Splits the strip into equal-width bins; masked bins show `bgColor` (or the overlay
-buffer if one is active), unmasked bins show the base animation.
+Overrides part of the strip, either as equal alternating bins sharing the
+[overlay](\ref LedStrand::overlaySetColor) buffer (`spliceMask`) or as
+arbitrarily placed regions that each animate independently
+(`spliceMaskCustom`). The two forms are mutually exclusive whichever was
+called most recently is what's active.
 
 ```cpp
 // Two halves: left shows animation, right shows bgColor
@@ -151,7 +156,20 @@ strand.spliceMask(1);
 // Alternating, toggles every 100 ms (creates a strobe/interleave effect)
 strand.spliceMask(3, false, /*alternating*/ true, /*periodMs*/ 100);
 
-// Clear
+// Masked bins show the overlay animation instead of a solid color
+strand.overlayRainbow(1);
+strand.spliceMask(1, false, false, 100, 0x000000, /*useOverlay*/ true);
+
+// Custom: arbitrary, non-alternating regions, each with its own animation --
+// unlike the overlay above, these run independently and simultaneously.
+using Kind = LedStrand::SpliceRegionAnimKind;
+strand.spliceMaskCustom({
+    {.start = 0,  .width = 5, .kind = Kind::SOLID,   .color = 0xFF0000},              // solid red
+    {.start = 10, .width = 8, .kind = Kind::RAINBOW, .speed = 1},                      // its own rainbow
+    {.start = 20, .width = 6, .kind = Kind::PULSE,   .color = 0x00FF00, .runLength = 3, .speed = 2},
+});
+
+// Clear (either kind)
 strand.clearSpliceMask();
 ```
 

@@ -12,7 +12,17 @@ from __future__ import annotations
 
 import re
 
-from .models import AnimationConfig, AnimationKind, ModeConfig, SpliceMaskConfig, StrandConfig
+from .models import (
+    AnimationConfig,
+    AnimationKind,
+    ModeConfig,
+    OverlayAnimationConfig,
+    OverlayAnimationKind,
+    SpliceMaskConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
 
 MAX_LEDS = 64
 
@@ -65,8 +75,10 @@ def validate_for_export(config: StrandConfig) -> list[str]:
                 if phase.duration_ms < 1:
                     errors.append(f'Mode "{mode.name}", phase "{phase.name}": duration must be >= 1 ms.')
                 errors.extend(_validate_animation(mode.name, phase.name, phase.animation))
+                errors.extend(_validate_splice(mode.name, phase.name, phase.splice))
         else:
             errors.extend(_validate_animation(mode.name, None, mode.animation))
+            errors.extend(_validate_splice(mode.name, None, mode.splice))
 
     return errors
 
@@ -84,11 +96,50 @@ def _validate_animation(mode_name: str, phase_name: str | None, a: AnimationConf
     return errors
 
 
+def _validate_splice(mode_name: str, phase_name: str | None, s: SpliceMaskConfig) -> list[str]:
+    if not s.enabled:
+        return []
+    where = f'mode "{mode_name}"' + (f', phase "{phase_name}"' if phase_name else "")
+    errors = []
+    if s.mode == SpliceModeKind.SPLIT:
+        if not (0 <= s.sections <= 255):
+            errors.append(f"{where}: splice sections must be 0-255 (got {s.sections}).")
+    else:
+        if not s.regions:
+            errors.append(f"{where}: Custom splice mask needs at least one region.")
+        for i, r in enumerate(s.regions):
+            if r.width < 1:
+                errors.append(f"{where}: splice region {i + 1} width must be >= 1 (got {r.width}).")
+            if not (0 <= r.start <= 255):
+                errors.append(f"{where}: splice region {i + 1} start must be 0-255 (got {r.start}).")
+    return errors
+
+
 # ============================================================================
 # Identifier sanitizing
 # ============================================================================
 
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+# Reserved words that would make the generated identifier a syntax error if
+# used verbatim (e.g. a mode named "Default" -- _effective_modes() synthesizes
+# exactly that name for a non-profile strand's single animation).
+_CPP_KEYWORDS = {
+    "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor",
+    "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t",
+    "class", "compl", "concept", "const", "consteval", "constexpr", "constinit",
+    "const_cast", "continue", "co_await", "co_return", "co_yield", "decltype",
+    "default", "delete", "do", "double", "dynamic_cast", "else", "enum",
+    "explicit", "export", "extern", "false", "float", "for", "friend", "goto",
+    "if", "inline", "int", "long", "mutable", "namespace", "new", "noexcept",
+    "not", "not_eq", "nullptr", "operator", "or", "or_eq", "private",
+    "protected", "public", "register", "reinterpret_cast", "requires",
+    "return", "short", "signed", "sizeof", "static", "static_assert",
+    "static_cast", "struct", "switch", "template", "this", "thread_local",
+    "throw", "true", "try", "typedef", "typeid", "typename", "union",
+    "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while",
+    "xor", "xor_eq",
+}
 
 
 def _camel_case(name: str, fallback: str) -> str:
@@ -99,6 +150,8 @@ def _camel_case(name: str, fallback: str) -> str:
     ident = first.lower() + "".join(w.capitalize() for w in rest)
     if ident[0].isdigit():
         ident = fallback + ident
+    if ident in _CPP_KEYWORDS:
+        ident = ident + fallback.capitalize()
     return ident
 
 
@@ -168,21 +221,50 @@ def _animation_statement(a: AnimationConfig) -> str:
     raise ValueError(f"unhandled animation kind: {a.kind}")
 
 
-def _splice_statement(s: SpliceMaskConfig) -> str | None:
-    if not s.enabled:
-        return None
+def _overlay_statement(o: OverlayAnimationConfig) -> str:
+    if o.kind == OverlayAnimationKind.OFF:
+        return "s.overlaySetColor(0x000000);"
+    if o.kind == OverlayAnimationKind.SOLID:
+        return f"s.overlaySetColor({_hex(o.color)});"
+    if o.kind == OverlayAnimationKind.PULSE:
+        return f"s.overlayPulse({_hex(o.color)}, {o.run_length}, {o.speed}, {_hex(o.bg_color)});"
+    if o.kind == OverlayAnimationKind.FLASH:
+        return f"s.overlayFlash({_hex(o.color)}, {o.speed}, {_hex(o.bg_color)});"
+    if o.kind == OverlayAnimationKind.FLOW:
+        return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed});"
+    if o.kind == OverlayAnimationKind.RAINBOW:
+        return f"s.overlayRainbow({o.speed});"
+    raise ValueError(f"unhandled overlay kind: {o.kind}")
+
+
+def _region_literal(r: SpliceRegionConfig) -> str:
+    a = r.animation
+    kind = f"LedStrand::SpliceRegionAnimKind::{a.kind.value.upper()}"
     return (
-        f"s.spliceMask({s.sections}, {_bool(s.invert)}, {_bool(s.alternating)}, "
-        f"{s.alt_period_ms}, {_hex(s.bg_color)});"
+        f"{{.start = {r.start}, .width = {r.width}, .kind = {kind}, "
+        f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}, .bgColor = {_hex(a.bg_color)}, "
+        f".runLength = {a.run_length}, .speed = {a.speed}}}"
     )
 
 
+def _splice_statements(s: SpliceMaskConfig) -> list[str]:
+    if not s.enabled:
+        return []
+    if s.mode == SpliceModeKind.SPLIT:
+        lines: list[str] = []
+        if s.needs_overlay():
+            lines.append(_overlay_statement(s.overlay))
+        lines.append(
+            f"s.spliceMask({s.sections}, {_bool(s.invert)}, {_bool(s.alternating)}, "
+            f"{s.alt_period_ms}, {_hex(s.bg_color)}, {_bool(s.use_overlay)});"
+        )
+        return lines
+    region_list = ", ".join(_region_literal(r) for r in s.regions)
+    return [f"s.spliceMaskCustom({{{region_list}}});"]
+
+
 def _leaf_body(a: AnimationConfig, splice: SpliceMaskConfig) -> list[str]:
-    lines = [_animation_statement(a)]
-    splice_stmt = _splice_statement(splice)
-    if splice_stmt:
-        lines.append(splice_stmt)
-    return lines
+    return [_animation_statement(a), *_splice_statements(splice)]
 
 
 # ============================================================================

@@ -29,7 +29,7 @@ LedGroup
       ├─ Base layer      ← flow / rainbow / pulse / bitscroll / twinkle
       ├─ Overlay layer   ← second independent animation
       ├─ Spread mask     ← wipes overlay over base from center outward
-      ├─ Splice mask     ← splits strip into alternating sections
+      ├─ Splice mask     ← alternating sections, or arbitrary custom regions
       └─ Profile         ← priority-based mode stack for match events
 ```
 
@@ -43,7 +43,7 @@ LedGroup
 | **Bounce variants** | Pulse bounce, bitscroll bounce |
 | **Overlay system** | Two independent layers composited by a spread mask |
 | **Center spread** | Wipe from center outward, or edges inward |
-| **Splice mask** | Alternating section override with optional auto-toggle |
+| **Splice mask** | Alternating sections or custom regions, solid color or overlay |
 | **Profiles** | Priority mode stack, activateMode / activateModeTimed |
 | **Sequencer** | Multi-phase timed driver for endgame sequences |
 | **Groups** | One call fans out to every strand in the group |

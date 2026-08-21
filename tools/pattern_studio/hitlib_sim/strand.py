@@ -1,8 +1,8 @@
 """Port of include/hitlib/led_strand.hpp + src/led_strand.cpp.
 
 This mirrors LedStrand method-for-method so profile authoring in the GUI maps
-1:1 onto the real API, and so exported C++ (Phase 5 of the project plan) is a
-direct transliteration rather than a re-derivation.
+1:1 onto the real API, and so exported C++ is a direct transliteration rather 
+than a re-derivation.
 
 Threading/locking from the original (pros::Mutex, the shared s_adiMutex, and
 the release-around-user-callback dance in tick()) is intentionally dropped --
@@ -37,10 +37,59 @@ class AnimMode(Enum):
     TWINKLE = auto()
 
 
+class SpliceMode(Enum):
+    SPLIT = auto()
+    CUSTOM = auto()
+
+
 @dataclass(frozen=True)
 class BitScrollSegment:
     color: int
     width: int
+
+
+class SpliceRegionAnimKind(Enum):
+    """Mirrors LedStrand::SpliceRegionAnimKind -- same vocabulary as the
+    overlay* animations, since each region's buffer is built the same way.
+    """
+
+    OFF = auto()
+    SOLID = auto()
+    PULSE = auto()
+    FLASH = auto()
+    FLOW = auto()
+    RAINBOW = auto()
+
+
+@dataclass(frozen=True)
+class SpliceRegion:
+    """One independently placed override region for a custom splice mask.
+    Each region gets its own animation buffer, generated over just that
+    region's width, and animates independently of every other region and of
+    the base/overlay buffers.
+    """
+
+    start: int
+    width: int
+    kind: SpliceRegionAnimKind = SpliceRegionAnimKind.OFF
+    color: int = 0xFFFFFF
+    color2: int = 0x0000FF
+    bg_color: int = 0x000000
+    run_length: int = 5
+    speed: int = 1
+
+
+@dataclass
+class _SpliceRegionState:
+    """Runtime animation state for one CUSTOM-mode region -- a scaled-down
+    version of the overlay buffer (buffer + shift step/speed), but one per
+    region instead of shared.
+    """
+
+    start: int
+    buffer: list[int]
+    shift_step: int = 0
+    shift_speed: int = 0
 
 
 @dataclass
@@ -61,6 +110,10 @@ class Strand:
         self.buffer: list[int] = [0] * self.length
         self.overlay_buffer: list[int] = [0] * self.length
         self.splice_show_anim: list[bool] = [True] * self.length
+        self.splice_pixel_bg: list[int] = [0] * self.length
+        self.splice_pixel_use_overlay: list[bool] = [False] * self.length
+        self.splice_pixel_region_idx: list[int] = [-1] * self.length
+        self.splice_regions: list[_SpliceRegionState] = []
         self.spread_mask: list[bool] = [False] * self.length
 
         # Rendered output of the last tick() -- what the GUI should draw.
@@ -97,11 +150,13 @@ class Strand:
 
         # Splice mask
         self.splice_active = False
+        self.splice_mode = SpliceMode.SPLIT
         self.splice_sections = 0
         self.splice_invert = False
         self.splice_alternating = False
         self.splice_alt_ms = 100
         self.splice_bg_color = 0
+        self.splice_use_overlay = False
         self.splice_last_toggle_ms = 0
 
         # Overlay buffer
@@ -152,6 +207,7 @@ class Strand:
             self._advance_center_spread()
 
         self._advance_splice_alternating(now)
+        self._advance_splice_regions()
 
         effective_idx = self._compute_effective_mode()
         mode_changed = effective_idx != self.last_mode_idx
@@ -380,15 +436,67 @@ class Strand:
     # ========================================================================
 
     def splice_mask(self, sections: int, invert: bool = False, alternating: bool = False,
-                     alt_period_ms: int = 100, bg_color: int = 0) -> None:
+                     alt_period_ms: int = 100, bg_color: int = 0, use_overlay: bool = False) -> None:
+        self.splice_mode = SpliceMode.SPLIT
+        self.splice_regions = []
         self.splice_sections = sections
         self.splice_invert = invert
         self.splice_alternating = alternating
         self.splice_alt_ms = alt_period_ms if alt_period_ms > 0 else 1
         self.splice_bg_color = bg_color
+        self.splice_use_overlay = use_overlay
         self.splice_active = sections != 0
         self.splice_last_toggle_ms = self.now_ms
         self._rebuild_splice_mask()
+
+    def splice_mask_custom(self, regions: Sequence[SpliceRegion]) -> None:
+        self.splice_mode = SpliceMode.CUSTOM
+        self.splice_alternating = False
+        self.splice_show_anim = [True] * self.length
+        self.splice_pixel_region_idx = [-1] * self.length
+        self.splice_regions = []
+
+        for r in regions:
+            if r.start >= self.length:
+                continue
+            end = min(r.start + r.width, self.length)
+            region_width = end - r.start
+
+            region_idx = -1
+            fallback_color = 0x000000
+
+            if r.kind == SpliceRegionAnimKind.SOLID:
+                fallback_color = r.color
+            elif r.kind != SpliceRegionAnimKind.OFF:
+                state = _SpliceRegionState(start=r.start, buffer=[])
+                if r.kind == SpliceRegionAnimKind.PULSE:
+                    state.buffer = [r.bg_color] * region_width
+                    rl = min(r.run_length, region_width)
+                    for k in range(rl):
+                        state.buffer[k] = r.color
+                    state.shift_speed = r.speed
+                elif r.kind == SpliceRegionAnimKind.FLASH:
+                    reps = min(r.speed, 32)
+                    state.buffer = [r.bg_color] * (region_width * (1 + reps))
+                    for k in range(region_width):
+                        state.buffer[k] = r.color
+                    state.shift_speed = 1
+                elif r.kind == SpliceRegionAnimKind.FLOW:
+                    state.buffer = gen_gradient(r.color, r.color2, region_width)
+                    state.shift_speed = r.speed
+                elif r.kind == SpliceRegionAnimKind.RAINBOW:
+                    state.buffer = gen_rainbow(region_width)
+                    state.shift_speed = r.speed
+                self.splice_regions.append(state)
+                region_idx = len(self.splice_regions) - 1
+
+            for i in range(r.start, end):
+                self.splice_show_anim[i] = False
+                self.splice_pixel_bg[i] = fallback_color
+                self.splice_pixel_use_overlay[i] = False
+                self.splice_pixel_region_idx[i] = region_idx
+
+        self.splice_active = len(regions) > 0
 
     def clear_splice_mask(self) -> None:
         self.splice_active = False
@@ -407,15 +515,27 @@ class Strand:
                 if idx >= self.length:
                     break
                 self.splice_show_anim[idx] = show_anim
+                self.splice_pixel_bg[idx] = self.splice_bg_color
+                self.splice_pixel_use_overlay[idx] = self.splice_use_overlay
+                self.splice_pixel_region_idx[idx] = -1
                 idx += 1
 
     def _advance_splice_alternating(self, now_ms: int) -> None:
-        if not self.splice_active or not self.splice_alternating:
+        if not self.splice_active or self.splice_mode != SpliceMode.SPLIT or not self.splice_alternating:
             return
         if now_ms - self.splice_last_toggle_ms >= self.splice_alt_ms:
             self.splice_invert = not self.splice_invert
             self.splice_last_toggle_ms = now_ms
             self._rebuild_splice_mask()
+
+    def _advance_splice_regions(self) -> None:
+        if not self.splice_active or self.splice_mode != SpliceMode.CUSTOM:
+            return
+        for state in self.splice_regions:
+            buf_size = len(state.buffer)
+            if buf_size == 0 or state.shift_speed == 0:
+                continue
+            state.shift_step = (state.shift_step + state.shift_speed) % buf_size
 
     # ========================================================================
     # Overlay animations
@@ -639,6 +759,7 @@ class Strand:
     def _flush_buffer(self) -> None:
         spread_active = self.anim_mode == AnimMode.CENTER_SPREAD
         buf_size = len(self.buffer)
+        overlay_buf_size = len(self.overlay_buffer)
 
         pixels = []
         for i in range(self.length):
@@ -647,11 +768,30 @@ class Strand:
             else:
                 base_color = self.buffer[i]
 
+            # Mirrors base_color above -- without this, overlay_shift_step
+            # (advanced every tick by _shift_overlay_buffer()) is computed but
+            # never actually read, so overlay animations render as a single
+            # frozen frame instead of animating.
+            if self.overlay_anim_mode == AnimMode.SHIFT and overlay_buf_size > 0:
+                overlay_color = self.overlay_buffer[(i + self.overlay_shift_step) % overlay_buf_size]
+            else:
+                overlay_color = self.overlay_buffer[i]
+
             show_overlay = spread_active and self.spread_mask[i]
-            color = self.overlay_buffer[i] if show_overlay else base_color
+            color = overlay_color if show_overlay else base_color
 
             if self.splice_active and not self.splice_show_anim[i]:
-                color = self.overlay_buffer[i] if spread_active else self.splice_bg_color
+                region_idx = self.splice_pixel_region_idx[i]
+                if region_idx >= 0:
+                    state = self.splice_regions[region_idx]
+                    region_buf_size = len(state.buffer)
+                    if region_buf_size > 0:
+                        local_offset = i - state.start
+                        color = state.buffer[(local_offset + state.shift_step) % region_buf_size]
+                    else:
+                        color = self.splice_pixel_bg[i]
+                else:
+                    color = overlay_color if self.splice_pixel_use_overlay[i] else self.splice_pixel_bg[i]
 
             pixels.append(self._apply_brightness(color))
         self.pixels = pixels

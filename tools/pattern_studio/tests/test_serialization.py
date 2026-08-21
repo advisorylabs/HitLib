@@ -1,6 +1,14 @@
 import json
 
-from pattern_studio.models import AnimationKind, ModeConfig, PhaseConfig, StrandConfig
+from pattern_studio.models import (
+    AnimationKind,
+    ModeConfig,
+    OverlayAnimationKind,
+    PhaseConfig,
+    SpliceModeKind,
+    SpliceRegionConfig,
+    StrandConfig,
+)
 from pattern_studio.serialization import (
     document_from_dict,
     document_to_dict,
@@ -42,6 +50,29 @@ def test_document_round_trip():
     configs = [_elaborate_config(), StrandConfig(name="Plain")]
     restored = document_from_dict(document_to_dict(configs))
     assert restored == configs
+
+
+def test_custom_splice_regions_and_overlay_round_trip():
+    cfg = StrandConfig(name="Custom Splice")
+    cfg.splice.enabled = True
+    cfg.splice.mode = SpliceModeKind.CUSTOM
+
+    region1 = SpliceRegionConfig(start=0, width=5)
+    region1.animation.kind = OverlayAnimationKind.SOLID
+    region1.animation.color = 0xFF0000
+    region2 = SpliceRegionConfig(start=10, width=3)
+    region2.animation.kind = OverlayAnimationKind.PULSE
+    region2.animation.color = 0x00FF00
+    region2.animation.run_length = 4
+    cfg.splice.regions = [region1, region2]
+
+    # Split mode's own shared overlay config should round-trip independently
+    # of the per-region ones above.
+    cfg.splice.overlay.kind = OverlayAnimationKind.FLOW
+    cfg.splice.overlay.color2 = 0x00FF00
+
+    restored = strand_from_dict(strand_to_dict(cfg))
+    assert restored == cfg
 
 
 def test_missing_fields_fall_back_to_defaults():

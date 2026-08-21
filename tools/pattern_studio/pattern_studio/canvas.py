@@ -9,10 +9,8 @@ from PySide6.QtWidgets import QWidget
 
 class StripCanvas(QWidget):
     # Row height is fixed at whatever size makes REFERENCE_ROWS strands fill
-    # the canvas nicely, not stretched to fill however many strands actually
-    # exist -- with 1-2 strands that used to mean giant bars. The resulting
-    # stack is vertically centered instead of pinned to the top, so it grows
-    # outward from the middle as strands are added.
+    # the canvas nicely. The resulting stack is vertically centered instead 
+    # of pinned to the top, so it grows outward from the middle as strands are added.
     REFERENCE_ROWS = 10
     MARGIN = 12
     LABEL_H = 16

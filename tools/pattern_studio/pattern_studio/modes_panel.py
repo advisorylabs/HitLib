@@ -1,10 +1,10 @@
-"""Mode-list + mode editor for a strand's Profile (Phase 3).
+"""Mode-list + mode editor for a strand's Profile.
 
 Mirrors LedStrand's real Profile/ProfileMode/Sequencer model: a strand has a
 list of named, prioritized modes; each mode is either a steady-state
 animation or a timed sequence of phases. Checking a mode's checkbox calls
 the same activate_mode()/deactivate_mode() the priority stack uses on real
-hardware, so toggling multiple modes on at once genuinely exercises
+hardware, so toggling multiple modes on at once exercises
 priority resolution rather than just switching a single active animation.
 
 AnimationPanel/SpliceMaskPanel are reused (not re-implemented) for editing

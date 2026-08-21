@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
         # Called last (not at the top of __init__): resize() on a QMainWindow
         # before setCentralWidget() and its children exist gets overridden by
         # Qt's own layout-driven size once the window is actually shown --
-        # confirmed by measuring the real window rect at runtime, not assumed.
+        # confirmed by measuring the real window rect at runtime.
         # Wide enough that the strand-settings strip (6 fields, ~750px
         # minimum with real spinbox arrows) fits in the center column without
         # needing the controls_scroll fallback below.
