@@ -20,10 +20,18 @@ class StripCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.sessions: list = []
+        self.selected: set[int] = set()
         self.setMinimumHeight(100)
 
     def set_sessions(self, sessions: list) -> None:
         self.sessions = sessions
+        self.update()
+
+    def set_selected(self, indices) -> None:
+        """Rows to outline as the current group-edit selection. Only drawn
+        when more than one strand is selected -- with a single selection the
+        outline would just be visual noise."""
+        self.selected = set(indices)
         self.update()
 
     def _reference_row_height(self) -> float:
@@ -51,18 +59,27 @@ class StripCanvas(QWidget):
         available_h = self.height() - 2 * self.MARGIN
         y = self.MARGIN + max(0.0, (available_h - stack_h) / 2)
 
-        for session in self.sessions:
+        highlight = self.selected if len(self.selected) > 1 else set()
+
+        for row, session in enumerate(self.sessions):
             strand = session.strand
             n = max(strand.length, 1)
             available_w = self.width() - 2 * self.MARGIN
             led_w = available_w / n
             pad = min(3.0, led_w * 0.15)
 
-            painter.setPen(QColor(210, 210, 216))
-            painter.drawText(
-                QRectF(self.MARGIN, y, available_w, self.LABEL_H), Qt.AlignLeft, session.config.name
-            )
+            selected = row in highlight
+            painter.setPen(QColor(120, 190, 255) if selected else QColor(210, 210, 216))
+            label = f"{session.config.name}  (group)" if selected else session.config.name
+            painter.drawText(QRectF(self.MARGIN, y, available_w, self.LABEL_H), Qt.AlignLeft, label)
             row_top = y + self.LABEL_H
+
+            if selected:
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QColor(120, 190, 255))
+                painter.drawRoundedRect(
+                    QRectF(self.MARGIN - 4, y - 2, available_w + 8, self.LABEL_H + row_h + 4), 4, 4
+                )
 
             for i, color in enumerate(strand.pixels):
                 r, g, b = (color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF

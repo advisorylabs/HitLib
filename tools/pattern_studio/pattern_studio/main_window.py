@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .canvas import StripCanvas
 from .codegen import generate_cpp, validate_for_export
+from .group_edit import apply_changes, diff_config
 from .inspector import InspectorPanel
 from .models import StrandConfig
 from .serialization import load_document, save_document
@@ -37,7 +39,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.sessions: list[StrandSession] = []
+        # The anchor (what the inspector shows) plus the wider group an edit
+        # is replayed onto -- see _apply_group_edit.
         self._current_index = -1
+        self._selected_indices: list[int] = []
+        self._baseline: StrandConfig | None = None
+        self._baseline_index = -1
         self._running = True
         self._current_file_path: Path | None = None
         self._update_title()
@@ -127,7 +134,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_sessions(self.sessions)
 
         self.strand_list.add_requested.connect(self.add_strand)
-        self.strand_list.remove_requested.connect(self.remove_strand)
+        self.strand_list.remove_requested.connect(self.remove_selected_strands)
         self.strand_list.selection_changed.connect(self._on_selection_changed)
         self.inspector.strand_settings_changed.connect(self._on_strand_settings_changed)
         self.inspector.animation_changed.connect(self._on_animation_changed)
@@ -290,7 +297,11 @@ class MainWindow(QMainWindow):
             session.deleteLater()
         self.sessions.clear()
         self._current_index = -1
+        self._selected_indices = []
+        self._baseline = None
+        self._baseline_index = -1
         self._refresh_list()
+        self.canvas.set_selected(())
         self.canvas.update()
 
     def add_strand(self) -> None:
@@ -299,19 +310,30 @@ class MainWindow(QMainWindow):
         self._add_session(cfg)
 
     def remove_strand(self, row: int) -> None:
-        if not (0 <= row < len(self.sessions)):
+        self.remove_strands([row])
+
+    def remove_selected_strands(self) -> None:
+        """Remove every strand in the current group selection, not just the
+        anchor -- the Remove button acts on what the list shows as selected."""
+        self.remove_strands(self._selected_indices)
+
+    def remove_strands(self, rows: list[int]) -> None:
+        valid = sorted({r for r in rows if 0 <= r < len(self.sessions)})
+        if not valid:
             return
-        session = self.sessions.pop(row)
-        session.stop()
-        session.deleteLater()
+        # Highest row first, so each pop() can't shift the rows still to remove.
+        for row in reversed(valid):
+            session = self.sessions.pop(row)
+            session.stop()
+            session.deleteLater()
         self._refresh_list()
-        new_row = min(row, len(self.sessions) - 1)
+        new_row = min(valid[0], len(self.sessions) - 1)
         self.strand_list.select(new_row)
         # setCurrentRow(-1) is a no-op (and won't fire selection_changed) when
         # the row was already -1, which happens when the last strand is
         # removed -- call the handler directly so inspector/transport-button
         # enabled state doesn't go stale in that case.
-        self._on_selection_changed(new_row)
+        self._on_selection_changed()
         self.canvas.update()
 
     def _refresh_list(self) -> None:
@@ -326,31 +348,85 @@ class MainWindow(QMainWindow):
     # Selection / editing
     # ------------------------------------------------------------------
 
-    def _on_selection_changed(self, row: int) -> None:
-        self._current_index = row
+    def _on_selection_changed(self) -> None:
+        rows = [r for r in self.strand_list.selected_rows() if 0 <= r < len(self.sessions)]
+        anchor = self.strand_list.current_row()
+        # Qt lets the current row sit outside the selection (Ctrl+arrow); the
+        # anchor has to be a strand the edit will actually reach.
+        if anchor not in rows:
+            anchor = rows[0] if rows else -1
+        self._selected_indices = rows
+        self._current_index = anchor
+
         session = self._current_session()
         has_selection = session is not None
         self.inspector.setEnabled(has_selection)
         self.play_selected_btn.setEnabled(has_selection)
         self.pause_selected_btn.setEnabled(has_selection)
         self.reset_selected_btn.setEnabled(has_selection)
+        self.strand_list.set_group_size(len(rows))
+        self.inspector.set_group_size(len(rows))
+        self.canvas.set_selected(rows)
         if session is not None:
             self.inspector.load(session.config)
+        self._capture_baseline()
+
+    def _group_sessions(self) -> list[StrandSession]:
+        """Every session an edit (or a "Sel" transport button) applies to,
+        anchor first."""
+        anchor = self._current_session()
+        if anchor is None:
+            return []
+        others = [
+            self.sessions[i]
+            for i in self._selected_indices
+            if 0 <= i < len(self.sessions) and i != self._current_index
+        ]
+        return [anchor, *others]
+
+    def _capture_baseline(self) -> None:
+        """Snapshot the anchor's config so the *next* edit can be diffed
+        against it. Taken up front rather than inside the edit because the
+        panels mutate nested lists (profile modes, phases, splice regions) in
+        place while the user works, not only in save() -- by the time a
+        changed signal arrives the config already holds the new value.
+        """
+        session = self._current_session()
+        self._baseline = deepcopy(session.config) if session is not None else None
+        self._baseline_index = self._current_index
+
+    def _apply_group_edit(self, rebuild: bool) -> None:
+        """Commit the inspector's edit to the anchor, replay just the fields it
+        changed onto the rest of the selected group, then refresh every engine
+        strand it touched.
+        """
+        anchor = self._current_session()
+        if anchor is None:
+            return
+        self.inspector.save(anchor.config)
+
+        sessions = self._group_sessions()
+        # A stale baseline (anchor moved without a selection signal) would diff
+        # against the wrong strand, so fall back to anchor-only editing.
+        if len(sessions) > 1 and self._baseline is not None and self._baseline_index == self._current_index:
+            changes = diff_config(self._baseline, anchor.config)
+            for session in sessions[1:]:
+                apply_changes(session.config, changes)
+        self._capture_baseline()
+
+        for session in sessions:
+            if rebuild:
+                session.rebuild()
+            else:
+                session.reapply_animation()
+        if rebuild:
+            self._refresh_list()
 
     def _on_strand_settings_changed(self) -> None:
-        session = self._current_session()
-        if session is None:
-            return
-        self.inspector.save(session.config)
-        session.rebuild()
-        self._refresh_list()
+        self._apply_group_edit(rebuild=True)
 
     def _on_animation_changed(self) -> None:
-        session = self._current_session()
-        if session is None:
-            return
-        self.inspector.save(session.config)
-        session.reapply_animation()
+        self._apply_group_edit(rebuild=False)
 
     # ------------------------------------------------------------------
     # Transport
@@ -374,16 +450,13 @@ class MainWindow(QMainWindow):
             session.rebuild()
 
     def _play_selected(self) -> None:
-        session = self._current_session()
-        if session is not None:
+        for session in self._group_sessions():
             session.start()
 
     def _pause_selected(self) -> None:
-        session = self._current_session()
-        if session is not None:
+        for session in self._group_sessions():
             session.stop()
 
     def _reset_selected(self) -> None:
-        session = self._current_session()
-        if session is not None:
+        for session in self._group_sessions():
             session.rebuild()

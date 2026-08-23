@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -648,6 +649,19 @@ class InspectorPanel(QWidget):
         # rather than something tweaked as often as the animation, and the
         # right-hand column was getting crowded.
         self.strand_panel = StrandSettingsPanel()
+
+        # Shown only while several strands are selected -- the fields below
+        # display the anchor strand's values, and MainWindow replays whatever
+        # the user touches onto the rest of the group.
+        self.group_banner = QLabel()
+        self.group_banner.setWordWrap(True)
+        self.group_banner.setFrameShape(QFrame.StyledPanel)
+        self.group_banner.setMargin(4)
+        banner_font = self.group_banner.font()
+        banner_font.setBold(True)
+        self.group_banner.setFont(banner_font)
+        self.group_banner.setVisible(False)
+
         self.use_profile_check = QCheckBox("Use Profile")
         self.use_profile_check.setToolTip(
             "Switch this strand from a single animation to a prioritized list of modes"
@@ -656,6 +670,7 @@ class InspectorPanel(QWidget):
         self.splice_panel = SpliceMaskPanel()
         self.modes_panel = ModesPanel()
 
+        layout.addWidget(self.group_banner)
         layout.addWidget(self.use_profile_check)
         layout.addWidget(self.anim_panel)
         layout.addWidget(self.splice_panel)
@@ -667,6 +682,16 @@ class InspectorPanel(QWidget):
         self.splice_panel.changed.connect(self.animation_changed)
         self.modes_panel.changed.connect(self.animation_changed)
         self.use_profile_check.toggled.connect(self._on_use_profile_toggled)
+
+    def set_group_size(self, count: int) -> None:
+        """Tell the inspector how many strands the next edit will hit, so it
+        can warn that it's showing one strand but editing several."""
+        if count > 1:
+            self.group_banner.setText(
+                f"Group edit: {count} strands. Fields show the highlighted one; "
+                "edits apply to all of them."
+            )
+        self.group_banner.setVisible(count > 1)
 
     def _on_use_profile_toggled(self, checked: bool) -> None:
         self._apply_mode_visibility(checked)

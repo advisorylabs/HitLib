@@ -171,7 +171,7 @@ class StrandConfig:
     adi_port: int = 1
     smart_port: int = 0
     length: int = 30
-    refresh_ms: int = 20
+    refresh_ms: int = 25
     brightness: int = 100
     animation: AnimationConfig = field(default_factory=AnimationConfig)
     splice: SpliceMaskConfig = field(default_factory=SpliceMaskConfig)
