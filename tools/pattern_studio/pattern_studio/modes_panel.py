@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .inspector import AnimationPanel, SpliceMaskPanel
 from .models import ModeConfig, PhaseConfig, StrandConfig
 
@@ -47,15 +48,22 @@ class ModesPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.addWidget(QLabel("Modes (checked = active)"))
+        modes_label = QLabel("MODES  (checked = active)")
+        modes_label.setProperty("role", "sectionHeader")
+        layout.addWidget(modes_label)
         self.mode_list = QListWidget()
         layout.addWidget(self.mode_list)
 
         mode_btn_row = QHBoxLayout()
-        self.add_mode_btn = QPushButton("Add")
-        self.remove_mode_btn = QPushButton("Remove")
-        self.mode_up_btn = QPushButton("↑")
-        self.mode_down_btn = QPushButton("↓")
+        self.add_mode_btn = QPushButton(theme.icon("plus"), " Add")
+        self.remove_mode_btn = QPushButton(theme.icon("minus"), " Remove")
+        self.remove_mode_btn.setProperty("role", "danger")
+        self.mode_up_btn = QPushButton(theme.icon("arrow-up"), "")
+        self.mode_down_btn = QPushButton(theme.icon("arrow-down"), "")
+        self.mode_up_btn.setToolTip("Move mode up (higher priority)")
+        self.mode_down_btn.setToolTip("Move mode down (lower priority)")
+        for b in (self.mode_up_btn, self.mode_down_btn):
+            b.setProperty("role", "icon")
         for b in (self.add_mode_btn, self.remove_mode_btn, self.mode_up_btn, self.mode_down_btn):
             mode_btn_row.addWidget(b)
         layout.addLayout(mode_btn_row)
@@ -83,14 +91,21 @@ class ModesPanel(QWidget):
         self.phase_container = QWidget()
         phase_layout = QVBoxLayout(self.phase_container)
         phase_layout.setContentsMargins(0, 0, 0, 0)
-        phase_layout.addWidget(QLabel("Phases (cycle in order)"))
+        phases_label = QLabel("PHASES  (cycle in order)")
+        phases_label.setProperty("role", "sectionHeader")
+        phase_layout.addWidget(phases_label)
         self.phase_list = QListWidget()
         phase_layout.addWidget(self.phase_list)
         phase_btn_row = QHBoxLayout()
-        self.add_phase_btn = QPushButton("Add")
-        self.remove_phase_btn = QPushButton("Remove")
-        self.phase_up_btn = QPushButton("↑")
-        self.phase_down_btn = QPushButton("↓")
+        self.add_phase_btn = QPushButton(theme.icon("plus"), " Add")
+        self.remove_phase_btn = QPushButton(theme.icon("minus"), " Remove")
+        self.remove_phase_btn.setProperty("role", "danger")
+        self.phase_up_btn = QPushButton(theme.icon("arrow-up"), "")
+        self.phase_down_btn = QPushButton(theme.icon("arrow-down"), "")
+        self.phase_up_btn.setToolTip("Move phase earlier in the cycle")
+        self.phase_down_btn.setToolTip("Move phase later in the cycle")
+        for b in (self.phase_up_btn, self.phase_down_btn):
+            b.setProperty("role", "icon")
         for b in (self.add_phase_btn, self.remove_phase_btn, self.phase_up_btn, self.phase_down_btn):
             phase_btn_row.addWidget(b)
         phase_layout.addLayout(phase_btn_row)

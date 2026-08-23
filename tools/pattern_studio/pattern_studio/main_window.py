@@ -5,12 +5,13 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__
+from . import __version__, theme
 from .canvas import StripCanvas
 from .codegen import generate_cpp, validate_for_export
 from .group_edit import apply_changes, diff_config
@@ -33,6 +34,30 @@ from .strand_list import StrandListPanel
 _FILE_FILTER = "HitLib Pattern Studio Profile (*.hlprofile);;JSON (*.json);;All Files (*)"
 _DEFAULT_SUFFIX = ".hlprofile"
 _CPP_FILE_FILTER = "C++ Header (*.hpp);;All Files (*)"
+
+
+def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
+    button = QPushButton(theme.icon(icon_name), f" {label}")
+    button.setProperty("role", "transport")
+    button.setIconSize(QSize(13, 13))
+    button.setToolTip(tooltip)
+    return button
+
+
+def _scope_label(text: str) -> QLabel:
+    """The "ALL" / "SELECTED" heading over a transport triad."""
+    label = QLabel(text)
+    label.setProperty("role", "sectionHeader")
+    return label
+
+
+def _v_separator() -> QFrame:
+    """A themed 1px divider. QFrame.VLine draws itself from the palette's
+    Mid/Dark roles, which the stylesheet can't reach."""
+    line = QFrame()
+    line.setObjectName("vSep")
+    line.setFixedWidth(1)
+    return line
 
 
 class MainWindow(QMainWindow):
@@ -54,12 +79,18 @@ class MainWindow(QMainWindow):
         self.inspector = InspectorPanel()
         self.inspector.setEnabled(False)
 
-        self.play_all_btn = QPushButton("Play All")
-        self.pause_all_btn = QPushButton("Pause All")
-        self.reset_all_btn = QPushButton("Reset All")
-        self.play_selected_btn = QPushButton("Play Sel")
-        self.pause_selected_btn = QPushButton("Pause Sel")
-        self.reset_selected_btn = QPushButton("Reset Sel")
+        # Same six actions, same order as before -- but the scope now lives in
+        # a heading over each triad instead of inside every label. "Play Sel"
+        # read to newcomers as a fourth verb rather than as a scope, and the
+        # abbreviation only existed to keep the row narrow.
+        self.play_all_btn = _transport_button("Play", "play", "Play every strand")
+        self.pause_all_btn = _transport_button("Pause", "pause", "Pause every strand")
+        self.reset_all_btn = _transport_button("Reset", "reset", "Restart every strand's animation")
+        self.play_selected_btn = _transport_button("Play", "play", "Play the selected strands")
+        self.pause_selected_btn = _transport_button("Pause", "pause", "Pause the selected strands")
+        self.reset_selected_btn = _transport_button(
+            "Reset", "reset", "Restart the selected strands' animations"
+        )
         self.play_selected_btn.setEnabled(False)
         self.pause_selected_btn.setEnabled(False)
         self.reset_selected_btn.setEnabled(False)
@@ -71,15 +102,17 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.strand_list)
 
         toolbar_row = QHBoxLayout()
+        toolbar_row.setSpacing(6)
+        toolbar_row.addWidget(_scope_label("ALL"))
         toolbar_row.addWidget(self.play_all_btn)
         toolbar_row.addWidget(self.pause_all_btn)
         toolbar_row.addWidget(self.reset_all_btn)
 
-        transport_separator = QFrame()
-        transport_separator.setFrameShape(QFrame.VLine)
-        transport_separator.setFrameShadow(QFrame.Sunken)
-        toolbar_row.addWidget(transport_separator)
+        toolbar_row.addSpacing(6)
+        toolbar_row.addWidget(_v_separator())
+        toolbar_row.addSpacing(6)
 
+        toolbar_row.addWidget(_scope_label("SELECTED"))
         toolbar_row.addWidget(self.play_selected_btn)
         toolbar_row.addWidget(self.pause_selected_btn)
         toolbar_row.addWidget(self.reset_selected_btn)
@@ -103,12 +136,19 @@ class MainWindow(QMainWindow):
         controls_scroll.setWidget(controls)
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        controls_scroll.setFixedHeight(controls.sizeHint().height() + 4)
+        # Reserve room for the horizontal scrollbar even when it isn't shown.
+        # The height is fixed, so a bar appearing on a narrow window would
+        # otherwise eat it out of the strip's own height and clip the fields.
+        controls_scroll.setFixedHeight(
+            controls.sizeHint().height() + 4 + controls_scroll.horizontalScrollBar().sizeHint().height()
+        )
         controls_scroll.setFrameShape(QScrollArea.NoFrame)
 
         center = QWidget()
         center.setMinimumWidth(280)
         center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(8, 6, 8, 8)
+        center_layout.setSpacing(8)
         center_layout.addWidget(controls_scroll)
         center_layout.addWidget(self.canvas, 1)
 
@@ -128,8 +168,22 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([220, 820, 410])
-        self.setCentralWidget(splitter)
+        splitter.setSizes([210, 880, 400])
+
+        # The wordmark gradient as a hairline under the menu bar -- the same
+        # accent the docs site runs across its header, and the one piece of
+        # brand color that's always on screen.
+        brand_rule = QFrame()
+        brand_rule.setObjectName("brandRule")
+        brand_rule.setFixedHeight(2)
+
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addWidget(brand_rule)
+        root_layout.addWidget(splitter, 1)
+        self.setCentralWidget(root)
 
         self.canvas.set_sessions(self.sessions)
 
@@ -152,10 +206,10 @@ class MainWindow(QMainWindow):
         # before setCentralWidget() and its children exist gets overridden by
         # Qt's own layout-driven size once the window is actually shown --
         # confirmed by measuring the real window rect at runtime.
-        # Wide enough that the strand-settings strip (6 fields, ~750px
-        # minimum with real spinbox arrows) fits in the center column without
-        # needing the controls_scroll fallback below.
-        self.resize(1450, 750)
+        # Wide enough that the strand-settings strip and the transport row
+        # both fit in the center column at default size, without falling back
+        # to controls_scroll's horizontal scrollbar.
+        self.resize(1500, 800)
 
     # ------------------------------------------------------------------
     # File menu

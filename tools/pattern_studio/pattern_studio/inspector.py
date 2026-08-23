@@ -9,12 +9,11 @@ rebuild() vs reapply_animation() split.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -41,6 +40,7 @@ from .models import (
     SpliceRegionConfig,
     StrandConfig,
 )
+from . import theme
 from .widgets import ColorButton, format_palette, parse_palette
 
 _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
@@ -63,29 +63,42 @@ class StrandSettingsPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._suspend = False
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(8)
+        # A plain QWidget ignores a stylesheet background unless it opts in --
+        # Qt only styles the backgrounds of widgets that ask for it, so the
+        # strip would otherwise sit borderless on the window color.
+        self.setObjectName("strandStrip")
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
-        # No explicit width caps on the spinboxes: QSpinBox's own sizeHint()
-        # already reserves the right amount of room for its increment/
-        # decrement arrows alongside the digits/suffix. The scroll area MainWindow wraps this
-        # strip in handles the case where the row as a whole doesn't fit.
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(5)
+
+        # Explicit widths, unlike the rest of the app. A styled QSpinBox sizes
+        # itself from the stylesheet's padding and declared button width, not
+        # from the digits it holds, so an 8-max port field ends up as wide as
+        # a 5-digit one -- and six of them side by side overflow the center
+        # column. Each width below fits its widest value ("Direct", "500 ms",
+        # "100 %") with room to spare.
         self.name_edit = QLineEdit()
         self.name_edit.setMaximumWidth(120)
         self.adi_port_spin = QSpinBox()
         self.adi_port_spin.setRange(1, 8)
+        self.adi_port_spin.setFixedWidth(62)
         self.smart_port_spin = QSpinBox()
         self.smart_port_spin.setRange(0, 21)
         self.smart_port_spin.setSpecialValueText("Direct")
+        self.smart_port_spin.setFixedWidth(86)
         self.length_spin = QSpinBox()
         self.length_spin.setRange(1, 64)
+        self.length_spin.setFixedWidth(66)
         self.refresh_spin = QSpinBox()
         self.refresh_spin.setRange(5, 500)
         self.refresh_spin.setSuffix(" ms")
+        self.refresh_spin.setFixedWidth(90)
         self.brightness_spin = QSpinBox()
         self.brightness_spin.setRange(0, 100)
         self.brightness_spin.setSuffix(" %")
+        self.brightness_spin.setFixedWidth(86)
 
         def add_field(label_text: str, widget) -> None:
             layout.addWidget(QLabel(label_text))
@@ -436,12 +449,15 @@ class SpliceMaskPanel(QGroupBox):
         self.custom_widget = QWidget()
         custom_layout = QVBoxLayout(self.custom_widget)
         custom_layout.setContentsMargins(0, 0, 0, 0)
-        custom_layout.addWidget(QLabel("Regions"))
+        regions_label = QLabel("Regions")
+        regions_label.setProperty("role", "sectionHeader")
+        custom_layout.addWidget(regions_label)
         self.region_list = QListWidget()
         custom_layout.addWidget(self.region_list)
         region_btn_row = QHBoxLayout()
-        self.add_region_btn = QPushButton("Add")
-        self.remove_region_btn = QPushButton("Remove")
+        self.add_region_btn = QPushButton(theme.icon("plus"), " Add")
+        self.remove_region_btn = QPushButton(theme.icon("minus"), " Remove")
+        self.remove_region_btn.setProperty("role", "danger")
         region_btn_row.addWidget(self.add_region_btn)
         region_btn_row.addWidget(self.remove_region_btn)
         custom_layout.addLayout(region_btn_row)
@@ -641,7 +657,8 @@ class InspectorPanel(QWidget):
 
         self._loading = False
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
         # strand_panel is owned/wired here but deliberately NOT added to this
         # widget's own layout -- MainWindow places it in a compact strip above
@@ -654,9 +671,8 @@ class InspectorPanel(QWidget):
         # display the anchor strand's values, and MainWindow replays whatever
         # the user touches onto the rest of the group.
         self.group_banner = QLabel()
+        self.group_banner.setObjectName("groupBanner")
         self.group_banner.setWordWrap(True)
-        self.group_banner.setFrameShape(QFrame.StyledPanel)
-        self.group_banner.setMargin(4)
         banner_font = self.group_banner.font()
         banner_font.setBold(True)
         self.group_banner.setFont(banner_font)

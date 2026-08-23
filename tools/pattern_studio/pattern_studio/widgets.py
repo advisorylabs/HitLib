@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog, QPushButton
+
+from . import theme
 
 
 class ColorButton(QPushButton):
@@ -15,7 +17,9 @@ class ColorButton(QPushButton):
     def __init__(self, initial: int = 0xFFFFFF, parent=None):
         super().__init__(parent)
         self._color = initial & 0xFFFFFF
-        self.setFixedWidth(48)
+        self.setFixedSize(52, 24)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to pick a color")
         self.clicked.connect(self._pick)
         self._refresh_style()
 
@@ -27,8 +31,15 @@ class ColorButton(QPushButton):
         self._refresh_style()
 
     def _refresh_style(self) -> None:
+        # Inline rather than themed: the swatch's whole job is to show an
+        # arbitrary user-chosen color, so only its chrome (border, radius,
+        # hover) comes from the theme.
         r, g, b = (self._color >> 16) & 0xFF, (self._color >> 8) & 0xFF, self._color & 0xFF
-        self.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid #555;")
+        self.setStyleSheet(
+            f"QPushButton {{ background-color: rgb({r},{g},{b});"
+            f" border: 1px solid {theme.BORDER_STRONG}; border-radius: 5px; padding: 0px; }}"
+            f"QPushButton:hover {{ border: 1px solid {theme.ACCENT}; }}"
+        )
 
     def _pick(self) -> None:
         r, g, b = (self._color >> 16) & 0xFF, (self._color >> 8) & 0xFF, self._color & 0xFF

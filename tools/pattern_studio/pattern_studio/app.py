@@ -6,9 +6,9 @@ from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from . import theme
 from .main_window import MainWindow
-
-_ICON_REL_PATH = Path("pattern_studio") / "resources" / "hitliblogo.ico"
+from .splash import SplashScreen
 
 # Identifies this app to the Windows shell. Reverse-DNS-ish and stable:
 # changing it makes Windows treat the app as a brand new one, dropping any
@@ -17,11 +17,10 @@ _APP_USER_MODEL_ID = "AdvisoryLabs.HitLib.PatternStudio"
 
 
 def _icon_path() -> Path:
-    # A normal install/run resolves the icon relative to this file. A frozen
-    # PyInstaller build extracts its `datas` under sys._MEIPASS instead, where
-    # __file__ no longer sits next to a real resources/ directory.
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-    return base / _ICON_REL_PATH
+    # theme.resource_dir() handles the frozen-vs-source split (PyInstaller
+    # extracts `datas` under sys._MEIPASS, where __file__ no longer sits next
+    # to a real resources/ directory).
+    return theme.resource_dir() / "hitliblogo.ico"
 
 
 def _claim_taskbar_identity() -> None:
@@ -48,13 +47,33 @@ def _claim_taskbar_identity() -> None:
 def main() -> None:
     _claim_taskbar_identity()
     app = QApplication(sys.argv)
+    # Before any window exists, so nothing ever paints in the default style
+    # and then restyles itself a frame later.
+    theme.apply_theme(app)
     icon = QIcon(str(_icon_path()))
     app.setWindowIcon(icon)
+
+    if "--no-splash" in sys.argv:
+        window = MainWindow()
+        window.setWindowIcon(icon)
+        window.show()
+        sys.exit(app.exec())
+
+    splash = SplashScreen()
+    splash.start()
+    # Paint the splash before building the window: MainWindow's constructor
+    # blocks the event loop, and without this the splash would first appear
+    # already partway through its fade.
+    app.processEvents()
+
+    # Built while the splash is up rather than after it, so the animation
+    # overlaps startup instead of being tacked on in front of it.
     window = MainWindow()
     # Also set per-window, not just app-wide: the taskbar reads the window's
     # own icon first, and only falls back to the application's.
     window.setWindowIcon(icon)
-    window.show()
+    splash.finished.connect(window.show)
+
     sys.exit(app.exec())
 
 

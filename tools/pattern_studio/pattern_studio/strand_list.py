@@ -10,6 +10,9 @@ and `selected_rows()` (what an edit applies to).
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
+
+from . import theme
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -31,7 +34,12 @@ class StrandListPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 6, 4, 8)
+        layout.setSpacing(8)
+
+        title = QLabel("STRANDS")
+        title.setProperty("role", "sectionHeader")
+        layout.addWidget(title)
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -41,15 +49,21 @@ class StrandListPanel(QWidget):
         self.select_all_btn = QPushButton("Select All")
         select_row.addWidget(self.select_all_btn)
         self.group_label = QLabel()
-        font = self.group_label.font()
-        font.setBold(True)
-        self.group_label.setFont(font)
+        self.group_label.setProperty("role", "groupCount")
+        self.group_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         select_row.addWidget(self.group_label, 1)
         layout.addLayout(select_row)
 
         btn_row = QHBoxLayout()
-        self.add_btn = QPushButton("Add Strand")
-        self.remove_btn = QPushButton("Remove")
+        # "Add" rather than "Add Strand": with an icon in front, the longer
+        # label plus "Remove" no longer fits the sidebar's width, and the
+        # STRANDS heading directly above already says what's being added.
+        self.add_btn = QPushButton(theme.icon("plus"), " Add")
+        self.add_btn.setProperty("role", "primary")
+        self.add_btn.setToolTip("Add a new strand")
+        self.remove_btn = QPushButton(theme.icon("minus"), " Remove")
+        self.remove_btn.setProperty("role", "danger")
+        self.remove_btn.setToolTip("Remove every selected strand")
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.remove_btn)
         layout.addLayout(btn_row)
