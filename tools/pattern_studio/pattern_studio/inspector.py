@@ -706,6 +706,10 @@ class InspectorPanel(QWidget):
         banner_font = self.group_banner.font()
         banner_font.setBold(True)
         self.group_banner.setFont(banner_font)
+        # A steady violet halo, no hover ramp: the banner only exists while a
+        # group edit is armed, so it should read as the one lit thing in the
+        # column the whole time it's up.
+        theme.bloom(self.group_banner, theme.ACCENT, radius=22, alpha=70)
         self.group_banner.setVisible(False)
 
         self.use_profile_check = QCheckBox("Use Profile")

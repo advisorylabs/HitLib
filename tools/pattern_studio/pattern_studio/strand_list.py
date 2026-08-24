@@ -9,19 +9,168 @@ and `selected_rows()` (what an edit applies to).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+import random
 
-from . import theme
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QImage,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
+
+from . import theme
+
+#: Cached across rows and repaints -- see _dither_tile().
+_DITHER_TILE: QPixmap | None = None
+
+
+def _dither_tile() -> QPixmap:
+    """A tiling speck pattern, a couple of levels bright, ~40% coverage.
+
+    Qt fills a gradient from a 1024-entry table rounded to 8 bits and does no
+    dithering of its own. That is fine for a steep ramp, and visibly wrong for
+    a shallow one: across a selected row the green channel only travels from
+    85 to 34, so it lands as a handful of 24px-wide flat bands with hard
+    edges between them -- the stepping this exists to break up.
+
+    The pattern is seeded, not random per call: a tile that changed between
+    repaints would make selected rows crawl.
+    """
+    global _DITHER_TILE
+    if _DITHER_TILE is None:
+        rng = random.Random(0x115B10)
+        image = QImage(64, 64, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        speck = QColor(255, 255, 255, 5)
+        for y in range(image.height()):
+            for x in range(image.width()):
+                if rng.random() < 0.4:
+                    image.setPixelColor(x, y, speck)
+        _DITHER_TILE = QPixmap.fromImage(image)
+    return _DITHER_TILE
+
+
+class _RowDelegate(QStyledItemDelegate):
+    """Paints selected rows: the wash, the accent bar, and the group bloom.
+
+    This lives in a delegate rather than in the stylesheet because neither of
+    those last two is expressible in QSS -- there is no dithering and no
+    box-shadow -- and because a QSS `::item:selected` background would paint
+    straight over whatever we drew underneath it.
+    """
+
+    #: Row corner radius, matched to the stylesheet's `::item` rule.
+    RADIUS = 5
+    #: Width of the accent bar down the left edge. The `::item` rule reserves
+    #: exactly this much as a transparent border, so text never shifts.
+    BAR_W = 3
+
+    #: How far the painted row sits inside its item rect. Rows are
+    #: contiguous and full-width, so without this inset a halo would have
+    #: nowhere to go: the view clips at the viewport and the neighbouring row
+    #: covers the rest. Insetting turns each selected row into a lit chip
+    #: with a gap around it for the glow to fill.
+    INSET_X = 2.0
+    INSET_Y = 1.5
+
+    #: Halo layers around a group-selected row, outermost first:
+    #: (grow_px, alpha). Only drawn while several strands move together --
+    #: the same signal the canvas gives by breathing its outline.
+    GROUP_BLOOM = ((4.5, 18), (2.0, 30))
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._group = False
+
+    def set_group(self, group: bool) -> None:
+        self._group = group
+
+    def _wash(self, rect: QRectF, hovered: bool) -> QLinearGradient:
+        """Violet at the accent bar, thinning out across the row.
+
+        One hue family rather than violet -> blue -> cyan: a hue that travels
+        while the alpha falls makes some channels crawl and others race, and
+        the slow ones are what band.
+        """
+        lift = 1.35 if hovered else 1.0
+        gradient = QLinearGradient(rect.left(), 0, rect.right(), 0)
+        gradient.setColorAt(0.0, QColor(168, 85, 247, int(90 * lift)))
+        gradient.setColorAt(0.45, QColor(139, 92, 246, int(34 * lift)))
+        gradient.setColorAt(1.0, QColor(124, 58, 237, int(14 * lift)))
+        return gradient
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802 (Qt override)
+        if not option.state & QStyle.State_Selected:
+            super().paint(painter, option, index)
+            return
+
+        rect = QRectF(option.rect).adjusted(
+            self.INSET_X, self.INSET_Y, -self.INSET_X, -self.INSET_Y
+        )
+        path = QPainterPath()
+        path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+
+        if self._group:
+            # Clipped to everything *outside* the row body, so the halo rings
+            # the row instead of also brightening it: these are filled
+            # shapes, and unclipped they would add their alpha across the
+            # whole row on top of the wash.
+            surround = QPainterPath()
+            surround.addRect(QRectF(option.rect))
+            painter.setClipPath(surround.subtracted(path))
+            painter.setCompositionMode(QPainter.CompositionMode_Plus)
+            for grow, alpha in self.GROUP_BLOOM:
+                painter.setBrush(QColor(168, 85, 247, alpha))
+                painter.drawRoundedRect(
+                    rect.adjusted(-grow, -grow, grow, grow),
+                    self.RADIUS + grow,
+                    self.RADIUS + grow,
+                )
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            painter.setClipping(False)
+
+        painter.setBrush(self._wash(rect, hovered))
+        painter.drawPath(path)
+
+        painter.setClipPath(path)
+        painter.drawTiledPixmap(rect.toAlignedRect(), _dither_tile())
+        painter.setClipping(False)
+
+        painter.setBrush(QColor(theme.ACCENT_HI if hovered else theme.ACCENT))
+        painter.drawRoundedRect(
+            QRectF(rect.left(), rect.top(), self.BAR_W, rect.height()), 1.5, 1.5
+        )
+        painter.restore()
+
+        # Hand the text to the base delegate with both state flags cleared:
+        # left set, the stylesheet would repaint its own selected/hover
+        # background over everything above.
+        text_option = QStyleOptionViewItem(option)
+        text_option.state &= ~QStyle.State_Selected
+        text_option.state &= ~QStyle.State_MouseOver
+        text_option.palette.setColor(QPalette.Text, QColor("#FFFFFF"))
+        super().paint(painter, text_option, index)
 
 
 class StrandListPanel(QWidget):
@@ -43,6 +192,8 @@ class StrandListPanel(QWidget):
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._row_delegate = _RowDelegate(self.list_widget)
+        self.list_widget.setItemDelegate(self._row_delegate)
         layout.addWidget(self.list_widget)
 
         select_row = QHBoxLayout()
@@ -103,6 +254,8 @@ class StrandListPanel(QWidget):
 
     def set_group_size(self, count: int) -> None:
         self.group_label.setText(f"{count} selected" if count > 1 else "")
+        self._row_delegate.set_group(count > 1)
+        self.list_widget.viewport().update()
 
     # ------------------------------------------------------------------
     # Contents

@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -30,6 +30,8 @@ from .models import StrandConfig
 from .serialization import load_document, save_document
 from .session import StrandSession
 from .strand_list import StrandListPanel
+from .widgets import BrandRule
+from . import window_chrome
 
 _FILE_FILTER = "HitLib Pattern Studio Profile (*.hlprofile);;JSON (*.json);;All Files (*)"
 _DEFAULT_SUFFIX = ".hlprofile"
@@ -41,6 +43,10 @@ def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
     button.setProperty("role", "transport")
     button.setIconSize(QSize(13, 13))
     button.setToolTip(tooltip)
+    # Cyan rather than the violet accent: transport acts on what's *running*,
+    # and cyan is already the app's "this is live" color (selected rows, the
+    # group outline on the canvas).
+    theme.HoverBloom(button, theme.FOCUS, radius=14, alpha=105)
     return button
 
 
@@ -72,6 +78,11 @@ class MainWindow(QMainWindow):
         self._baseline_index = -1
         self._running = True
         self._current_file_path: Path | None = None
+        # Frameless, with the logo/menus/title/caption buttons folded into one
+        # row -- see window_chrome for what that trades away and how it's
+        # paid back. Built before _update_title(), which writes into it.
+        self.title_bar = window_chrome.install(self)
+        self._chrome_hooked = False
         self._update_title()
 
         self.canvas = StripCanvas()
@@ -172,15 +183,15 @@ class MainWindow(QMainWindow):
 
         # The wordmark gradient as a hairline under the menu bar -- the same
         # accent the docs site runs across its header, and the one piece of
-        # brand color that's always on screen.
-        brand_rule = QFrame()
-        brand_rule.setObjectName("brandRule")
-        brand_rule.setFixedHeight(2)
+        # brand color that's always on screen. It drifts and casts a short
+        # falloff onto the window; see widgets.BrandRule.
+        brand_rule = BrandRule()
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        root_layout.addWidget(self.title_bar)
         root_layout.addWidget(brand_rule)
         root_layout.addWidget(splitter, 1)
         self.setCentralWidget(root)
@@ -216,7 +227,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_menu(self) -> None:
-        menu = self.menuBar().addMenu("&File")
+        menu = self.title_bar.menu_bar.addMenu("&File")
         menu.addAction("&New", self._file_new)
         menu.addAction("&Open...", self._file_open)
         menu.addSeparator()
@@ -225,7 +236,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("&Import...", self._file_import)
 
-        export_menu = self.menuBar().addMenu("&Export")
+        export_menu = self.title_bar.menu_bar.addMenu("&Export")
         export_menu.addAction("Export Current Strand as C++...", self._export_save)
         export_menu.addAction("Copy Current Strand C++ to Clipboard", self._export_clipboard)
 
@@ -288,8 +299,43 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Failed", f"Couldn't save {path}:\n{exc}")
 
     def _update_title(self) -> None:
-        suffix = f" -- {self._current_file_path.name}" if self._current_file_path else ""
+        name = self._current_file_path.name if self._current_file_path else None
+        suffix = f" -- {name}" if name else ""
+        # Both: the title bar is what's on screen, and the window title is
+        # still what the taskbar and Alt-Tab read.
         self.setWindowTitle(f"HitLib Pattern Studio v{__version__}{suffix}")
+        self.title_bar.set_title("HitLib Pattern Studio", __version__, name)
+
+    # ------------------------------------------------------------------
+    # Window chrome
+    # ------------------------------------------------------------------
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        if not self._chrome_hooked:
+            # Both need a native window to talk to, which only exists once
+            # the window has been shown.
+            window_chrome.round_corners(self)
+            window_chrome.enable_snap_layouts(self)
+            self._chrome_hooked = True
+
+    def nativeEvent(self, event_type, message):  # noqa: N802 (Qt override)
+        # Snap layouts: Windows has to be told the maximize button *is* the
+        # caption's maximize button before it will offer the flyout.
+        handled = window_chrome.handle_native_event(self.title_bar, event_type, message)
+        if handled is not None:
+            return handled
+        return super().nativeEvent(event_type, message)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self.title_bar.resize_grips.reposition()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self.title_bar.sync_window_state()
+            self.title_bar.resize_grips.reposition()
 
     # ------------------------------------------------------------------
     # C++ export

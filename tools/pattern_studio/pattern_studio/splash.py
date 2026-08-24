@@ -25,21 +25,10 @@ from PySide6.QtWidgets import QWidget
 from . import theme
 
 
-#: The wordmark gradient run out and back, so the ring's wrap-around point is
-#: pink meeting pink. Sweeping straight from cyan to pink instead -- as the
-#: plain left-to-right order would -- interpolates through a desaturated
-#: blue-grey, which shows up as a dead patch travelling around the ring.
-_RING_STOPS = (
-    theme.BRAND_PINK,
-    theme.BRAND_VIOLET,
-    theme.BRAND_INDIGO,
-    theme.BRAND_BLUE,
-    theme.BRAND_CYAN,
-    theme.BRAND_BLUE,
-    theme.BRAND_INDIGO,
-    theme.BRAND_VIOLET,
-    theme.BRAND_PINK,
-)
+#: The ring's color stops. theme.BRAND_SWEEP is the wordmark gradient run out
+#: and back, so the wrap-around point is pink meeting pink -- see the token
+#: for why the plain left-to-right order won't do here.
+_RING_STOPS = theme.BRAND_SWEEP
 
 
 class SplashScreen(QWidget):
@@ -57,6 +46,12 @@ class SplashScreen(QWidget):
     BACKDROP_RADIUS = 150
     RING_RADIUS = 132
     RING_WIDTH = 8
+
+    #: Bloom passes drawn under the crisp ring, outermost first:
+    #: (width_multiple, alpha). Additive, so where the halos overlap the ring
+    #: they sum into the brighter core -- the same trick the LED preview uses,
+    #: at a scale where it reads as the logo being lit from its own ring.
+    RING_BLOOM = ((3.4, 26), (2.0, 44))
     LOGO_BOX = 200
 
     # Timings. Instance copies are made in __init__ so a test can shrink them.
@@ -215,17 +210,31 @@ class SplashScreen(QWidget):
                 QRectF(logo.rect()),
             )
 
-    def _paint_ring(self, painter: QPainter, center) -> None:
+    def _ring_gradient(self, center, alpha: int = 255) -> QConicalGradient:
         # A conical gradient whose angle advances each frame: the ring itself
         # is a static full circle, and it's the colors that travel around it.
         # Negative angle so the sweep runs clockwise.
         gradient = QConicalGradient(center, -self._angle)
         stops = _RING_STOPS
         for i, color in enumerate(stops):
-            gradient.setColorAt(i / (len(stops) - 1), QColor(color))
+            tint = QColor(color)
+            tint.setAlpha(alpha)
+            gradient.setColorAt(i / (len(stops) - 1), tint)
+        return gradient
 
-        pen = QPen(QBrush(gradient), self.RING_WIDTH)
+    def _paint_ring(self, painter: QPainter, center) -> None:
+        painter.setBrush(Qt.NoBrush)
+
+        painter.save()
+        painter.setCompositionMode(QPainter.CompositionMode_Plus)
+        for width_multiple, alpha in self.RING_BLOOM:
+            pen = QPen(QBrush(self._ring_gradient(center, alpha)), self.RING_WIDTH * width_multiple)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            painter.drawEllipse(center, self.RING_RADIUS, self.RING_RADIUS)
+        painter.restore()
+
+        pen = QPen(QBrush(self._ring_gradient(center)), self.RING_WIDTH)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(center, self.RING_RADIUS, self.RING_RADIUS)

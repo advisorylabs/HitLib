@@ -23,8 +23,9 @@ import sys
 from pathlib import Path
 from string import Template
 
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation
 from PySide6.QtGui import QColor, QFont, QIcon, QPalette, QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
 # ----------------------------------------------------------------------
 # Design tokens
@@ -54,8 +55,14 @@ BRAND_BLUE = "#3B82F6"
 BRAND_CYAN = "#22D3EE"
 
 #: Left-to-right stops of the wordmark gradient, for anything that wants to
-#: paint the full sweep (header rule today, splash screen later).
+#: paint the full sweep.
 BRAND_GRADIENT = (BRAND_PINK, BRAND_VIOLET, BRAND_INDIGO, BRAND_BLUE, BRAND_CYAN)
+
+#: The same sweep run out and back, for anything that wraps or repeats it --
+#: the splash ring and the drifting header rule. Going straight from cyan
+#: back to pink interpolates through a desaturated blue-grey, which shows up
+#: as a dead patch travelling past; ending where it started hides the seam.
+BRAND_SWEEP = BRAND_GRADIENT + BRAND_GRADIENT[-2::-1]
 
 #: Primary interactive accent -- matches --primary-color on the docs site.
 ACCENT = BRAND_VIOLET
@@ -69,6 +76,12 @@ FOCUS = BRAND_CYAN
 #: The logo's bow-tie crimson, matched to the docs site's --warning-color.
 DANGER = "#EF4444"
 DANGER_HI = "#F87171"
+
+#: Bloom: how far a colored element's light bleeds past its own edges, and
+#: how hard it lands. Deliberately small numbers -- the point is that a lit
+#: control looks like it's emitting, not that it looks like it's on fire.
+BLOOM_RADIUS = 16
+BLOOM_ALPHA = 120
 
 #: Canvas-specific paints, consumed by StripCanvas.
 CANVAS_BG = "#0A0A0D"
@@ -126,6 +139,132 @@ def _qss_url(path: Path) -> str:
 
 
 # ----------------------------------------------------------------------
+# Bloom
+# ----------------------------------------------------------------------
+#
+# QSS has no box-shadow, so the only way to put light *around* a widget is a
+# graphics effect. QGraphicsDropShadowEffect with a zero offset is a glow: it
+# blurs the widget's own silhouette in the given color and paints it behind
+# the widget, which is exactly the halo a lit element would cast.
+
+
+def bloom(
+    widget: QWidget,
+    color: str | QColor,
+    radius: float = BLOOM_RADIUS,
+    alpha: int = BLOOM_ALPHA,
+) -> QGraphicsDropShadowEffect:
+    """Put a colored glow behind `widget`. Returns the effect, for animating."""
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setOffset(0, 0)
+    effect.setBlurRadius(radius)
+    tint = QColor(color)
+    tint.setAlpha(alpha)
+    effect.setColor(tint)
+    widget.setGraphicsEffect(effect)
+    return effect
+
+
+class HoverBloom(QObject):
+    """Ramps a widget's bloom up while the pointer is over it.
+
+    Parented to the widget it decorates, so it lives and dies with it. The
+    ramp is a real animation rather than an on/off swap -- an instant halo
+    reads as a glitch, a 150ms one reads as the control warming up.
+
+    A widget carrying a graphics effect is rendered through an offscreen
+    buffer, which loses subpixel text antialiasing. So unless the caller asks
+    for a resting glow (`resting > 0`, for swatches and other wordless
+    controls), the effect is attached on enter and dropped again once the
+    ramp back down finishes -- an idle button is an ordinary button.
+    """
+
+    RAMP_MS = 150
+
+    def __init__(
+        self,
+        widget: QWidget,
+        color: str | QColor,
+        radius: float = BLOOM_RADIUS,
+        alpha: int = BLOOM_ALPHA,
+        resting: float = 0.0,
+    ):
+        super().__init__(widget)
+        self._widget = widget
+        self._peak = float(radius)
+        self._resting = float(resting)
+        self._alpha = alpha
+        self._color = QColor(color)
+        self._effect: QGraphicsDropShadowEffect | None = None
+        self._anim: QPropertyAnimation | None = None
+        if self._resting > 0:
+            self._attach()
+        widget.installEventFilter(self)
+
+    def set_color(self, color: str | QColor) -> None:
+        """Re-tint the halo -- for swatches, whose color is the whole point."""
+        self._color = QColor(color)
+        if self._effect is not None:
+            tint = QColor(self._color)
+            tint.setAlpha(self._alpha)
+            self._effect.setColor(tint)
+
+    # ------------------------------------------------------------------
+    # Effect lifetime
+    # ------------------------------------------------------------------
+
+    def _attach(self) -> QGraphicsDropShadowEffect:
+        if self._effect is None:
+            self._effect = bloom(self._widget, self._color, self._resting, self._alpha)
+            # Parented to self rather than left as a local: a QPropertyAnimation
+            # that goes out of scope is collected mid-ramp, and the value it
+            # was driving snaps straight to the end.
+            self._anim = QPropertyAnimation(self._effect, b"blurRadius", self)
+            self._anim.setDuration(self.RAMP_MS)
+            self._anim.setEasingCurve(QEasingCurve.OutCubic)
+            self._anim.finished.connect(self._on_ramp_finished)
+        return self._effect
+
+    def _detach(self) -> None:
+        if self._effect is None:
+            return
+        # setGraphicsEffect() deletes the effect it replaces, so the animation
+        # has to let go of it first -- driving a property on a deleted C++
+        # object is a crash, not an exception.
+        self._anim.stop()
+        self._anim.setTargetObject(None)
+        self._anim.deleteLater()
+        self._anim = None
+        self._effect = None
+        self._widget.setGraphicsEffect(None)
+
+    def _on_ramp_finished(self) -> None:
+        if self._resting <= 0 and self._effect is not None and self._effect.blurRadius() <= 0.01:
+            self._detach()
+
+    def _ramp_to(self, radius: float) -> None:
+        if radius <= 0 and self._effect is None:
+            return
+        effect = self._attach()
+        self._anim.stop()
+        self._anim.setStartValue(effect.blurRadius())
+        self._anim.setEndValue(radius)
+        self._anim.start()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        kind = event.type()
+        if kind == QEvent.Enter:
+            self._ramp_to(self._peak)
+        elif kind == QEvent.Leave:
+            self._ramp_to(self._resting)
+        elif kind == QEvent.EnabledChange and not obj.isEnabled():
+            # A disabled control emits nothing, so a halo left burning on one
+            # that greyed out while hot is worse than no halo at all.
+            self._ramp_to(self._resting)
+        return False
+
+
+# ----------------------------------------------------------------------
 # Stylesheet
 # ----------------------------------------------------------------------
 
@@ -149,15 +288,31 @@ QToolTip {
     padding: 5px 8px;
 }
 
-/* ========================== menu bar ========================== */
-QMenuBar {
+/* ======================== window chrome ======================= */
+/* The app's own title bar (window_chrome.TitleBar) stands in for the system
+   caption: logo, menus, title, then the caption buttons. */
+QWidget#titleBar {
     background-color: $bg;
-    border-bottom: 1px solid $border;
-    padding: 2px 4px;
+}
+QLabel#appTitle {
+    color: $text;
+    font-weight: 600;
+}
+QLabel#appSubtitle {
+    color: $dim;
+}
+
+/* ========================== menu bar ========================== */
+/* No bottom border and no fill of its own: it sits inside the title bar
+   now, and the brand rule underneath is what separates chrome from app. */
+QMenuBar {
+    background: transparent;
+    border: none;
+    padding: 0px;
 }
 QMenuBar::item {
     background: transparent;
-    padding: 5px 11px;
+    padding: 5px 8px;
     border-radius: 6px;
     color: $muted;
 }
@@ -261,18 +416,8 @@ QGroupBox::title {
     color: $accent;
 }
 
-/* ===================== brand accent rule ====================== */
-/* The wordmark gradient, echoing the bar across the top of the docs site. */
-QFrame#brandRule {
-    border: none;
-    background-color: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0.00 $pink,
-        stop: 0.30 $violet,
-        stop: 0.55 $indigo,
-        stop: 0.78 $blue,
-        stop: 1.00 $cyan);
-}
+/* The brand rule under the menu bar is painted by widgets.BrandRule rather
+   than styled here: it drifts, and a QSS gradient is a fixed brush. */
 
 /* Thin divider between related control groups. */
 QFrame#vSep {
@@ -409,6 +554,11 @@ QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
     border-color: $accent;
     background-color: $elevated;
 }
+/* Hovering an already-focused field pushes its border to the brighter
+   accent -- the one place those two states stack. */
+QLineEdit:focus:hover, QSpinBox:focus:hover, QComboBox:focus:hover {
+    border-color: $accent_hi;
+}
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
     background-color: $panel;
     color: $dim;
@@ -513,14 +663,10 @@ QListWidget::item {
 QListWidget::item:hover {
     background-color: $hover;
 }
-QListWidget::item:selected {
-    background-color: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(168, 85, 247, 0.30),
-        stop: 1 rgba(59, 130, 246, 0.12));
-    border-left: 3px solid $accent;
-    color: #FFFFFF;
-}
+/* Selected rows are painted by strand_list._RowDelegate, not styled here:
+   they carry a dithered wash and, during a group edit, a bloom -- neither of
+   which QSS can express. The transparent left border above is what the
+   delegate paints its accent bar into. */
 
 /* ======================== message box ======================== */
 QMessageBox {
@@ -553,11 +699,6 @@ def stylesheet() -> str:
         focus=FOCUS,
         danger=DANGER,
         danger_hi=DANGER_HI,
-        pink=BRAND_PINK,
-        violet=BRAND_VIOLET,
-        indigo=BRAND_INDIGO,
-        blue=BRAND_BLUE,
-        cyan=BRAND_CYAN,
         icon_spin_up=_qss_url(icons / "spin-up.svg"),
         icon_spin_down=_qss_url(icons / "spin-down.svg"),
         icon_chevron_down=_qss_url(icons / "chevron-down.svg"),

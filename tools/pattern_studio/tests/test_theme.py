@@ -7,7 +7,7 @@ loses its arrow/checkmark. These tests fail loudly instead.
 
 import re
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage, QImageReader, QPixmap
 
 from pattern_studio import theme
 
@@ -41,6 +41,37 @@ def test_icons_actually_render(qapp):
 
 def test_logo_loads(qapp):
     assert not theme.logo_pixmap().isNull()
+
+
+def _art_aspect(image: QImage) -> float:
+    """Width/height of everything in `image` that isn't transparent."""
+    image = image.convertToFormat(QImage.Format_ARGB32)
+    stride = image.bytesPerLine()
+    data = bytes(image.constBits())
+    left, top, right, bottom = image.width(), image.height(), -1, -1
+    for y in range(image.height()):
+        alpha = data[y * stride : y * stride + image.width() * 4][3::4]
+        if max(alpha) <= 8:
+            continue
+        top = min(top, y)
+        bottom = max(bottom, y)
+        left = min(left, next(x for x, a in enumerate(alpha) if a > 8))
+        right = max(right, max(x for x, a in enumerate(alpha) if a > 8))
+    return (right - left + 1) / (bottom - top + 1)
+
+
+def test_taskbar_icon_is_not_squished(qapp):
+    """The .ico frames are square and the logo art isn't, so an icon built by
+    scaling the art to fill a frame comes out visibly narrow. Rebuild it with
+    tools/make_icon.py, which fits the art instead of stretching it."""
+    ico = theme.resource_dir() / "hitliblogo.ico"
+    reader = QImageReader(str(ico))
+    reader.jumpToImage(reader.imageCount() - 1)  # the 256px frame
+    icon_aspect = _art_aspect(reader.read())
+    source_aspect = _art_aspect(theme.logo_pixmap().toImage())
+    assert abs(icon_aspect - source_aspect) < 0.05 * source_aspect, (
+        f"icon art is {icon_aspect:.3f} wide-to-tall, art is {source_aspect:.3f}"
+    )
 
 
 def test_stylesheet_has_no_unsubstituted_placeholders():
