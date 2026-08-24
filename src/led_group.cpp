@@ -42,8 +42,8 @@ void LedGroup::pulse(uint32_t color, uint8_t runLength, uint8_t speed,
     for (LedStrand* s : strands) s->pulse(color, runLength, speed, bgColor, invert, bounce);
 }
 
-void LedGroup::flash(uint32_t color, uint8_t speed, uint32_t bgColor) {
-    for (LedStrand* s : strands) s->flash(color, speed, bgColor);
+void LedGroup::flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor) {
+    for (LedStrand* s : strands) s->flash(color, onMs, offMs, bgColor);
 }
 
 void LedGroup::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert) {
@@ -89,8 +89,8 @@ void LedGroup::overlayPulse(uint32_t color, uint8_t runLength, uint8_t speed, ui
     for (LedStrand* s : strands) s->overlayPulse(color, runLength, speed, bgColor);
 }
 
-void LedGroup::overlayFlash(uint32_t color, uint8_t speed, uint32_t bgColor) {
-    for (LedStrand* s : strands) s->overlayFlash(color, speed, bgColor);
+void LedGroup::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor) {
+    for (LedStrand* s : strands) s->overlayFlash(color, onMs, offMs, bgColor);
 }
 
 void LedGroup::overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed) {

@@ -53,7 +53,7 @@ struct ProfileMode {
  * ### Example: declaring a custom profile
  * @code{.cpp}
  * static void myIdle (hitlib::LedStrand& s) { s.rainbow(1); }
- * static void myAlert(hitlib::LedStrand& s) { s.flash(0xFF0000, 2); }
+ * static void myAlert(hitlib::LedStrand& s) { s.flash(0xFF0000, 100, 100); }
  *
  * static const hitlib::ProfileMode myModes[] = {
  *     {"Idle",  10, myIdle,  nullptr},

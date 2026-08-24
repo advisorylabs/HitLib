@@ -70,7 +70,7 @@ inline void classicScore       (LedStrand& s) { s.pulse(0x00FF00, 5, 1); }
 inline void classicMatchloader (LedStrand& s) { s.pulse(0xEED202, 5, 1); }
 inline void showoff            (LedStrand& s) { s.rainbow(1); }
 
-inline void classicEgWarn  (LedStrand& s) { s.flash(0xFFFF00, 3); }
+inline void classicEgWarn  (LedStrand& s) { s.flash(0xFFFF00, 120, 120); }
 inline void classicEgWhite (LedStrand& s) { s.setColor(0xFFFFFF); }
 inline void classicEgCycle (LedStrand& s) { s.pulse(0xFF0000, 5, 1); }
 /// @}
@@ -113,7 +113,7 @@ inline const Profile classic = {"Classic", classicModes, 7};
 inline void modernIdle        (LedStrand& s) { s.pulse(0xFF66CC, 8, 1); }
 inline void modernRed         (LedStrand& s) { s.pulse(0xFF0000, 14, 1, 0xFF6200); }
 inline void modernBlue        (LedStrand& s) { s.pulse(0x0000FF, 14, 1, 0x009DFF); }
-inline void modernScore       (LedStrand& s) { s.flash(0x11FF00, 2); }
+inline void modernScore       (LedStrand& s) { s.flash(0x11FF00, 100, 100); }
 inline void modernMatchloader (LedStrand& s) { s.pulse(0xEED202, 5, 1); }
 inline void modernEgGreen     (LedStrand& s) { s.setColor(0x11FF00); }
 inline void modernEgPulse     (LedStrand& s) { s.pulse(0x11FF00, 8, 2); }

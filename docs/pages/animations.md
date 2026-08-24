@@ -54,12 +54,18 @@ strand.pulse(0xFF0000, 5, 1, 0x000000, /*invert*/ false, /*bounce*/ true);
 ## Flash
 
 ```cpp
-strand.flash(0x00FF00, /*speed*/ 2);
-strand.flash(0x00FF00, 2, /*bgColor*/ 0x003300);
+strand.flash(0x00FF00, /*onMs*/ 100, /*offMs*/ 100);
+strand.flash(0x00FF00, 100, 400, /*bgColor*/ 0x003300);  // short blip, long gap
 ```
 
-Scrolls a full-strip block of colour followed by `speed` strips of background,
-creating a repeating flash effect.
+Blinks the whole strip: every LED lights at once for `onMs`, then the whole
+strip shows `bgColor` for `offMs`, and the cycle repeats.
+
+On and off times are independent, so blink rate and duty cycle are set
+separately — `100, 100` is an even 5 Hz blink, while `100, 400` keeps the same
+brief flash at 2 Hz. Durations are rounded to whole refresh ticks and clamped
+to a minimum of one tick, so a strand can't be asked to blink faster than its
+`refreshMs` interval.
 
 ---
 
@@ -88,13 +94,20 @@ strand.bitscroll(
     /*invert*/   false,
     /*bgColor*/  0x000000,
     /*bounce*/   false,
-    /*spacing*/  2,        // gap pixels between segments
-    /*repeating*/ true     // tile pattern vs single pass
+    /*spacing*/  2,        // gap pixels between segments (default 5)
+    /*repeating*/ true     // tile pattern vs a single copy
 );
 
 // Bounce: pattern rocks back and forth
 strand.bitscroll(segments, 2, false, 0, /*bounce*/ true);
+
+// Bounce a single copy of the pattern instead of a tiled one
+strand.bitscroll(segments, 2, false, 0, /*bounce*/ true, /*spacing*/ 5,
+                 /*repeating*/ false);
 ```
+
+`repeating` applies to both travel styles: with `true` the pattern tiles across
+the whole strip, with `false` a single copy travels the strip on its own.
 
 ---
 
@@ -110,7 +123,7 @@ strand.overlaySetColor(0xFFFFFF);
 strand.overlayRainbow(1);
 strand.overlayPulse(0x0000FF, 5, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1);
-strand.overlayFlash(0xFFFFFF, 2);
+strand.overlayFlash(0xFFFFFF, 100, 100);
 ```
 
 ---

@@ -106,7 +106,7 @@ def _apply_animation(strand: Strand, a: AnimationConfig) -> None:
     elif a.kind == AnimationKind.PULSE:
         strand.pulse(a.color, a.run_length, a.speed, a.bg_color, a.invert, a.bounce)
     elif a.kind == AnimationKind.FLASH:
-        strand.flash(a.color, a.speed, a.bg_color)
+        strand.flash(a.color, a.on_ms, a.off_ms, a.bg_color)
     elif a.kind == AnimationKind.FLOW:
         strand.flow(a.color, a.color2, a.speed, a.invert)
     elif a.kind == AnimationKind.RAINBOW:
@@ -126,7 +126,7 @@ def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
     elif o.kind == OverlayAnimationKind.PULSE:
         strand.overlay_pulse(o.color, o.run_length, o.speed, o.bg_color)
     elif o.kind == OverlayAnimationKind.FLASH:
-        strand.overlay_flash(o.color, o.speed, o.bg_color)
+        strand.overlay_flash(o.color, o.on_ms, o.off_ms, o.bg_color)
     elif o.kind == OverlayAnimationKind.FLOW:
         strand.overlay_flow(o.color, o.color2, o.speed)
     elif o.kind == OverlayAnimationKind.RAINBOW:
@@ -144,6 +144,8 @@ def _make_sim_region(r: SpliceRegionConfig) -> SpliceRegion:
         bg_color=a.bg_color,
         run_length=a.run_length,
         speed=a.speed,
+        on_ms=a.on_ms,
+        off_ms=a.off_ms,
     )
 
 

@@ -93,6 +93,11 @@ def _validate_animation(mode_name: str, phase_name: str | None, a: AnimationConf
     for label, value in (("run_length", a.run_length), ("speed", a.speed), ("segment_width", a.segment_width)):
         if not (0 <= value <= 255):
             errors.append(f"{where}: {label} must fit in 0-255 (got {value}).")
+    # Flash durations are milliseconds, not uint8 counts -- they get their own
+    # bound (uint32 on the C++ side, but the GUI caps at 10 s).
+    for label, value in (("on_ms", a.on_ms), ("off_ms", a.off_ms)):
+        if value < 1:
+            errors.append(f"{where}: {label} must be >= 1 ms (got {value}).")
     return errors
 
 
@@ -203,7 +208,7 @@ def _animation_statement(a: AnimationConfig) -> str:
             f"{_bool(a.invert)}, {_bool(a.bounce)});"
         )
     if a.kind == AnimationKind.FLASH:
-        return f"s.flash({_hex(a.color)}, {a.speed}, {_hex(a.bg_color)});"
+        return f"s.flash({_hex(a.color)}, {a.on_ms}, {a.off_ms}, {_hex(a.bg_color)});"
     if a.kind == AnimationKind.FLOW:
         return f"s.flow({_hex(a.color)}, {_hex(a.color2)}, {a.speed}, {_bool(a.invert)});"
     if a.kind == AnimationKind.RAINBOW:
@@ -229,7 +234,7 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
     if o.kind == OverlayAnimationKind.PULSE:
         return f"s.overlayPulse({_hex(o.color)}, {o.run_length}, {o.speed}, {_hex(o.bg_color)});"
     if o.kind == OverlayAnimationKind.FLASH:
-        return f"s.overlayFlash({_hex(o.color)}, {o.speed}, {_hex(o.bg_color)});"
+        return f"s.overlayFlash({_hex(o.color)}, {o.on_ms}, {o.off_ms}, {_hex(o.bg_color)});"
     if o.kind == OverlayAnimationKind.FLOW:
         return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed});"
     if o.kind == OverlayAnimationKind.RAINBOW:
@@ -243,7 +248,8 @@ def _region_literal(r: SpliceRegionConfig) -> str:
     return (
         f"{{.start = {r.start}, .width = {r.width}, .kind = {kind}, "
         f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}, .bgColor = {_hex(a.bg_color)}, "
-        f".runLength = {a.run_length}, .speed = {a.speed}}}"
+        f".runLength = {a.run_length}, .speed = {a.speed}, "
+        f".onMs = {a.on_ms}, .offMs = {a.off_ms}}}"
     )
 
 

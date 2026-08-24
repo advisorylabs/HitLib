@@ -43,11 +43,21 @@ from .models import (
 from . import theme
 from .widgets import ColorButton, format_palette, parse_palette
 
+
+def _duration_spin() -> QSpinBox:
+    """Millisecond duration field, as used by the flash on/off times."""
+    spin = QSpinBox()
+    spin.setRange(10, 10000)
+    spin.setSingleStep(10)
+    spin.setSuffix(" ms")
+    return spin
+
+
 _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
     AnimationKind.OFF: set(),
     AnimationKind.SOLID: {"color"},
     AnimationKind.PULSE: {"color", "bg_color", "run_length", "speed", "invert", "bounce"},
-    AnimationKind.FLASH: {"color", "bg_color", "speed"},
+    AnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
     AnimationKind.FLOW: {"color", "color2", "speed", "invert"},
     AnimationKind.RAINBOW: {"speed"},
     AnimationKind.TWINKLE: {"palette", "bg_color", "density_pct", "fade_step"},
@@ -166,6 +176,8 @@ class AnimationPanel(QGroupBox):
         self.run_length_spin.setRange(1, 64)
         self.speed_spin = QSpinBox()
         self.speed_spin.setRange(1, 64)
+        self.on_ms_spin = _duration_spin()
+        self.off_ms_spin = _duration_spin()
         self.invert_check = QCheckBox()
         self.bounce_check = QCheckBox()
         self.density_spin = QSpinBox()
@@ -192,6 +204,8 @@ class AnimationPanel(QGroupBox):
         add_row("bg_color", "Background", self.bg_btn)
         add_row("run_length", "Run Length", self.run_length_spin)
         add_row("speed", "Speed", self.speed_spin)
+        add_row("on_ms", "On Time", self.on_ms_spin)
+        add_row("off_ms", "Off Time", self.off_ms_spin)
         add_row("invert", "Invert", self.invert_check)
         add_row("bounce", "Bounce", self.bounce_check)
         add_row("density_pct", "Density", self.density_spin)
@@ -208,6 +222,8 @@ class AnimationPanel(QGroupBox):
             (self.bg_btn, "color_changed"),
             (self.run_length_spin, "valueChanged"),
             (self.speed_spin, "valueChanged"),
+            (self.on_ms_spin, "valueChanged"),
+            (self.off_ms_spin, "valueChanged"),
             (self.invert_check, "toggled"),
             (self.bounce_check, "toggled"),
             (self.density_spin, "valueChanged"),
@@ -248,6 +264,8 @@ class AnimationPanel(QGroupBox):
         self.bg_btn.set_color(a.bg_color)
         self.run_length_spin.setValue(a.run_length)
         self.speed_spin.setValue(a.speed)
+        self.on_ms_spin.setValue(a.on_ms)
+        self.off_ms_spin.setValue(a.off_ms)
         self.invert_check.setChecked(a.invert)
         self.bounce_check.setChecked(a.bounce)
         self.density_spin.setValue(a.density_pct)
@@ -266,6 +284,8 @@ class AnimationPanel(QGroupBox):
         a.bg_color = self.bg_btn.color()
         a.run_length = self.run_length_spin.value()
         a.speed = self.speed_spin.value()
+        a.on_ms = self.on_ms_spin.value()
+        a.off_ms = self.off_ms_spin.value()
         a.invert = self.invert_check.isChecked()
         a.bounce = self.bounce_check.isChecked()
         a.density_pct = self.density_spin.value()
@@ -282,7 +302,7 @@ _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
     OverlayAnimationKind.OFF: set(),
     OverlayAnimationKind.SOLID: {"color"},
     OverlayAnimationKind.PULSE: {"color", "bg_color", "run_length", "speed"},
-    OverlayAnimationKind.FLASH: {"color", "bg_color", "speed"},
+    OverlayAnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
     OverlayAnimationKind.FLOW: {"color", "color2", "speed"},
     OverlayAnimationKind.RAINBOW: {"speed"},
 }
@@ -318,6 +338,8 @@ class OverlayAnimationPanel(QGroupBox):
         self.run_length_spin.setRange(1, 64)
         self.speed_spin = QSpinBox()
         self.speed_spin.setRange(1, 64)
+        self.on_ms_spin = _duration_spin()
+        self.off_ms_spin = _duration_spin()
 
         self._rows: dict[str, tuple] = {}
 
@@ -330,6 +352,8 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("bg_color", "Background", self.bg_btn)
         add_row("run_length", "Run Length", self.run_length_spin)
         add_row("speed", "Speed", self.speed_spin)
+        add_row("on_ms", "On Time", self.on_ms_spin)
+        add_row("off_ms", "Off Time", self.off_ms_spin)
 
         self.kind_combo.currentIndexChanged.connect(self._on_kind_changed)
         for widget, signal_name in (
@@ -338,6 +362,8 @@ class OverlayAnimationPanel(QGroupBox):
             (self.bg_btn, "color_changed"),
             (self.run_length_spin, "valueChanged"),
             (self.speed_spin, "valueChanged"),
+            (self.on_ms_spin, "valueChanged"),
+            (self.off_ms_spin, "valueChanged"),
         ):
             getattr(widget, signal_name).connect(self._emit_changed)
 
@@ -370,6 +396,8 @@ class OverlayAnimationPanel(QGroupBox):
         self.bg_btn.set_color(o.bg_color)
         self.run_length_spin.setValue(o.run_length)
         self.speed_spin.setValue(o.speed)
+        self.on_ms_spin.setValue(o.on_ms)
+        self.off_ms_spin.setValue(o.off_ms)
         self._suspend = False
         self._update_visibility()
 
@@ -380,6 +408,8 @@ class OverlayAnimationPanel(QGroupBox):
         o.bg_color = self.bg_btn.color()
         o.run_length = self.run_length_spin.value()
         o.speed = self.speed_spin.value()
+        o.on_ms = self.on_ms_spin.value()
+        o.off_ms = self.off_ms_spin.value()
 
 
 class SpliceMaskPanel(QGroupBox):

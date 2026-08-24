@@ -36,6 +36,8 @@ def _animation_to_dict(a: AnimationConfig) -> dict:
         "bg_color": a.bg_color,
         "run_length": a.run_length,
         "speed": a.speed,
+        "on_ms": a.on_ms,
+        "off_ms": a.off_ms,
         "invert": a.invert,
         "bounce": a.bounce,
         "density_pct": a.density_pct,
@@ -56,6 +58,8 @@ def _animation_from_dict(d: dict) -> AnimationConfig:
         bg_color=d.get("bg_color", default.bg_color),
         run_length=d.get("run_length", default.run_length),
         speed=d.get("speed", default.speed),
+        on_ms=d.get("on_ms", default.on_ms),
+        off_ms=d.get("off_ms", default.off_ms),
         invert=d.get("invert", default.invert),
         bounce=d.get("bounce", default.bounce),
         density_pct=d.get("density_pct", default.density_pct),
@@ -75,6 +79,8 @@ def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
         "bg_color": o.bg_color,
         "run_length": o.run_length,
         "speed": o.speed,
+        "on_ms": o.on_ms,
+        "off_ms": o.off_ms,
     }
 
 
@@ -87,6 +93,8 @@ def _overlay_from_dict(d: dict) -> OverlayAnimationConfig:
         bg_color=d.get("bg_color", default.bg_color),
         run_length=d.get("run_length", default.run_length),
         speed=d.get("speed", default.speed),
+        on_ms=d.get("on_ms", default.on_ms),
+        off_ms=d.get("off_ms", default.off_ms),
     )
 
 

@@ -35,6 +35,7 @@ class AnimMode(Enum):
     SHIFT = auto()
     CENTER_SPREAD = auto()
     TWINKLE = auto()
+    FLASH = auto()
 
 
 class SpliceMode(Enum):
@@ -77,6 +78,8 @@ class SpliceRegion:
     bg_color: int = 0x000000
     run_length: int = 5
     speed: int = 1
+    on_ms: int = 250
+    off_ms: int = 250
 
 
 @dataclass
@@ -90,6 +93,15 @@ class _SpliceRegionState:
     buffer: list[int]
     shift_step: int = 0
     shift_speed: int = 0
+    # FLASH regions blink their whole buffer on a tick timer instead of
+    # shifting it, mirroring the strand-wide flash state.
+    flashing: bool = False
+    flash_color: int = 0
+    flash_bg_color: int = 0
+    flash_on_ticks: int = 1
+    flash_off_ticks: int = 1
+    flash_counter: int = 0
+    flash_lit: bool = True
 
 
 @dataclass
@@ -130,6 +142,24 @@ class Strand:
         self.pulse_speed = 1
         self.pulse_offset = 0
         self.pulse_dir = 1
+
+        # Flash -- whole-strip blink driven by tick counts rather than a
+        # shifting buffer, so the lit and blank halves have independent
+        # durations.
+        self.flash_color = 0
+        self.flash_bg_color = 0
+        self.flash_on_ticks = 1
+        self.flash_off_ticks = 1
+        self.flash_counter = 0
+        self.flash_lit = True
+
+        # Overlay flash -- mirrors the base flash state above.
+        self.overlay_flash_color = 0
+        self.overlay_flash_bg_color = 0
+        self.overlay_flash_on_ticks = 1
+        self.overlay_flash_off_ticks = 1
+        self.overlay_flash_counter = 0
+        self.overlay_flash_lit = True
 
         # Bitscroll bounce
         self.bitscroll_master: list[int] = []
@@ -197,11 +227,15 @@ class Strand:
             self._advance_bitscroll_bounce()
         elif self.anim_mode == AnimMode.TWINKLE:
             self._advance_twinkle()
+        elif self.anim_mode == AnimMode.FLASH:
+            self._advance_flash()
         elif self.anim_mode == AnimMode.SHIFT:
             self._shift_buffer()
 
         if self.overlay_anim_mode == AnimMode.SHIFT:
             self._shift_overlay_buffer()
+        elif self.overlay_anim_mode == AnimMode.FLASH:
+            self._advance_overlay_flash()
 
         if self.anim_mode == AnimMode.CENTER_SPREAD:
             self._advance_center_spread()
@@ -278,17 +312,34 @@ class Strand:
         for i in range(self.pulse_offset, end):
             self.buffer[i] = self.pulse_color
 
-    def flash(self, color: int, speed: int, bg_color: int = 0) -> None:
+    def flash(self, color: int, on_ms: int, off_ms: int, bg_color: int = 0) -> None:
         self.pulse_run_len = 0
         self.bitscroll_master = []
-        reps = min(speed, 32)
-        period = self.length * (1 + reps)
-        self.buffer = [bg_color] * period
-        for i in range(self.length):
-            self.buffer[i] = color
+        self.flash_color = color
+        self.flash_bg_color = bg_color
+        self.flash_on_ticks = self._ms_to_ticks(on_ms)
+        self.flash_off_ticks = self._ms_to_ticks(off_ms)
+        self.flash_counter = 0
+        self.flash_lit = True
+        # Start lit, so the first flash lands immediately rather than after a
+        # blank interval.
+        self.buffer = [color] * self.length
         self.shift_step = 0
-        self.shift_variant = 1
-        self.anim_mode = AnimMode.SHIFT
+        self.shift_variant = 0
+        self.anim_mode = AnimMode.FLASH
+
+    def _advance_flash(self) -> None:
+        # flash_counter tracks frames already flushed in the current phase.
+        # tick() runs this before _flush_buffer(), so the tick that flips the
+        # phase also renders the new colour -- count it as that phase's first
+        # frame, or every phase comes out one tick short.
+        hold = self.flash_on_ticks if self.flash_lit else self.flash_off_ticks
+        if self.flash_counter >= hold:
+            self.flash_counter = 0
+            self.flash_lit = not self.flash_lit
+            fill = self.flash_color if self.flash_lit else self.flash_bg_color
+            self.buffer = [fill] * self.length
+        self.flash_counter += 1
 
     def flow(self, color1: int, color2: int, speed: int, invert: bool = False) -> None:
         self.pulse_run_len = 0
@@ -361,16 +412,21 @@ class Strand:
             self.buffer[i] = lerp_color(self.twinkle_bg_color, fg, self.twinkle_level[i])
 
     def bitscroll(self, segments: Sequence[BitScrollSegment], speed: int, invert: bool = False,
-                  bg_color: int = 0, bounce: bool = False, spacing: int = 0,
+                  bg_color: int = 0, bounce: bool = False, spacing: int = 5,
                   repeating: bool = True) -> None:
         self.pulse_run_len = 0
 
         unit: list[int] = []
+        # Size of `unit` up to the last segment pixel -- i.e. excluding the
+        # trailing run of `spacing`, which only exists to separate one tile
+        # from the next. A single non-tiled copy shouldn't carry it.
+        content_len = 0
         for seg in segments:
             for _ in range(seg.width):
                 if len(unit) >= MAX_LEDS:
                     break
                 unit.append(seg.color)
+            content_len = len(unit)
             if len(unit) >= MAX_LEDS:
                 break
             for _ in range(spacing):
@@ -381,6 +437,7 @@ class Strand:
                 break
         if not unit:
             unit.append(bg_color)
+            content_len = len(unit)
 
         if not bounce:
             self.bitscroll_master = []
@@ -397,10 +454,20 @@ class Strand:
             self.shift_variant = ((buf_size - sp) % buf_size) if invert else sp
             self.anim_mode = AnimMode.SHIFT
         else:
-            master_len = max(self.length * 3, len(unit) * 3)
             self.bitscroll_master = []
-            while len(self.bitscroll_master) < master_len:
-                self.bitscroll_master.extend(unit)
+            if repeating:
+                master_len = max(self.length * 3, len(unit) * 3)
+                while len(self.bitscroll_master) < master_len:
+                    self.bitscroll_master.extend(unit)
+            else:
+                # A single copy of the pattern, padded with background on both
+                # sides so the visible window can carry it from the far end of
+                # the strip to the near end and back -- the same travel pulse
+                # bounce does with its run. Tiling here regardless of
+                # `repeating` was the bug: bounce always looked repeating.
+                n = min(content_len, self.length)
+                pad = self.length - n
+                self.bitscroll_master = [bg_color] * pad + unit[:n] + [bg_color] * pad
             if len(self.buffer) != self.length:
                 self.buffer = [bg_color] * self.length
             self.bounce_scroll_pos = 0
@@ -476,11 +543,17 @@ class Strand:
                         state.buffer[k] = r.color
                     state.shift_speed = r.speed
                 elif r.kind == SpliceRegionAnimKind.FLASH:
-                    reps = min(r.speed, 32)
-                    state.buffer = [r.bg_color] * (region_width * (1 + reps))
-                    for k in range(region_width):
-                        state.buffer[k] = r.color
-                    state.shift_speed = 1
+                    # Mirrors flash(), scaled to this region: the whole region
+                    # blinks on a tick timer instead of shifting.
+                    state.buffer = [r.color] * region_width
+                    state.shift_speed = 0
+                    state.flashing = True
+                    state.flash_color = r.color
+                    state.flash_bg_color = r.bg_color
+                    state.flash_on_ticks = self._ms_to_ticks(r.on_ms)
+                    state.flash_off_ticks = self._ms_to_ticks(r.off_ms)
+                    state.flash_counter = 0
+                    state.flash_lit = True
                 elif r.kind == SpliceRegionAnimKind.FLOW:
                     state.buffer = gen_gradient(r.color, r.color2, region_width)
                     state.shift_speed = r.speed
@@ -533,7 +606,18 @@ class Strand:
             return
         for state in self.splice_regions:
             buf_size = len(state.buffer)
-            if buf_size == 0 or state.shift_speed == 0:
+            if buf_size == 0:
+                continue
+            if state.flashing:
+                hold = state.flash_on_ticks if state.flash_lit else state.flash_off_ticks
+                if state.flash_counter >= hold:
+                    state.flash_counter = 0
+                    state.flash_lit = not state.flash_lit
+                    fill = state.flash_color if state.flash_lit else state.flash_bg_color
+                    state.buffer = [fill] * buf_size
+                state.flash_counter += 1
+                continue
+            if state.shift_speed == 0:
                 continue
             state.shift_step = (state.shift_step + state.shift_speed) % buf_size
 
@@ -556,15 +640,29 @@ class Strand:
         self.overlay_shift_speed = speed
         self.overlay_anim_mode = AnimMode.SHIFT
 
-    def overlay_flash(self, color: int, speed: int, bg_color: int = 0) -> None:
-        reps = min(speed, 32)
-        period = self.length * (1 + reps)
-        self.overlay_buffer = [bg_color] * period
-        for i in range(self.length):
-            self.overlay_buffer[i] = color
+    def overlay_flash(self, color: int, on_ms: int, off_ms: int, bg_color: int = 0) -> None:
+        # Mirrors flash(): tick-timed blink with independent on/off durations.
+        self.overlay_flash_color = color
+        self.overlay_flash_bg_color = bg_color
+        self.overlay_flash_on_ticks = self._ms_to_ticks(on_ms)
+        self.overlay_flash_off_ticks = self._ms_to_ticks(off_ms)
+        self.overlay_flash_counter = 0
+        self.overlay_flash_lit = True
+        self.overlay_buffer = [color] * self.length
         self.overlay_shift_step = 0
-        self.overlay_shift_speed = 1
-        self.overlay_anim_mode = AnimMode.SHIFT
+        self.overlay_shift_speed = 0
+        self.overlay_anim_mode = AnimMode.FLASH
+
+    def _advance_overlay_flash(self) -> None:
+        hold = (self.overlay_flash_on_ticks if self.overlay_flash_lit
+                else self.overlay_flash_off_ticks)
+        if self.overlay_flash_counter >= hold:
+            self.overlay_flash_counter = 0
+            self.overlay_flash_lit = not self.overlay_flash_lit
+            fill = (self.overlay_flash_color if self.overlay_flash_lit
+                    else self.overlay_flash_bg_color)
+            self.overlay_buffer = [fill] * self.length
+        self.overlay_flash_counter += 1
 
     def overlay_flow(self, color1: int, color2: int, speed: int) -> None:
         self.overlay_buffer = gen_gradient(color1, color2, self.length)
@@ -662,6 +760,15 @@ class Strand:
                 self.overlay_anim_mode = self.anim_mode
                 self.overlay_shift_step = self.shift_step
                 self.overlay_shift_speed = self.shift_variant
+                # FLASH keeps its state in dedicated timing fields rather than
+                # the shift step, so hand those over too or the promoted overlay
+                # would sit frozen on whatever frame it was captured at.
+                self.overlay_flash_color = self.flash_color
+                self.overlay_flash_bg_color = self.flash_bg_color
+                self.overlay_flash_on_ticks = self.flash_on_ticks
+                self.overlay_flash_off_ticks = self.flash_off_ticks
+                self.overlay_flash_counter = self.flash_counter
+                self.overlay_flash_lit = self.flash_lit
         # If spread_layers is empty (plain center_spread/center_spread_bounce), the
         # C++ source leaves overlayBuffer moved-from (empty) here and relies on the
         # caller to have re-primed it before the mask grows again. Backfill with
@@ -692,6 +799,15 @@ class Strand:
 
     def get_brightness(self) -> int:
         return self.brightness_pct
+
+    def _ms_to_ticks(self, ms: int) -> int:
+        # Round a wall-clock duration to whole refresh ticks. Animations can
+        # only change state on a tick, so anything shorter than one interval
+        # is clamped up to a single tick rather than silently becoming zero
+        # (which would spin the phase every frame).
+        if self.refresh_ms <= 0:
+            return 1
+        return max(1, (ms + self.refresh_ms // 2) // self.refresh_ms)
 
     def _apply_brightness(self, color: int) -> int:
         r = ((color >> 16) & 0xFF) * self.brightness_pct // 100

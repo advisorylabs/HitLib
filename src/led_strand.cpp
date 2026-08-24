@@ -85,9 +85,11 @@ void LedStrand::tick() {
     if (pulseRunLen > 0)                    advancePulseBounce();
     else if (!bitscrollMaster.empty())      advanceBitscrollBounce();
     else if (animMode == AnimMode::TWINKLE) advanceTwinkle();
+    else if (animMode == AnimMode::FLASH)   advanceFlash();
     else if (animMode == AnimMode::SHIFT)   shiftBuffer();
 
-    if (overlayAnimMode == AnimMode::SHIFT) shiftOverlayBuffer();
+    if (overlayAnimMode == AnimMode::SHIFT)      shiftOverlayBuffer();
+    else if (overlayAnimMode == AnimMode::FLASH) advanceOverlayFlash();
 
     // May call doLayerSwap(), which briefly releases/reacquires the mutex to
     // safely invoke a user-supplied AnimSetupFn.
@@ -181,24 +183,42 @@ void LedStrand::advancePulseBounce() {
     for (int16_t i = pulseOffset; i < end; ++i) buffer[i] = pulseColor;
 }
 
-void LedStrand::flash(uint32_t color, uint8_t speed, uint32_t bgColor) {
+void LedStrand::flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor) {
     mutex.take();
-    flashNL(color, speed, bgColor);
+    flashNL(color, onMs, offMs, bgColor);
     mutex.give();
 }
 
-void LedStrand::flashNL(uint32_t color, uint8_t speed, uint32_t bg) {
+void LedStrand::flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg) {
     pulseRunLen = 0;
     bitscrollMaster.clear();
-    // Repetition count drives buffer *size*, not per-tick advance -- clamp so a
-    // pathological `speed` can't balloon this to tens of KB per strand.
-    uint8_t reps = std::min<uint8_t>(speed, 32);
-    size_t period = (size_t)length * (1 + reps);
-    buffer.assign(period, bg);
-    std::fill_n(buffer.begin(), length, color);
+    flashColor    = color;
+    flashBgColor  = bg;
+    flashOnTicks  = msToTicks(onMs);
+    flashOffTicks = msToTicks(offMs);
+    flashCounter  = 0;
+    flashLit      = true;
+    // Start lit, so the first flash lands immediately rather than after a
+    // blank interval.
+    buffer.assign(length, color);
     shiftStep = 0;
-    shiftVariant = 1;
-    animMode = AnimMode::SHIFT;
+    shiftVariant = 0;
+    animMode = AnimMode::FLASH;
+}
+
+// flashCounter tracks frames already flushed in the current phase. tick() runs
+// this before flushBuffer(), so the tick that flips the phase also renders the
+// new colour -- count it as that phase's first frame, or every phase comes out
+// one tick short.
+void LedStrand::advanceFlash() {
+    uint16_t hold = flashLit ? flashOnTicks : flashOffTicks;
+    if (flashCounter >= hold) {
+        flashCounter = 0;
+        flashLit = !flashLit;
+        if (buffer.size() != length) buffer.assign(length, flashBgColor);
+        std::fill(buffer.begin(), buffer.end(), flashLit ? flashColor : flashBgColor);
+    }
+    ++flashCounter;
 }
 
 void LedStrand::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert) {
@@ -315,13 +335,21 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
     // whole strip can't usefully tile, and the cap keeps downstream size math
     // (shiftVariant, bitscrollMaster) safely inside uint8_t range.
     std::vector<uint32_t> unit;
+    // Size of `unit` up to the last segment pixel -- i.e. excluding the trailing
+    // run of `spacing`, which only exists to separate one tile from the next.
+    // A single non-tiled copy of the pattern shouldn't carry it.
+    size_t contentLen = 0;
     for (const auto& seg : segments) {
         for (uint8_t k = 0; k < seg.width && unit.size() < MAX_LEDS; ++k) unit.push_back(seg.color);
+        contentLen = unit.size();
         if (unit.size() >= MAX_LEDS) break;
         for (uint8_t k = 0; k < spacing && unit.size() < MAX_LEDS; ++k) unit.push_back(bgColor);
         if (unit.size() >= MAX_LEDS) break;
     }
-    if (unit.empty()) unit.push_back(bgColor);
+    if (unit.empty()) {
+        unit.push_back(bgColor);
+        contentLen = unit.size();
+    }
 
     if (!bounce) {
         bitscrollMaster.clear();
@@ -332,7 +360,7 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
             for (size_t r = 0; r < reps; ++r) buffer.insert(buffer.end(), unit.begin(), unit.end());
         } else {
             buffer.assign(length, bgColor);
-            size_t n = std::min(unit.size(), (size_t)length);
+            size_t n = std::min(contentLen, (size_t)length);
             std::copy(unit.begin(), unit.begin() + n, buffer.begin());
         }
         shiftStep = 0;
@@ -341,11 +369,24 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
         shiftVariant = invert ? (uint8_t)((bufSize - sp) % bufSize) : sp;
         animMode = AnimMode::SHIFT;
     } else {
-        size_t masterLen = std::max((size_t)length * 3, unit.size() * 3);
         bitscrollMaster.clear();
-        bitscrollMaster.reserve(masterLen);
-        while (bitscrollMaster.size() < masterLen)
-            bitscrollMaster.insert(bitscrollMaster.end(), unit.begin(), unit.end());
+        if (repeating) {
+            size_t masterLen = std::max((size_t)length * 3, unit.size() * 3);
+            bitscrollMaster.reserve(masterLen);
+            while (bitscrollMaster.size() < masterLen)
+                bitscrollMaster.insert(bitscrollMaster.end(), unit.begin(), unit.end());
+        } else {
+            // A single copy of the pattern, padded with background on both
+            // sides so the visible window can carry it from the far end of the
+            // strip to the near end and back -- the same travel pulse bounce
+            // does with its run. Tiling here regardless of `repeating` was the
+            // bug: bounce always looked like a repeating pattern.
+            size_t n = std::min(contentLen, (size_t)length);
+            size_t pad = (size_t)length - n;
+            bitscrollMaster.assign(pad, bgColor);
+            bitscrollMaster.insert(bitscrollMaster.end(), unit.begin(), unit.begin() + n);
+            bitscrollMaster.insert(bitscrollMaster.end(), pad, bgColor);
+        }
 
         if (buffer.size() != length) buffer.assign(length, bgColor);
         bounceScrollPos = 0;
@@ -431,10 +472,17 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                     break;
                 }
                 case SpliceRegionAnimKind::FLASH: {
-                    uint8_t reps = std::min<uint8_t>(r.speed, 32);
-                    state.buffer.assign((size_t)regionWidth * (1 + reps), r.bgColor);
-                    std::fill_n(state.buffer.begin(), regionWidth, r.color);
-                    state.shiftSpeed = 1;
+                    // Mirrors flashNL(), scaled to this region: the whole region
+                    // blinks on a tick timer instead of shifting.
+                    state.buffer.assign(regionWidth, r.color);
+                    state.shiftSpeed    = 0;
+                    state.flashing      = true;
+                    state.flashColor    = r.color;
+                    state.flashBgColor  = r.bgColor;
+                    state.flashOnTicks  = msToTicks(r.onMs);
+                    state.flashOffTicks = msToTicks(r.offMs);
+                    state.flashCounter  = 0;
+                    state.flashLit      = true;
                     break;
                 }
                 case SpliceRegionAnimKind::FLOW:
@@ -500,7 +548,19 @@ void LedStrand::advanceSpliceRegions() {
     if (!spliceActive || spliceMode != SpliceMode::CUSTOM) return;
     for (SpliceRegionState& state : spliceRegions) {
         size_t bufSize = state.buffer.size();
-        if (bufSize == 0 || state.shiftSpeed == 0) continue;
+        if (bufSize == 0) continue;
+        if (state.flashing) {
+            uint16_t hold = state.flashLit ? state.flashOnTicks : state.flashOffTicks;
+            if (state.flashCounter >= hold) {
+                state.flashCounter = 0;
+                state.flashLit = !state.flashLit;
+                std::fill(state.buffer.begin(), state.buffer.end(),
+                          state.flashLit ? state.flashColor : state.flashBgColor);
+            }
+            ++state.flashCounter;
+            continue;
+        }
+        if (state.shiftSpeed == 0) continue;
         state.shiftStep = (int)((state.shiftStep + state.shiftSpeed) % (int)bufSize);
     }
 }
@@ -517,9 +577,9 @@ void LedStrand::overlayPulse(uint32_t color, uint8_t runLength, uint8_t speed, u
     mutex.give();
 }
 
-void LedStrand::overlayFlash(uint32_t color, uint8_t speed, uint32_t bgColor) {
+void LedStrand::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor) {
     mutex.take();
-    overlayFlashNL(color, speed, bgColor);
+    overlayFlashNL(color, onMs, offMs, bgColor);
     mutex.give();
 }
 
@@ -551,14 +611,30 @@ void LedStrand::overlayPulseNL(uint32_t color, uint8_t runLen, uint8_t speed, ui
     overlayAnimMode = AnimMode::SHIFT;
 }
 
-void LedStrand::overlayFlashNL(uint32_t color, uint8_t speed, uint32_t bg) {
-    uint8_t reps = std::min<uint8_t>(speed, 32);
-    size_t period = (size_t)length * (1 + reps);
-    overlayBuffer.assign(period, bg);
-    std::fill_n(overlayBuffer.begin(), length, color);
+void LedStrand::overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg) {
+    // Mirrors flashNL(): tick-timed blink with independent on/off durations.
+    overlayFlashColor    = color;
+    overlayFlashBgColor  = bg;
+    overlayFlashOnTicks  = msToTicks(onMs);
+    overlayFlashOffTicks = msToTicks(offMs);
+    overlayFlashCounter  = 0;
+    overlayFlashLit      = true;
+    overlayBuffer.assign(length, color);
     overlayShiftStep = 0;
-    overlayShiftSpeed = 1;
-    overlayAnimMode = AnimMode::SHIFT;
+    overlayShiftSpeed = 0;
+    overlayAnimMode = AnimMode::FLASH;
+}
+
+void LedStrand::advanceOverlayFlash() {
+    uint16_t hold = overlayFlashLit ? overlayFlashOnTicks : overlayFlashOffTicks;
+    if (overlayFlashCounter >= hold) {
+        overlayFlashCounter = 0;
+        overlayFlashLit = !overlayFlashLit;
+        if (overlayBuffer.size() != length) overlayBuffer.assign(length, overlayFlashBgColor);
+        std::fill(overlayBuffer.begin(), overlayBuffer.end(),
+                  overlayFlashLit ? overlayFlashColor : overlayFlashBgColor);
+    }
+    ++overlayFlashCounter;
 }
 
 void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed) {
@@ -700,6 +776,15 @@ void LedStrand::doLayerSwap() {
             overlayAnimMode = animMode;
             overlayShiftStep = shiftStep;
             overlayShiftSpeed = shiftVariant;
+            // FLASH keeps its state in dedicated timing fields rather than the
+            // shift step, so hand those over too or the promoted overlay would
+            // sit frozen on whatever frame it was captured at.
+            overlayFlashColor    = flashColor;
+            overlayFlashBgColor  = flashBgColor;
+            overlayFlashOnTicks  = flashOnTicks;
+            overlayFlashOffTicks = flashOffTicks;
+            overlayFlashCounter  = flashCounter;
+            overlayFlashLit      = flashLit;
         }
     }
     // If spreadLayers is empty (plain centerSpread/centerSpreadBounce), the
@@ -733,6 +818,18 @@ uint32_t LedStrand::applyBrightness(uint32_t color) const {
     uint32_t g = ((color >> 8) & 0xFF) * brightnessPct / 100;
     uint32_t b = (color & 0xFF) * brightnessPct / 100;
     return (r << 16) | (g << 8) | b;
+}
+
+// Round a wall-clock duration to whole refresh ticks. Animations can only
+// change state on a tick, so anything shorter than one interval is clamped up
+// to a single tick rather than silently becoming zero (which would spin the
+// phase every frame).
+uint16_t LedStrand::msToTicks(uint32_t ms) const {
+    if (refreshMs == 0) return 1;
+    uint32_t ticks = (ms + refreshMs / 2) / refreshMs;
+    if (ticks < 1) ticks = 1;
+    if (ticks > 0xFFFF) ticks = 0xFFFF;
+    return (uint16_t)ticks;
 }
 
 // ============================================================================

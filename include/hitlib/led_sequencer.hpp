@@ -22,7 +22,7 @@ class LedStrand; ///< Forward declaration.
  *
  * ### Typical usage inside a Profile
  * @code{.cpp}
- * static void phase1(hitlib::LedStrand& s) { s.flash(0xFFFF00, 3); }
+ * static void phase1(hitlib::LedStrand& s) { s.flash(0xFFFF00, 150, 150); }
  * static void phase2(hitlib::LedStrand& s) { s.rainbow(2); }
  *
  * static const hitlib::Sequencer::Phase egPhases[] = {

@@ -91,7 +91,7 @@ public:
                uint32_t bgColor = 0x000000, bool invert = false, bool bounce = false);
 
     /** @copydoc LedStrand::flash */
-    void flash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
+    void flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::flow */
     void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
@@ -106,7 +106,7 @@ public:
     /** @copydoc LedStrand::bitscroll */
     void bitscroll(const std::vector<LedStrand::BitScrollSegment>& segments, uint8_t speed,
                    bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
-                   uint8_t spacing = 0, bool repeating = true);
+                   uint8_t spacing = 5, bool repeating = true);
 
     /** @copydoc LedStrand::spliceMask */
     void spliceMask(uint8_t sections, bool invert = false, bool alternating = false,
@@ -136,7 +136,8 @@ public:
                       uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::overlayFlash */
-    void overlayFlash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
+    void overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs,
+                      uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::overlayFlow */
     void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed);

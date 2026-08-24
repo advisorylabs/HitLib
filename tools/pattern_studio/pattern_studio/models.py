@@ -45,13 +45,17 @@ class AnimationConfig:
     bg_color: int = 0x000000
     run_length: int = 5
     speed: int = 1
+    # FLASH timing. Separate from `speed` on purpose: on and off durations are
+    # independent, so blink rate and duty cycle are set without interacting.
+    on_ms: int = 250
+    off_ms: int = 250
     invert: bool = False
     bounce: bool = False
     density_pct: int = 30
     fade_step: int = 16
     palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
     segment_width: int = 3
-    spacing: int = 1
+    spacing: int = 5
     repeating: bool = True
 
 
@@ -90,6 +94,10 @@ class OverlayAnimationConfig:
     bg_color: int = 0x000000
     run_length: int = 5
     speed: int = 1
+    on_ms: int = 250   # FLASH lit duration
+    off_ms: int = 250  # FLASH blank duration
+    on_ms: int = 250   # FLASH lit duration
+    off_ms: int = 250  # FLASH blank duration
 
 
 class SpliceModeKind(str, Enum):

@@ -13,13 +13,76 @@ def test_rainbow_scrolls_by_shift_step():
     assert s.pixels == [expected_buffer[(i + 1) % 4] for i in range(4)]
 
 
-def test_flash_block_scrolls_one_pixel_per_tick():
+def test_flash_blinks_whole_strip_on_and_off():
+    # Regression test: flash used to advance the buffer one pixel per tick, so
+    # the lit block scrolled across the strip and read as a long pulse. Every
+    # LED must light together, then go dark together.
     s = Strand(adi_port=1, length=4, refresh_ms=20)
-    s.flash(color=0xFF0000, speed=2, bg_color=0)
-    assert len(s.buffer) == 12  # length * (1 + min(speed, 32))
+    s.flash(color=0xFF0000, on_ms=40, off_ms=40)
+
+    on = [0xFF0000] * 4
+    off = [0x000000] * 4
+    frames = [(s.tick(), s.pixels)[1] for _ in range(8)]
+    assert frames == [on, on, off, off, on, on, off, off]
+
+
+def test_flash_on_and_off_times_are_independent():
+    # The whole point of on_ms/off_ms: duty cycle and rate are set separately,
+    # unlike the old `speed` which changed both at once.
+    s = Strand(adi_port=1, length=1, refresh_ms=25)
+    s.flash(color=0xFF0000, on_ms=100, off_ms=200)
+    assert (s.flash_on_ticks, s.flash_off_ticks) == (4, 8)
+
+    seq = []
+    for _ in range(24):
+        s.tick()
+        seq.append(1 if s.pixels[0] else 0)
+    # 4 ticks lit, 8 ticks blank, repeating -- exactly, with no drift.
+    assert seq == [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] * 2
+
+
+def test_flash_durations_below_one_tick_clamp_up():
+    # A duration shorter than the refresh interval can't be honoured; it must
+    # round up to a single tick rather than collapsing to zero and toggling
+    # the phase every frame.
+    s = Strand(adi_port=1, length=1, refresh_ms=25)
+    s.flash(color=0x00FF00, on_ms=1, off_ms=1)
+    assert (s.flash_on_ticks, s.flash_off_ticks) == (1, 1)
+
+    seq = []
+    for _ in range(6):
+        s.tick()
+        seq.append(1 if s.pixels[0] else 0)
+    assert seq == [1, 0, 1, 0, 1, 0]
+
+
+def test_overlay_flash_blinks_whole_strip():
+    s = Strand(adi_port=1, length=4, refresh_ms=20)
+    s.overlay_flash(color=0xFF0000, on_ms=20, off_ms=20)
+    s.splice_mask(sections=1, use_overlay=True)  # pixels 0,1 show the overlay
 
     s.tick()
-    assert s.pixels == [0xFF0000, 0xFF0000, 0xFF0000, 0x000000]
+    assert s.pixels[:2] == [0xFF0000, 0xFF0000]
+    s.tick()
+    assert s.pixels[:2] == [0x000000, 0x000000]
+    s.tick()
+    assert s.pixels[:2] == [0xFF0000, 0xFF0000]
+
+
+def test_splice_region_flash_blinks_only_its_own_region():
+    s = Strand(adi_port=1, length=4, refresh_ms=20)
+    s.set_color(0x0000FF)
+    s.splice_mask_custom([
+        SpliceRegion(start=0, width=2, kind=SpliceRegionAnimKind.FLASH,
+                     color=0xFF0000, bg_color=0x000000, on_ms=20, off_ms=20),
+    ])
+
+    s.tick()
+    assert s.pixels == [0xFF0000, 0xFF0000, 0x0000FF, 0x0000FF]
+    s.tick()
+    assert s.pixels == [0x000000, 0x000000, 0x0000FF, 0x0000FF]
+    s.tick()
+    assert s.pixels == [0xFF0000, 0xFF0000, 0x0000FF, 0x0000FF]
 
 
 def test_pulse_bounce_reflects_at_strip_ends():
@@ -124,6 +187,52 @@ def test_splice_mask_custom_does_not_alternate():
     for _ in range(20):
         s.tick()
     assert s.splice_show_anim == [False, False, True, True]
+
+
+def test_bitscroll_default_spacing_is_five():
+    s = Strand(adi_port=1, length=14, refresh_ms=20)
+    s.bitscroll(segments=[BitScrollSegment(color=0xFF0000, width=2)], speed=1, bg_color=0)
+    # One tile = 2 lit pixels followed by the default 5-pixel gap.
+    assert s.buffer[:7] == [0xFF0000, 0xFF0000, 0, 0, 0, 0, 0]
+
+
+def test_bitscroll_bounce_honours_repeating_false():
+    # Regression test: the bounce branch tiled the pattern across the master
+    # buffer regardless of `repeating`, so bounce always looked like a
+    # repeating pattern. A single copy must travel the strip and rock back.
+    s = Strand(adi_port=1, length=6, refresh_ms=20)
+    s.bitscroll(
+        segments=[BitScrollSegment(color=0xFF0000, width=2)],
+        speed=1,
+        bg_color=0,
+        bounce=True,
+        spacing=3,
+        repeating=False,
+    )
+
+    lit = []
+    for _ in range(8):
+        s.tick()
+        lit.append([i for i, p in enumerate(s.pixels) if p])
+
+    # Exactly one 2-pixel run at all times -- never a second, tiled copy --
+    # travelling to the near end and back.
+    assert lit == [[3, 4], [2, 3], [1, 2], [0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]
+
+
+def test_bitscroll_bounce_repeating_true_still_tiles():
+    s = Strand(adi_port=1, length=6, refresh_ms=20)
+    s.bitscroll(
+        segments=[BitScrollSegment(color=0xFF0000, width=2)],
+        speed=1,
+        bg_color=0,
+        bounce=True,
+        spacing=3,
+        repeating=True,
+    )
+    s.tick()
+    # Tiled: more than one run of lit pixels is visible at once.
+    assert sum(1 for p in s.pixels if p) > 2
 
 
 def test_bitscroll_repeating_tiles_and_shifts():

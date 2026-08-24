@@ -86,7 +86,9 @@ public:
         uint32_t color2    = 0x0000FF; ///< FLOW end color.
         uint32_t bgColor   = 0x000000; ///< PULSE/FLASH background. OFF always shows black.
         uint8_t  runLength = 5;        ///< PULSE run length.
-        uint8_t  speed     = 1;        ///< PULSE/FLASH/FLOW/RAINBOW animation speed.
+        uint8_t  speed     = 1;        ///< PULSE/FLOW/RAINBOW animation speed.
+        uint32_t onMs      = 250;      ///< FLASH lit duration (ms).
+        uint32_t offMs     = 250;      ///< FLASH blank duration (ms).
     };
 
     /**
@@ -180,14 +182,22 @@ public:
                uint32_t bgColor = 0x000000, bool invert = false, bool bounce = false);
 
     /**
-     * @brief Scroll a full-strip block of color followed by blank space.
+     * @brief Blink the whole strip on and off.
      *
-     * @param color    Block color (0xRRGGBB).
-     * @param speed    Number of background-length repetitions.
-     *                 Higher = longer gap = slower apparent flash.
-     * @param bgColor  Background color (default black).
+     * Every pixel lights at once for @p onMs, then the whole strip shows
+     * @p bgColor for @p offMs, and the cycle repeats.  On and off times are
+     * independent, so rate and duty cycle are set separately.
+     *
+     * Durations are rounded to whole refresh ticks and clamped to a minimum
+     * of one tick, so the strand can't be asked to blink faster than its
+     * refresh interval (see the @c refreshMs constructor parameter).
+     *
+     * @param color    Lit color (0xRRGGBB).
+     * @param onMs     How long the strip stays lit, in milliseconds.
+     * @param offMs    How long the strip stays blank, in milliseconds.
+     * @param bgColor  Background color shown while blank (default black).
      */
-    void flash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
+    void flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor = 0x000000);
 
     /**
      * @brief Scroll a two-color gradient across the strip.
@@ -228,13 +238,14 @@ public:
      * @param invert     Scroll in the reverse direction (default @c false).
      * @param bgColor    Color shown between segments and in blank areas.
      * @param bounce     Rock the pattern back and forth instead of wrapping.
-     * @param spacing    Gap pixels inserted between segments (default 0).
+     * @param spacing    Gap pixels inserted between segments (default 5).
      * @param repeating  Tile the pattern across the whole strip (@c true) or
-     *                   scroll a single pass (@c false).
+     *                   show a single copy of it (@c false).  Honoured for
+     *                   both wrapping and @p bounce travel.
      */
     void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
                    bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
-                   uint8_t spacing = 0, bool repeating = true);
+                   uint8_t spacing = 5, bool repeating = true);
 
     /// @}
 
@@ -303,8 +314,9 @@ public:
     void overlayPulse(uint32_t color, uint8_t runLength, uint8_t speed,
                       uint32_t bgColor = 0x000000);
 
-    /** @brief Animate a scrolling block in the overlay buffer. */
-    void overlayFlash(uint32_t color, uint8_t speed, uint32_t bgColor = 0x000000);
+    /** @brief Blink the overlay buffer on and off (see flash()). */
+    void overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs,
+                      uint32_t bgColor = 0x000000);
 
     /** @brief Scroll a gradient in the overlay buffer. */
     void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed);
@@ -463,7 +475,7 @@ private:
     pros::adi::Led* led = nullptr;
     pros::Mutex mutex;
 
-    enum class AnimMode : uint8_t { STATIC, SHIFT, CENTER_SPREAD, TWINKLE };
+    enum class AnimMode : uint8_t { STATIC, SHIFT, CENTER_SPREAD, TWINKLE, FLASH };
 
     // Base buffer
     AnimMode              animMode     = AnimMode::STATIC;
@@ -478,6 +490,15 @@ private:
     uint8_t  pulseSpeed  = 1;
     int16_t  pulseOffset = 0;
     int8_t   pulseDir    = 1;
+
+    // Flash -- whole-strip blink driven by tick counts rather than a shifting
+    // buffer, so the lit and blank halves can have independent durations.
+    uint32_t flashColor    = 0;
+    uint32_t flashBgColor  = 0;
+    uint16_t flashOnTicks  = 1;
+    uint16_t flashOffTicks = 1;
+    uint16_t flashCounter  = 0;
+    bool     flashLit      = true;
 
     // Bitscroll bounce
     std::vector<uint32_t> bitscrollMaster;
@@ -506,6 +527,15 @@ private:
         std::vector<uint32_t>  buffer;
         int                    shiftStep  = 0;
         uint8_t                shiftSpeed = 0;
+        // FLASH regions blink their whole buffer on a tick timer instead of
+        // shifting it, mirroring the strand-wide flash state.
+        bool     flashing      = false;
+        uint32_t flashColor    = 0;
+        uint32_t flashBgColor  = 0;
+        uint16_t flashOnTicks  = 1;
+        uint16_t flashOffTicks = 1;
+        uint16_t flashCounter  = 0;
+        bool     flashLit      = true;
     };
 
     bool              spliceActive      = false;
@@ -529,6 +559,14 @@ private:
     int                   overlayShiftStep  = 0;
     uint8_t               overlayShiftSpeed = 0;
     std::vector<uint32_t> overlayBuffer;
+
+    // Overlay flash -- mirrors the base flash state above.
+    uint32_t overlayFlashColor    = 0;
+    uint32_t overlayFlashBgColor  = 0;
+    uint16_t overlayFlashOnTicks  = 1;
+    uint16_t overlayFlashOffTicks = 1;
+    uint16_t overlayFlashCounter  = 0;
+    bool     overlayFlashLit      = true;
 
     // Center spread
     std::vector<bool>        spreadMask;
@@ -557,7 +595,7 @@ private:
     // Internal implementations (no lock)
     void setColorNL(uint32_t color);
     void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert, bool bounce);
-    void flashNL(uint32_t color, uint8_t speed, uint32_t bg);
+    void flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
     void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert);
     void rainbowNL(uint8_t speed);
     void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
@@ -567,12 +605,14 @@ private:
 
     void overlaySetColorNL(uint32_t color);
     void overlayPulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg);
-    void overlayFlashNL(uint32_t color, uint8_t speed, uint32_t bg);
+    void overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
     void overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed);
     void overlayRainbowNL(uint8_t speed);
 
     void advanceCenterSpread();
     void advanceTwinkle();
+    void advanceFlash();
+    void advanceOverlayFlash();
     void advancePulseBounce();
     void advanceBitscrollBounce();
     void fillBitscrollFromMaster();
@@ -589,6 +629,7 @@ private:
     int16_t computeEffectiveMode() const;
     void    pruneExpired(uint32_t now);
     uint32_t applyBrightness(uint32_t color) const;
+    uint16_t msToTicks(uint32_t ms) const;
 
     static std::vector<uint32_t> genGradient(uint32_t c1, uint32_t c2, uint8_t len);
     static std::vector<uint32_t> genRainbow(uint8_t len);

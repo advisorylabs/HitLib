@@ -40,7 +40,7 @@ strand.detachProfile();                   // detach and turn off
 
 ```cpp
 static void myIdle  (hitlib::LedStrand& s) { s.rainbow(1); }
-static void myAlert (hitlib::LedStrand& s) { s.flash(0xFF0000, 2); }
+static void myAlert (hitlib::LedStrand& s) { s.flash(0xFF0000, 100, 100); }
 ```
 
 ### 2. Declare modes
@@ -78,7 +78,7 @@ hitlib::Sequencer drives multi-phase endgame / event sequences inside `onActivat
 and `onTick` profile callbacks.
 
 ```cpp
-static void phase1(hitlib::LedStrand& s) { s.flash(0xFFFF00, 3); }
+static void phase1(hitlib::LedStrand& s) { s.flash(0xFFFF00, 150, 150); }
 static void phase2(hitlib::LedStrand& s) { s.rainbow(2); }
 
 static const hitlib::Sequencer::Phase phases[] = {
