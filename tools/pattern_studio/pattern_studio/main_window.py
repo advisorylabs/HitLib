@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
             # Both need a native window to talk to, which only exists once
             # the window has been shown.
             window_chrome.round_corners(self)
-            window_chrome.enable_snap_layouts(self)
+            window_chrome.enable_native_snap(self)
             self._chrome_hooked = True
 
     def nativeEvent(self, event_type, message):  # noqa: N802 (Qt override)

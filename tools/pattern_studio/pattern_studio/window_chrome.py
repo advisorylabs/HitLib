@@ -11,9 +11,10 @@ What that costs, and how it's paid back:
 
 * Dragging and resizing are gone with the frame. Both come back through
   QWindow.startSystemMove()/startSystemResize(), which hand the gesture to
-  the compositor -- so Aero Snap, edge docking and the snap animation behave
-  exactly as they do for a native window, rather than being reimplemented
-  with mouse deltas.
+  the compositor rather than reimplementing it with mouse deltas. Handing it
+  over isn't enough on its own to get Aero Snap back, though: Windows gates
+  the snap zones on the window's style bits, which a frameless window loses
+  along with its frame. See enable_native_snap().
 * Resize edges need something to hit. Eight thin grip widgets sit over the
   window's border, each with its own cursor, instead of an application-wide
   mouse filter -- widgets get cursor handling from Qt for free, a filter
@@ -64,6 +65,12 @@ WM_NCMOUSELEAVE = 0x02A2
 HTMAXBUTTON = 9
 GWL_STYLE = -16
 WS_MAXIMIZEBOX = 0x00010000
+WS_THICKFRAME = 0x00040000
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 
 
 class _CaptionButton(QAbstractButton):
@@ -395,12 +402,24 @@ def handle_native_event(title_bar: TitleBar, event_type, message):
     return caption_message(title_bar, msg.message, int(msg.wParam), int(msg.lParam))
 
 
-def enable_snap_layouts(window: QWidget) -> None:
-    """Make sure the window admits to being maximizable.
+def enable_native_snap(window: QWidget) -> None:
+    """Make the window admit to being maximizable and sizable.
 
-    Windows only offers the snap layouts flyout for a window carrying
-    WS_MAXIMIZEBOX; a frameless one doesn't necessarily get it. The style bit
-    draws nothing on its own without a caption.
+    Windows decides what snapping a window gets from its style bits, not from
+    how it's dragged, and a frameless window is left holding neither of the
+    two that matter:
+
+    * WS_MAXIMIZEBOX is what the snap layouts flyout looks for when the mouse
+      rests on the maximize button.
+    * WS_THICKFRAME is what marks the window sizable, and every drag gesture
+      is gated on it -- dragging to the top edge to maximize, to a side to
+      half-tile, and the Win+Arrow shortcuts alike. Without it the drag just
+      ends wherever the mouse was let go, with no zone preview on the way.
+
+    Neither bit draws anything here. The frame they would normally imply comes
+    from the non-client area, which a frameless window doesn't have -- its
+    client rect already covers the whole window, and stays that way once these
+    are set, maximized included.
     """
     if sys.platform != "win32":
         return
@@ -410,8 +429,17 @@ def enable_snap_layouts(window: QWidget) -> None:
         user32 = ctypes.windll.user32
         hwnd = int(window.winId())
         style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        if not style & WS_MAXIMIZEBOX:
-            user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_MAXIMIZEBOX)
+        wanted = style | WS_MAXIMIZEBOX | WS_THICKFRAME
+        if wanted != style:
+            user32.SetWindowLongW(hwnd, GWL_STYLE, wanted)
+            # A style change touching the frame isn't read back until the
+            # window is asked to recompute one; without this the bits are set
+            # but nothing acts on them until the next resize.
+            user32.SetWindowPos(
+                hwnd, 0, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                | SWP_FRAMECHANGED,
+            )
     except (AttributeError, OSError, ValueError):
         pass
 
