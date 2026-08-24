@@ -1,6 +1,6 @@
 import os
 
-# Must be set before PySide6.QtWidgets is imported anywhere -- lets the GUI
+# Must be set before PySide6.QtWidgets is imported anywhere. Lets the GUI
 # tests run headless without a real display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

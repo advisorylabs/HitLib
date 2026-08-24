@@ -81,11 +81,11 @@ OVERLAY_ANIMATION_KIND_LABELS: dict[OverlayAnimationKind, str] = {
 
 @dataclass
 class OverlayAnimationConfig:
-    """Mirrors LedStrand's overlay* methods -- an animation buffer that can be
+    """Mirrors LedStrand's overlay* methods, an animation buffer that can be
     shown instead of a solid color. Used two ways: as the single shared
     overlay a Split-mode splice mask's masked bins can reveal (one buffer for
     the whole strand), and as each Custom-mode region's own independent
-    animation (one buffer per region -- see SpliceRegionConfig).
+    animation (one buffer per region - see SpliceRegionConfig).
     """
 
     kind: OverlayAnimationKind = OverlayAnimationKind.SOLID
@@ -108,7 +108,7 @@ class SpliceModeKind(str, Enum):
 @dataclass
 class SpliceRegionConfig:
     """One independently placed override region for a Custom-mode splice
-    mask. Each region owns its own OverlayAnimationConfig -- unlike Split
+    mask. Each region owns its own OverlayAnimationConfig, unlike Split
     mode's single shared overlay, every region can animate independently and
     simultaneously.
     """
@@ -135,20 +135,20 @@ class SpliceMaskConfig:
     regions: list[SpliceRegionConfig] = field(default_factory=list)
 
     # Split mode's single shared overlay animation (see use_overlay above).
-    # Custom mode regions each carry their own animation instead -- see
+    # Custom mode regions each carry their own animation instead - see
     # SpliceRegionConfig.animation.
     overlay: OverlayAnimationConfig = field(default_factory=OverlayAnimationConfig)
 
     def needs_overlay(self) -> bool:
         """Whether Split mode's shared overlay animation actually needs to be
-        set up -- i.e. its masked bins are configured to show it. Not
+        set up, i.e. its masked bins are configured to show it. Not
         meaningful for Custom mode, where each region owns its animation."""
         return self.mode == SpliceModeKind.SPLIT and self.use_overlay
 
 
 @dataclass
 class PhaseConfig:
-    """One timed step of a sequenced mode -- mirrors hitlib_sim.sequencer.Phase."""
+    """One timed step of a sequenced mode - mirrors hitlib_sim.sequencer.Phase."""
 
     name: str = "Phase"
     duration_ms: int = 1000
@@ -158,7 +158,7 @@ class PhaseConfig:
 
 @dataclass
 class ModeConfig:
-    """One named entry in a strand's profile -- mirrors hitlib_sim.profile.ProfileMode.
+    """One named entry in a strand's profile - mirrors hitlib_sim.profile.ProfileMode.
 
     If `phases` is empty the mode is a steady-state animation (`animation`/
     `splice`, re-issued once on activation). If non-empty, it's a timed
@@ -187,7 +187,7 @@ class StrandConfig:
     # Profile mode: when use_profile is True, `animation`/`splice` above are
     # ignored in favor of `profile_modes`, with `active_mode_indices` driving
     # the same activate_mode()/priority-stack behavior LedStrand uses on
-    # real hardware -- lets the preview exercise mode switching.
+    # real hardware. Lets the preview exercise mode switching.
     use_profile: bool = False
     profile_modes: list[ModeConfig] = field(default_factory=list)
     active_mode_indices: list[int] = field(default_factory=list)

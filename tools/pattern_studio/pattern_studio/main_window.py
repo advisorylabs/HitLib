@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
@@ -23,7 +24,13 @@ from PySide6.QtWidgets import (
 
 from . import __version__, theme
 from .canvas import StripCanvas
-from .codegen import generate_cpp, validate_for_export
+from .codegen import (
+    generate_cpp,
+    generate_document_cpp,
+    suggested_header_name,
+    validate_document_for_export,
+    validate_for_export,
+)
 from .group_edit import apply_changes, diff_config
 from .inspector import InspectorPanel
 from .models import StrandConfig
@@ -71,7 +78,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.sessions: list[StrandSession] = []
         # The anchor (what the inspector shows) plus the wider group an edit
-        # is replayed onto -- see _apply_group_edit.
+        # is replayed onto - see _apply_group_edit.
         self._current_index = -1
         self._selected_indices: list[int] = []
         self._baseline: StrandConfig | None = None
@@ -79,7 +86,7 @@ class MainWindow(QMainWindow):
         self._running = True
         self._current_file_path: Path | None = None
         # Frameless, with the logo/menus/title/caption buttons folded into one
-        # row -- see window_chrome for what that trades away and how it's
+        # row. See window_chrome for what that trades away and how it's
         # paid back. Built before _update_title(), which writes into it.
         self.title_bar = window_chrome.install(self)
         self._chrome_hooked = False
@@ -90,7 +97,7 @@ class MainWindow(QMainWindow):
         self.inspector = InspectorPanel()
         self.inspector.setEnabled(False)
 
-        # Same six actions, same order as before -- but the scope now lives in
+        # Same six actions, same order as before, but the scope now lives in
         # a heading over each triad instead of inside every label. "Play Sel"
         # read to newcomers as a fourth verb rather than as a scope, and the
         # abbreviation only existed to keep the row narrow.
@@ -131,7 +138,7 @@ class MainWindow(QMainWindow):
 
         # Transport row + strand-settings strip both have a real minimum
         # width (6 buttons; 6 fields) that can exceed a narrowed center
-        # column once the splitter is dragged -- or even at default size on
+        # column once the splitter is dragged, or even at default size on
         # a modest window. Wrapping both together in one slim scroll area
         # means THIS strip gets a small horizontal scrollbar in that squeeze
         # instead of either clipping its contents or forcing the whole
@@ -168,7 +175,7 @@ class MainWindow(QMainWindow):
         right.setWidgetResizable(True)
         right.setMinimumWidth(260)
 
-        # QSplitter lets every column be resized by dragging its edge --
+        # QSplitter lets every column be resized by dragging its edge,
         # replaces the old fixed-width side panels, which could force a
         # horizontal scrollbar in the right column with no way to widen it.
         splitter = QSplitter()
@@ -181,7 +188,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([210, 880, 400])
 
-        # The wordmark gradient as a hairline under the menu bar -- the same
+        # The wordmark gradient as a hairline under the menu bar, the same
         # accent the docs site runs across its header, and the one piece of
         # brand color that's always on screen. It drifts and casts a short
         # falloff onto the window; see widgets.BrandRule.
@@ -215,8 +222,7 @@ class MainWindow(QMainWindow):
 
         # Called last (not at the top of __init__): resize() on a QMainWindow
         # before setCentralWidget() and its children exist gets overridden by
-        # Qt's own layout-driven size once the window is actually shown --
-        # confirmed by measuring the real window rect at runtime.
+        # Qt's own layout-driven size once the window is actually shown.
         # Wide enough that the strand-settings strip and the transport row
         # both fit in the center column at default size, without falling back
         # to controls_scroll's horizontal scrollbar.
@@ -238,6 +244,8 @@ class MainWindow(QMainWindow):
 
         export_menu = self.title_bar.menu_bar.addMenu("&Export")
         export_menu.addAction("Export Current Strand as C++...", self._export_save)
+        export_menu.addAction("Export &All Strands as C++...", self._export_all_save)
+        export_menu.addSeparator()
         export_menu.addAction("Copy Current Strand C++ to Clipboard", self._export_clipboard)
 
     def _file_new(self) -> None:
@@ -300,7 +308,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         name = self._current_file_path.name if self._current_file_path else None
-        suffix = f" -- {name}" if name else ""
+        suffix = f" - {name}" if name else ""
         # Both: the title bar is what's on screen, and the window title is
         # still what the taskbar and Alt-Tab read.
         self.setWindowTitle(f"HitLib Pattern Studio v{__version__}{suffix}")
@@ -341,7 +349,14 @@ class MainWindow(QMainWindow):
     # C++ export
     # ------------------------------------------------------------------
 
-    def _generate_export_or_warn(self) -> str | None:
+    def _show_export_errors(self, errors: list[str]) -> None:
+        QMessageBox.critical(
+            self, "Can't Export", "Fix these before exporting:\n\n" + "\n".join(f"- {e}" for e in errors)
+        )
+
+    def _current_config_or_warn(self) -> StrandConfig | None:
+        """The selected strand's config, validated, with in-progress inspector
+        edits flushed into it first."""
         session = self._current_session()
         if session is None:
             QMessageBox.warning(self, "No Strand Selected", "Select a strand to export first.")
@@ -349,26 +364,63 @@ class MainWindow(QMainWindow):
         self.inspector.save(session.config)  # make sure in-progress edits are flushed
         errors = validate_for_export(session.config)
         if errors:
-            QMessageBox.critical(
-                self, "Can't Export", "Fix these before exporting:\n\n" + "\n".join(f"- {e}" for e in errors)
-            )
+            self._show_export_errors(errors)
             return None
-        return generate_cpp(session.config)
+        return session.config
 
-    def _export_save(self) -> None:
-        code = self._generate_export_or_warn()
-        if code is None:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Export C++ Profile", "", _CPP_FILE_FILTER)
+    def _all_configs_or_warn(self) -> list[StrandConfig] | None:
+        if not self.sessions:
+            QMessageBox.warning(self, "Nothing to Export", "Add a strand before exporting.")
+            return None
+        current = self._current_session()
+        if current is not None:
+            self.inspector.save(current.config)  # only the selected strand is bound to the inspector
+        configs = [s.config for s in self.sessions]
+        errors = validate_document_for_export(configs)
+        if errors:
+            self._show_export_errors(errors)
+            return None
+        return configs
+
+    def _generate_export_or_warn(self, header_name: str | None = None) -> str | None:
+        config = self._current_config_or_warn()
+        if config is None:
+            return None
+        return generate_cpp(config, header_name)
+
+    def _write_export(self, code_for: Callable[[str], str], title: str, suggested: str) -> None:
+        """Ask for a path, then generate. The chosen filename goes into the
+        generated file's #include line, so it can't be rendered until now."""
+        path, _ = QFileDialog.getSaveFileName(self, title, suggested, _CPP_FILE_FILTER)
         if not path:
             return
         p = Path(path)
         if not p.suffix:
             p = p.with_suffix(".hpp")
         try:
-            p.write_text(code, encoding="utf-8")
+            p.write_text(code_for(p.name), encoding="utf-8")
         except OSError as exc:
             QMessageBox.critical(self, "Export Failed", f"Couldn't write {p}:\n{exc}")
+
+    def _export_save(self) -> None:
+        config = self._current_config_or_warn()
+        if config is None:
+            return
+        self._write_export(
+            lambda name: generate_cpp(config, name),
+            "Export C++ Profile",
+            suggested_header_name(config.name),
+        )
+
+    def _export_all_save(self) -> None:
+        configs = self._all_configs_or_warn()
+        if configs is None:
+            return
+        self._write_export(
+            lambda name: generate_document_cpp(configs, name),
+            "Export All Strands as C++",
+            "led_profiles.hpp",
+        )
 
     def _export_clipboard(self) -> None:
         code = self._generate_export_or_warn()
@@ -414,7 +466,7 @@ class MainWindow(QMainWindow):
 
     def remove_selected_strands(self) -> None:
         """Remove every strand in the current group selection, not just the
-        anchor -- the Remove button acts on what the list shows as selected."""
+        anchor. The Remove button acts on what the list shows as selected."""
         self.remove_strands(self._selected_indices)
 
     def remove_strands(self, rows: list[int]) -> None:
@@ -431,7 +483,7 @@ class MainWindow(QMainWindow):
         self.strand_list.select(new_row)
         # setCurrentRow(-1) is a no-op (and won't fire selection_changed) when
         # the row was already -1, which happens when the last strand is
-        # removed -- call the handler directly so inspector/transport-button
+        # removed. Call the handler directly so inspector/transport-button
         # enabled state doesn't go stale in that case.
         self._on_selection_changed()
         self.canvas.update()
@@ -488,7 +540,7 @@ class MainWindow(QMainWindow):
         """Snapshot the anchor's config so the *next* edit can be diffed
         against it. Taken up front rather than inside the edit because the
         panels mutate nested lists (profile modes, phases, splice regions) in
-        place while the user works, not only in save() -- by the time a
+        place while the user works, not only in save(). By the time a
         changed signal arrives the config already holds the new value.
         """
         session = self._current_session()
@@ -533,7 +585,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _play_all(self) -> None:
-        # Also updates the default new-strand play state (see _add_session) --
+        # Also updates the default new-strand play state (see _add_session)
         # only the "All" actions change that default; per-strand play/pause
         # below is a one-off override for just that strand.
         self._running = True

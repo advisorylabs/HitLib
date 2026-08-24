@@ -64,7 +64,7 @@ public:
     };
 
     /**
-     * @brief What a custom splice mask region shows -- mirrors the overlay*()
+     * @brief What a custom splice mask region shows, mirrors the overlay*()
      * animation vocabulary (see @ref overlaySetColor "Overlay Animations"),
      * since each region gets a buffer built and animated the same way.
      */
@@ -75,7 +75,7 @@ public:
      *
      * Each region gets its own animation buffer, generated over just that
      * region's width, and animates independently of every other region and
-     * of the base/overlay buffers -- unlike spliceMask()'s single shared
+     * of the base/overlay buffers. Unlike spliceMask()'s single shared
      * overlay, every region here can show something different at once.
      */
     struct SpliceRegion {
@@ -255,7 +255,7 @@ public:
     /// Overrides part of the strip, either as equal alternating bins sharing
     /// one overlay buffer (spliceMask) or as arbitrarily placed regions that
     /// each animate independently (spliceMaskCustom). The two are mutually
-    /// exclusive -- whichever was called most recently is what's active.
+    /// exclusive, whichever was called most recently is what's active.
     /// @{
 
     /**
@@ -284,7 +284,7 @@ public:
      *
      * Unlike spliceMask(), regions can start and end anywhere on the strip,
      * don't alternate, and each gets a dedicated buffer generated over just
-     * its own width -- so e.g. one region can rainbow-scroll while another
+     * its own width. So e.g. one region can rainbow-scroll while another
      * pulses, simultaneously. Regions stay fixed until spliceMaskCustom() or
      * clearSpliceMask() is called again. Later entries win where regions
      * overlap.
@@ -390,7 +390,7 @@ public:
     /**
      * @brief Set global brightness for this strand.
      *
-     * Applied non-destructively at flush time — the animation buffers are not
+     * Applied non-destructively at flush time, the animation buffers are not
      * modified.  Does not require the strand to be re-initialized.
      *
      * @param pct  Brightness percentage (0 = off, 100 = full).  Clamped to
@@ -491,7 +491,7 @@ private:
     int16_t  pulseOffset = 0;
     int8_t   pulseDir    = 1;
 
-    // Flash -- whole-strip blink driven by tick counts rather than a shifting
+    // Flash - whole-strip blink driven by tick counts rather than a shifting
     // buffer, so the lit and blank halves can have independent durations.
     uint32_t flashColor    = 0;
     uint32_t flashBgColor  = 0;
@@ -519,7 +519,7 @@ private:
     // Splice mask
     enum class SpliceMode : uint8_t { SPLIT, CUSTOM };
 
-    // Runtime animation state for one CUSTOM-mode region -- a scaled-down
+    // Runtime animation state for one CUSTOM-mode region, a scaled-down
     // version of the overlay buffer (buffer + shift step/speed), but one per
     // region instead of shared.
     struct SpliceRegionState {
@@ -560,7 +560,7 @@ private:
     uint8_t               overlayShiftSpeed = 0;
     std::vector<uint32_t> overlayBuffer;
 
-    // Overlay flash -- mirrors the base flash state above.
+    // Overlay flash - mirrors the base flash state above.
     uint32_t overlayFlashColor    = 0;
     uint32_t overlayFlashBgColor  = 0;
     uint16_t overlayFlashOnTicks  = 1;

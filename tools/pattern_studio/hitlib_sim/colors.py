@@ -35,7 +35,7 @@ def lerp_color(bg: int, fg: int, level: int) -> int:
 
 
 def wheel(pos: int) -> int:
-    """Port of wheel() (led_strand.cpp:27-36) -- NeoPixel-style hue wheel, S=V=255."""
+    """Port of wheel() (led_strand.cpp:27-36). NeoPixel-style hue wheel, S=V=255."""
     pos = (255 - (pos & 0xFF)) & 0xFF
     if pos < 85:
         return pack_rgb(255 - pos * 3, 0, pos * 3)

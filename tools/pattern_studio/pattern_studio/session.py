@@ -2,7 +2,7 @@
 
 Each strand gets its own QTimer at its configured refresh_ms so animation
 speed in the preview matches what the same refresh_ms would look like on
-real hardware -- a single shared timer would make strands with different
+real hardware, a single shared timer would make strands with different
 refresh_ms values tick (and thus animate) at the wrong relative speed.
 """
 
@@ -40,7 +40,7 @@ class StrandSession(QObject):
         return self.timer.isActive()
 
     def rebuild(self) -> None:
-        """Strand-level settings (length/port/refresh_ms) changed -- recreate the engine strand."""
+        """Strand-level settings (length/port/refresh_ms) changed - recreate the engine strand."""
         was_running = self.timer.isActive()
         self.timer.stop()
         self.timer.setInterval(max(1, self.config.refresh_ms))
@@ -50,6 +50,6 @@ class StrandSession(QObject):
         self.ticked.emit()
 
     def reapply_animation(self) -> None:
-        """Only animation/splice params changed -- no need to recreate the Strand."""
+        """Only animation/splice params changed - no need to recreate the Strand."""
         apply_strand_config(self.strand, self.config)
         self.ticked.emit()

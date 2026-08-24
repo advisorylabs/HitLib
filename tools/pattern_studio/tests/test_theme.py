@@ -1,7 +1,7 @@
 """Theme integrity checks.
 
 The stylesheet references icon files by path at runtime, so a renamed or
-unbundled SVG doesn't raise -- Qt just draws nothing and the control silently
+unbundled SVG doesn't raise. Qt just draws nothing and the control silently
 loses its arrow/checkmark. These tests fail loudly instead.
 """
 

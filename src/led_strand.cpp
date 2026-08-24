@@ -6,7 +6,7 @@
 
 // Shared across every LedStrand instance (all groups). The V5 ADI/Smart Port
 // link can't keep up with back-to-back or concurrent led->update() calls from
-// multiple strands/tasks -- serializing them here and pacing each one gives
+// multiple strands/tasks, serializing them here and pacing each one gives
 // the ADI LED driver breathing room so updates don't queue up and lag behind.
 static pros::Mutex s_adiMutex;
 
@@ -72,7 +72,7 @@ void LedStrand::init() {
 }
 
 // ============================================================================
-// tick() -- called once per refresh interval by LedGroup's task.
+// tick() - called once per refresh interval by LedGroup's task.
 // ============================================================================
 
 void LedStrand::tick() {
@@ -106,7 +106,7 @@ void LedStrand::tick() {
         (effectiveIdx >= 0 && activeProfile) ? &activeProfile->modes[effectiveIdx] : nullptr;
 
     // Profile callbacks are user code and call the *public* (locking) API, so
-    // the mutex must not be held while they run -- release around each call.
+    // the mutex must not be held while they run, release around each call.
     if (modeChanged && mode && mode->onActivate) {
         mutex.give();
         mode->onActivate(*this);
@@ -208,7 +208,7 @@ void LedStrand::flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t 
 
 // flashCounter tracks frames already flushed in the current phase. tick() runs
 // this before flushBuffer(), so the tick that flips the phase also renders the
-// new colour -- count it as that phase's first frame, or every phase comes out
+// new colour. Count it as that phase's first frame, or every phase comes out
 // one tick short.
 void LedStrand::advanceFlash() {
     uint16_t hold = flashLit ? flashOnTicks : flashOffTicks;
@@ -335,7 +335,7 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
     // whole strip can't usefully tile, and the cap keeps downstream size math
     // (shiftVariant, bitscrollMaster) safely inside uint8_t range.
     std::vector<uint32_t> unit;
-    // Size of `unit` up to the last segment pixel -- i.e. excluding the trailing
+    // Size of `unit` up to the last segment pixel, i.e. excluding the trailing
     // run of `spacing`, which only exists to separate one tile from the next.
     // A single non-tiled copy of the pattern shouldn't carry it.
     size_t contentLen = 0;
@@ -378,9 +378,7 @@ void LedStrand::bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8
         } else {
             // A single copy of the pattern, padded with background on both
             // sides so the visible window can carry it from the far end of the
-            // strip to the near end and back -- the same travel pulse bounce
-            // does with its run. Tiling here regardless of `repeating` was the
-            // bug: bounce always looked like a repeating pattern.
+            // strip to the near end and back.
             size_t n = std::min(contentLen, (size_t)length);
             size_t pad = (size_t)length - n;
             bitscrollMaster.assign(pad, bgColor);
@@ -763,7 +761,7 @@ void LedStrand::doLayerSwap() {
         spreadLayerIdx = (uint8_t)((spreadLayerIdx + 1) % spreadLayers.size());
         AnimSetupFn fn = spreadLayers[spreadLayerIdx];
         if (fn) {
-            // fn() is user code and is written like any other setup callback --
+            // fn() is user code and is written like any other setup callback,
             // it calls normal base methods (rainbow/flow/...). Let it run against
             // `buffer` as usual (lock released so it can safely call the public,
             // locking API), then capture the result as the *next* overlay instead
@@ -788,7 +786,7 @@ void LedStrand::doLayerSwap() {
         }
     }
     // If spreadLayers is empty (plain centerSpread/centerSpreadBounce), the
-    // overlay is left as-is -- it keeps animating every tick via
+    // overlay is left as-is. It keeps animating every tick via
     // shiftOverlayBuffer() and the next reveal cycle runs against it again.
 
     buffer = std::move(promotedBase);
@@ -871,7 +869,7 @@ void LedStrand::activateModeTimed(uint8_t modeIdx, uint32_t durationMs) {
     uint32_t now = pros::millis();
     for (auto& e : modeStack) {
         if (e.modeIdx == modeIdx) {
-            if (!e.persistent) e.endMs = now + durationMs; // extend deadline; don't downgrade persistent
+            if (!e.persistent) e.endMs = now + durationMs; // extend deadline, don't downgrade persistent
             mutex.give();
             return;
         }
@@ -900,7 +898,7 @@ int16_t LedStrand::computeEffectiveMode() const {
     int16_t winner = -1;
     int winnerPriority = -1;
     for (const auto& e : modeStack) {
-        if (e.modeIdx >= activeProfile->modeCount) continue; // defensive: ignore out-of-range indices
+        if (e.modeIdx >= activeProfile->modeCount) continue; // ignore out-of-range indices
         int p = activeProfile->modes[e.modeIdx].priority;
         if (p >= winnerPriority) {
             winnerPriority = p;
@@ -932,7 +930,7 @@ void LedStrand::flushBuffer() {
             baseColor = buffer[i];
         }
 
-        // Mirrors baseColor above -- without this, overlayShiftStep (advanced
+        // Mirrors baseColor above. Without this, overlayShiftStep (advanced
         // every tick by shiftOverlayBuffer()) is computed but never actually
         // read, so overlay animations render as a single frozen frame instead
         // of animating.

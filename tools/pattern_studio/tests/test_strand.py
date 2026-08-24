@@ -37,7 +37,7 @@ def test_flash_on_and_off_times_are_independent():
     for _ in range(24):
         s.tick()
         seq.append(1 if s.pixels[0] else 0)
-    # 4 ticks lit, 8 ticks blank, repeating -- exactly, with no drift.
+    # 4 ticks lit, 8 ticks blank, repeating exactly, with no drift.
     assert seq == [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] * 2
 
 
@@ -101,7 +101,7 @@ def test_pulse_bounce_reflects_at_strip_ends():
 
 def test_splice_mask_bin_distribution():
     s = Strand(adi_port=1, length=7, refresh_ms=20)
-    s.splice_mask(sections=2)  # 3 bins: sizes 3,2,2 -- bin 1 (odd) shows animation
+    s.splice_mask(sections=2)  # 3 bins: sizes 3,2,2. Bin 1 (odd) shows animation
     assert s.splice_show_anim == [False, False, False, True, True, False, False]
 
 
@@ -113,7 +113,7 @@ def test_overlay_rainbow_animates_across_ticks():
     s.overlay_rainbow(speed=1)
     expected_overlay = gen_rainbow(4)
     assert s.overlay_buffer == expected_overlay
-    s.splice_mask(sections=1, use_overlay=True)  # halves: [False, False, True, True] -- pixels 0,1 masked
+    s.splice_mask(sections=1, use_overlay=True)  # halves: [False, False, True, True], pixels 0,1 masked
 
     s.tick()
     assert s.overlay_shift_step == 1
@@ -215,7 +215,7 @@ def test_bitscroll_bounce_honours_repeating_false():
         s.tick()
         lit.append([i for i, p in enumerate(s.pixels) if p])
 
-    # Exactly one 2-pixel run at all times -- never a second, tiled copy --
+    # Exactly one 2-pixel run at all times, never a second, tiled copy,
     # travelling to the near end and back.
     assert lit == [[3, 4], [2, 3], [1, 2], [0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]
 
@@ -259,7 +259,7 @@ def test_twinkle_single_pixel_fade_cycle():
     s.tick()  # fades to full, enters 8-tick hold
     assert s.pixels == [0xFF0000]
 
-    for _ in range(8):  # remaining hold ticks -- the tick hold_ticks hits 0 sets
+    for _ in range(8):  # remaining hold ticks. The tick hold_ticks hits 0 sets
         s.tick()         # target=0 but (elif chain) doesn't fade level same tick
         assert s.pixels == [0xFF0000]
 

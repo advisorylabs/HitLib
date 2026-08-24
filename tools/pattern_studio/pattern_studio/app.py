@@ -26,10 +26,10 @@ def _icon_path() -> Path:
 def _claim_taskbar_identity() -> None:
     """Make the taskbar button use this app's own icon rather than its host's.
 
-    Windows groups taskbar buttons -- and picks their icon -- by the process's
+    Windows groups taskbar buttons (and picks their icon) by the process's
     AppUserModelID, which defaults to the executable that started it. Run from
     source that executable is python.exe, so the taskbar shows the Python icon
-    no matter what setWindowIcon() says. Claiming an explicit ID detaches us
+    no matter what setWindowIcon() says. Claiming an explicit ID detaches this
     from the host and lets the window icon through. Must run before the first
     window is created.
     """
@@ -40,7 +40,7 @@ def _claim_taskbar_identity() -> None:
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_APP_USER_MODEL_ID)
     except (AttributeError, OSError):
-        # Cosmetic only -- worst case the taskbar keeps the host's icon.
+        # Cosmetic only, worst case the taskbar keeps the host's icon.
         pass
 
 

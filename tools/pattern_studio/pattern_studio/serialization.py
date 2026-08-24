@@ -1,6 +1,6 @@
 """(De)serializes StrandConfig trees to/from JSON.
 
-This is both the GUI's native save format and the thing teammates share --
+This is both the GUI's native save format and the thing teammates share -
 one format, not two. Every *_from_dict() reads via dict.get() with a default
 pulled from a fresh dataclass instance, so older or hand-edited files with
 missing fields load with sane defaults instead of raising, and adding a new

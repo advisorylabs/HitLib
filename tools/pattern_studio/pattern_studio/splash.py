@@ -1,6 +1,6 @@
 """Startup splash: the HitLib logo inside a rotating brand-gradient ring.
 
-Purely a brand moment, not a progress indicator -- Pattern Studio starts fast
+Purely a branding splash screen, not a progress indicator. Pattern Studio starts fast
 enough that there's nothing to report. It's deliberately kept honest about
 that: no fake progress bar, no "Loading modules..." text. The main window is
 built while the splash is up, so the wait it adds is the animation itself.
@@ -26,7 +26,7 @@ from . import theme
 
 
 #: The ring's color stops. theme.BRAND_SWEEP is the wordmark gradient run out
-#: and back, so the wrap-around point is pink meeting pink -- see the token
+#: and back, so the wrap-around point is pink meeting pink - see the token
 #: for why the plain left-to-right order won't do here.
 _RING_STOPS = theme.BRAND_SWEEP
 
@@ -34,7 +34,7 @@ _RING_STOPS = theme.BRAND_SWEEP
 class SplashScreen(QWidget):
     """Frameless, translucent splash that fades in, spins, and fades out.
 
-    Emits `finished` once it has faded out and closed -- connect that to
+    Emits `finished` once it has faded out and closed, connect that to
     showing the main window.
     """
 
@@ -49,7 +49,7 @@ class SplashScreen(QWidget):
 
     #: Bloom passes drawn under the crisp ring, outermost first:
     #: (width_multiple, alpha). Additive, so where the halos overlap the ring
-    #: they sum into the brighter core -- the same trick the LED preview uses,
+    #: they sum into the brighter core; the same trick the LED preview uses,
     #: at a scale where it reads as the logo being lit from its own ring.
     RING_BLOOM = ((3.4, 26), (2.0, 44))
     LOGO_BOX = 200
@@ -151,7 +151,7 @@ class SplashScreen(QWidget):
         self.update()
 
     # ------------------------------------------------------------------
-    # Input -- any interaction skips
+    # Input - any interaction skips
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)

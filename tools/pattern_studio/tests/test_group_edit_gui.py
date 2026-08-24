@@ -1,5 +1,5 @@
 """Group editing end to end: multi-select the strand list, edit once, and every
-selected strand follows -- without the ones that differ getting flattened.
+selected strand follows, without the ones that differ getting flattened.
 """
 
 from pattern_studio.main_window import MainWindow
@@ -14,7 +14,7 @@ def _window_with(qapp, count: int) -> MainWindow:
 
 
 def _select(win: MainWindow, rows: list[int]) -> None:
-    """Select `rows`, anchored on the first -- the same state Ctrl-clicking down
+    """Select `rows`, anchored on the first. The same state Ctrl-clicking down
     the list produces."""
     win.strand_list.select(rows[0])
     for row in rows[1:]:

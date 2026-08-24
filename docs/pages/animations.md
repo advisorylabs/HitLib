@@ -62,7 +62,7 @@ Blinks the whole strip: every LED lights at once for `onMs`, then the whole
 strip shows `bgColor` for `offMs`, and the cycle repeats.
 
 On and off times are independent, so blink rate and duty cycle are set
-separately — `100, 100` is an even 5 Hz blink, while `100, 400` keeps the same
+separately. `100, 100` is an even 5 Hz blink, while `100, 400` keeps the same
 brief flash at 2 Hz. Durations are rounded to whole refresh ticks and clamped
 to a minimum of one tick, so a strand can't be asked to blink faster than its
 `refreshMs` interval.

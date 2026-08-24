@@ -1,7 +1,7 @@
 """The app's own title bar, caption buttons and resize edges.
 
-A frameless window gives up things the OS was doing for free -- moving,
-resizing, the maximize/restore distinction -- so what these tests pin is that
+A frameless window gives up things the OS was doing for free, like moving,
+resizing and the maximize/restore distinction. So what these tests pin is that
 each of them is actually wired back up, and that the menus really did move
 into the chrome row rather than leaving a second strip behind.
 """
@@ -21,7 +21,7 @@ def test_window_is_frameless(qapp):
 
 
 def test_menus_live_in_the_title_bar(qapp):
-    """Not in a strip of QMainWindow's own -- that strip is what the custom
+    """Not in a strip of QMainWindow's own. That strip is what the custom
     chrome exists to absorb."""
     win = MainWindow()
     labels = [action.text() for action in win.title_bar.menu_bar.actions()]

@@ -4,7 +4,7 @@ Run after the logo art changes:
 
     python tools/make_icon.py
 
-The art is 1414x1067 -- wider than it is tall. Scaling that straight into the
+The art is 1414x1067, wider than it is tall. Scaling that straight into the
 square frames an .ico is made of squeezes it horizontally, which is exactly
 what the taskbar was showing. So this crops the PNG to its opaque bounds
 (the source has wide transparent side margins), fits that into each frame
@@ -92,7 +92,7 @@ def as_png(image: QImage) -> bytes:
 def as_dib(image: QImage) -> bytes:
     """A 32-bit icon DIB: BITMAPINFOHEADER, bottom-up BGRA, then an AND mask.
 
-    The mask is all zeros -- every pixel is "not masked out", and the real
+    The mask is all zeros, every pixel is "not masked out", and the real
     transparency comes from the alpha channel. Windows still expects the mask
     to be there and to be padded to 4-byte rows.
     """
@@ -152,7 +152,7 @@ def build(frames: list[tuple[int, bytes]]) -> bytes:
 
 
 def main() -> int:
-    app = QApplication.instance() or QApplication([])  # noqa: F841 -- QImage needs one
+    app = QApplication.instance() or QApplication([])  # noqa: F841 - QImage needs one
     source = QImage(str(SOURCE))
     if source.isNull():
         print(f"could not read {SOURCE}", file=sys.stderr)

@@ -1,33 +1,5 @@
 """Built-in window chrome: the app's own title bar, caption buttons and
-resize edges, for a frameless main window.
-
-Why take the frame over from the OS: with the native caption bar the app gets
-a strip of grey system chrome above its own dark UI, and the menu bar sits in
-a second strip below it -- two bands of furniture before any content. Folding
-the logo, the menus, the title and the caption buttons into one 36px row is
-both tidier and one row shorter.
-
-What that costs, and how it's paid back:
-
-* Dragging and resizing are gone with the frame. Both come back through
-  QWindow.startSystemMove()/startSystemResize(), which hand the gesture to
-  the compositor rather than reimplementing it with mouse deltas. Handing it
-  over isn't enough on its own to get Aero Snap back, though: Windows gates
-  the snap zones on the window's style bits, which a frameless window loses
-  along with its frame. See enable_native_snap().
-* Resize edges need something to hit. Eight thin grip widgets sit over the
-  window's border, each with its own cursor, instead of an application-wide
-  mouse filter -- widgets get cursor handling from Qt for free, a filter
-  would have to set and restore the cursor on whatever child is underneath.
-* Windows 11 squares off the corners of a frameless window. A DWM attribute
-  asks for the rounded ones back.
-
-Snap layouts (hovering the maximize button on Windows 11) need one more
-thing: the window has to answer WM_NCHITTEST with HTMAXBUTTON over that
-button, which makes Windows treat it as the caption's real maximize control.
-The cost is that the button then stops being a Qt widget as far as the mouse
-is concerned -- hover and clicks arrive as WM_NC* messages instead -- so
-those are translated back. See caption_message().
+resize edges, for a frameless main window. See caption_message().
 """
 
 from __future__ import annotations
@@ -49,8 +21,8 @@ from . import theme
 
 #: Height of the whole chrome row.
 TITLE_H = 36
-#: Caption buttons keep the platform's proportions -- 46px wide is what
-#: Windows uses, and muscle memory for the close button is real.
+#: Caption buttons keep the platform's proportions, 46px wide is what
+#: Windows uses, and muscle memory for the close button is real lol.
 CAPTION_W = 46
 #: How close to the edge counts as a resize grab.
 GRIP_PX = 5
@@ -84,7 +56,7 @@ class _CaptionButton(QAbstractButton):
     def __init__(self, kind: str, parent=None):
         super().__init__(parent)
         self.kind = kind
-        # Set from outside when Windows owns the mouse over this button --
+        # Set from outside when Windows owns the mouse over this button;
         # claiming HTMAXBUTTON for snap layouts means Qt stops seeing enter,
         # leave and press events here.
         self.native_hover = False
@@ -148,9 +120,9 @@ class _CaptionButton(QAbstractButton):
 
 
 class TitleBar(QWidget):
-    """Logo, menus, title, caption buttons -- left to right, in one row."""
+    """Logo, menus, title, caption buttons; left to right, in one row."""
 
-    #: 20px off the .ico's 24px frame -- close enough to the source size that
+    #: 20px off the .ico's 24px frame - close enough to the source size that
     #: the shield's linework survives the downscale.
     LOGO_PX = 20
 
@@ -187,7 +159,7 @@ class TitleBar(QWidget):
         # items out from its top edge, so stretching it to the full bar left
         # "File" and "Export" sitting 5px above the title's baseline. The
         # policy (rather than a fixed height) is because the menus don't
-        # exist yet -- the window adds them after this runs.
+        # exist yet - the window adds them after this runs.
         self.menu_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.menu_bar, 0, Qt.AlignVCenter)
 
@@ -220,7 +192,7 @@ class TitleBar(QWidget):
         self.title_label.setText(name)
         trailer = f"v{version}"
         if file_name:
-            trailer += f"  --  {file_name}"
+            trailer += f"  -  {file_name}"
         self.subtitle_label.setText(trailer)
 
     # ------------------------------------------------------------------
@@ -256,7 +228,7 @@ class TitleBar(QWidget):
     # ------------------------------------------------------------------
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        # Only reached for parts of the bar no child claimed -- the menus and
+        # Only reached for parts of the bar no child claimed, the menus and
         # the caption buttons handle their own presses.
         if event.button() == Qt.LeftButton:
             handle = self._window.windowHandle()
@@ -293,7 +265,7 @@ class _Grip(QWidget):
 class ResizeGrips(QObject):
     """Eight grips pinned to the window's border.
 
-    The window calls reposition() from its own resizeEvent/changeEvent -- see
+    The window calls reposition() from its own resizeEvent/changeEvent - see
     TitleBar.sync_window_state for why this isn't an event filter.
 
     Hidden while maximized: there's nothing to drag then, and a live grip
@@ -345,8 +317,7 @@ def _signed_word(value: int) -> int:
     """One 16-bit half of an lParam, as a signed number.
 
     Screen coordinates are packed unsigned, and a monitor left of the primary
-    one has negative x -- read raw, a click there lands tens of thousands of
-    pixels to the right instead.
+    one has negative x.
     """
     value &= 0xFFFF
     return value - 0x10000 if value >= 0x8000 else value
@@ -412,12 +383,12 @@ def enable_native_snap(window: QWidget) -> None:
     * WS_MAXIMIZEBOX is what the snap layouts flyout looks for when the mouse
       rests on the maximize button.
     * WS_THICKFRAME is what marks the window sizable, and every drag gesture
-      is gated on it -- dragging to the top edge to maximize, to a side to
+      is gated on it. Dragging to the top edge to maximize, to a side to
       half-tile, and the Win+Arrow shortcuts alike. Without it the drag just
       ends wherever the mouse was let go, with no zone preview on the way.
 
     Neither bit draws anything here. The frame they would normally imply comes
-    from the non-client area, which a frameless window doesn't have -- its
+    from the non-client area, which a frameless window doesn't have. Its
     client rect already covers the whole window, and stays that way once these
     are set, maximized included.
     """
@@ -448,7 +419,8 @@ def round_corners(window: QWidget) -> None:
     """Ask Windows 11 for its rounded corners on a frameless window.
 
     Cosmetic and best-effort: older Windows (and every other platform) simply
-    doesn't have the attribute, and the window stays square.
+    doesn't have the attribute, and the window stays square. Setup for future
+    non-windows releases.
     """
     if sys.platform != "win32":
         return

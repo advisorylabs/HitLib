@@ -5,8 +5,8 @@ This mirrors LedStrand method-for-method so profile authoring in the GUI maps
 than a re-derivation.
 
 Threading/locking from the original (pros::Mutex, the shared s_adiMutex, and
-the release-around-user-callback dance in tick()) is intentionally dropped --
-this is a single-threaded simulation object, not a hardware driver.
+the release-around-user-callback dance in tick()) is intentionally dropped.
+This is a single-threaded simulation object, not a hardware driver.
 
 now_ms is a simulated clock, not wall-clock time: it advances by exactly
 refresh_ms on every tick() call, mirroring the embedded assumption that
@@ -50,7 +50,7 @@ class BitScrollSegment:
 
 
 class SpliceRegionAnimKind(Enum):
-    """Mirrors LedStrand::SpliceRegionAnimKind -- same vocabulary as the
+    """Mirrors LedStrand::SpliceRegionAnimKind, same vocabulary as the
     overlay* animations, since each region's buffer is built the same way.
     """
 
@@ -84,7 +84,7 @@ class SpliceRegion:
 
 @dataclass
 class _SpliceRegionState:
-    """Runtime animation state for one CUSTOM-mode region -- a scaled-down
+    """Runtime animation state for one CUSTOM-mode region, a scaled-down
     version of the overlay buffer (buffer + shift step/speed), but one per
     region instead of shared.
     """
@@ -128,7 +128,7 @@ class Strand:
         self.splice_regions: list[_SpliceRegionState] = []
         self.spread_mask: list[bool] = [False] * self.length
 
-        # Rendered output of the last tick() -- what the GUI should draw.
+        # Rendered output of the last tick(), what the GUI should draw.
         self.pixels: list[int] = [0] * self.length
 
         self.anim_mode = AnimMode.STATIC
@@ -143,7 +143,7 @@ class Strand:
         self.pulse_offset = 0
         self.pulse_dir = 1
 
-        # Flash -- whole-strip blink driven by tick counts rather than a
+        # Flash - whole-strip blink driven by tick counts rather than a
         # shifting buffer, so the lit and blank halves have independent
         # durations.
         self.flash_color = 0
@@ -153,7 +153,7 @@ class Strand:
         self.flash_counter = 0
         self.flash_lit = True
 
-        # Overlay flash -- mirrors the base flash state above.
+        # Overlay flash - mirrors the base flash state above.
         self.overlay_flash_color = 0
         self.overlay_flash_bg_color = 0
         self.overlay_flash_on_ticks = 1
@@ -213,7 +213,7 @@ class Strand:
         self.last_mode_idx = -1
 
     # ========================================================================
-    # tick() -- call once per refresh_ms.
+    # tick() - call once per refresh_ms.
     # ========================================================================
 
     def tick(self) -> None:
@@ -331,7 +331,7 @@ class Strand:
     def _advance_flash(self) -> None:
         # flash_counter tracks frames already flushed in the current phase.
         # tick() runs this before _flush_buffer(), so the tick that flips the
-        # phase also renders the new colour -- count it as that phase's first
+        # phase also renders the new colour. Count it as that phase's first
         # frame, or every phase comes out one tick short.
         hold = self.flash_on_ticks if self.flash_lit else self.flash_off_ticks
         if self.flash_counter >= hold:
@@ -417,7 +417,7 @@ class Strand:
         self.pulse_run_len = 0
 
         unit: list[int] = []
-        # Size of `unit` up to the last segment pixel -- i.e. excluding the
+        # Size of `unit` up to the last segment pixel, i.e. excluding the
         # trailing run of `spacing`, which only exists to separate one tile
         # from the next. A single non-tiled copy shouldn't carry it.
         content_len = 0
@@ -462,9 +462,7 @@ class Strand:
             else:
                 # A single copy of the pattern, padded with background on both
                 # sides so the visible window can carry it from the far end of
-                # the strip to the near end and back -- the same travel pulse
-                # bounce does with its run. Tiling here regardless of
-                # `repeating` was the bug: bounce always looked repeating.
+                # the strip to the near end and back.
                 n = min(content_len, self.length)
                 pad = self.length - n
                 self.bitscroll_master = [bg_color] * pad + unit[:n] + [bg_color] * pad
@@ -772,8 +770,8 @@ class Strand:
         # If spread_layers is empty (plain center_spread/center_spread_bounce), the
         # C++ source leaves overlayBuffer moved-from (empty) here and relies on the
         # caller to have re-primed it before the mask grows again. Backfill with
-        # black instead of letting a masked-pixel read run off the end of the list
-        # -- same intent as the `buffer` size safety-net two lines down, just
+        # black instead of letting a masked-pixel read run off the end of the list.
+        # Same intent as the `buffer` size safety-net two lines down, just
         # applied to the side the original didn't guard.
         if len(self.overlay_buffer) != self.length:
             self.overlay_buffer = [0] * self.length
@@ -884,7 +882,7 @@ class Strand:
             else:
                 base_color = self.buffer[i]
 
-            # Mirrors base_color above -- without this, overlay_shift_step
+            # Mirrors base_color above. Without this, overlay_shift_step
             # (advanced every tick by _shift_overlay_buffer()) is computed but
             # never actually read, so overlay animations render as a single
             # frozen frame instead of animating.

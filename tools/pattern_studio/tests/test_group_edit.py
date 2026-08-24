@@ -32,7 +32,7 @@ def test_identity_fields_never_propagate():
     after.smart_port = 9
 
     # smart_port is the expander the strand hangs off, which strands legitimately
-    # share -- unlike the ADI port and the name.
+    # share, unlike the ADI port and the name.
     assert diff_config(before, after) == [(("smart_port",), 9)]
 
 

@@ -1,6 +1,6 @@
 """Field-level diff/apply behind editing several strands as one group.
 
-The inspector only ever displays one strand -- the *anchor* -- so writing its
+The inspector only ever displays one strand (the *anchor*) so writing its
 whole config into every selected strand would clobber the properties they were
 never meant to share (a rainbow strand would suddenly become a pulse strand
 just because the anchor was one). Instead MainWindow keeps a baseline copy of
@@ -36,7 +36,7 @@ def diff_config(before: Any, after: Any) -> list[FieldChange]:
 
     Nested dataclasses are walked recursively so a color tweak reports just
     ("animation", "color") rather than the whole AnimationConfig. Lists
-    (palette, profile_modes, splice regions...) are compared -- and carried --
+    (palette, profile_modes, splice regions...) are compared (and carried)
     whole, since there's no stable identity to match their elements up by.
     """
     return _diff(before, after, (), top=True)

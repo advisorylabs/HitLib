@@ -25,12 +25,12 @@ class StripCanvas(QWidget):
 
     #: Padding between a row's LEDs and the track panel drawn behind them.
     TRACK_PAD = 5
-    #: A pixel at least this bright gets a glow halo -- below it the halo is
+    #: A pixel at least this bright gets a glow halo, below it the halo is
     #: invisible anyway and just costs draw calls.
     GLOW_THRESHOLD = 40
 
     #: Bloom layers behind each lit pixel, outermost first: (grow_px, alpha).
-    #: Two layers instead of one buys a falloff -- a single halo has a hard
+    #: Two layers instead of one buys a falloff, a single halo has a hard
     #: outer edge that reads as a colored box around a colored box, whereas a
     #: wide-and-faint layer under a tight-and-brighter one reads as light.
     #: Drawn additively, so halos from neighbouring pixels sum the way real
@@ -39,7 +39,7 @@ class StripCanvas(QWidget):
 
     #: The wash a lit row throws onto the panel around its track, outermost
     #: first: (grow_x, grow_y, alpha). This is the pass that sells the whole
-    #: preview as emitted light -- without it every row is a lamp in a
+    #: preview as emitted light, without it every row is a lamp in a
     #: vacuum, lit inside its own bezel and dark 1px outside it.
     SPILL_LAYERS = ((17.0, 12.0, 9), (10.0, 7.0, 16), (4.0, 3.0, 28))
     #: Cap on how many color stops that wash is built from. Strands shorter
@@ -55,7 +55,7 @@ class StripCanvas(QWidget):
 
     #: Glow passes on that outline, widest first: (pen_width, alpha). Drawn
     #: additively *over* the filled track so the halo spreads both ways from
-    #: the line -- an outline that emits, rather than a fatter outline.
+    #: the line, an outline that emits, rather than a fatter outline.
     SELECT_GLOW = ((18.0, 15), (10.0, 26), (4.5, 42))
 
     def __init__(self, parent=None):
@@ -79,8 +79,7 @@ class StripCanvas(QWidget):
 
     def set_selected(self, indices) -> None:
         """Rows to outline as the current group-edit selection. Only drawn
-        when more than one strand is selected -- with a single selection the
-        outline would just be visual noise."""
+        when more than one strand is selected."""
         self.selected = set(indices)
         # Nothing pulsing means nothing to repaint on a timer; paused strands
         # would otherwise keep the canvas redrawing forever.
@@ -153,8 +152,8 @@ class StripCanvas(QWidget):
     def _spill_gradient(bands, x0: float, x1: float) -> QLinearGradient:
         """Full-strength; callers dim it with painter opacity per layer.
 
-        x0/x1 are the ends of the LED run itself, not of the track panel --
-        the track is wider by TRACK_PAD on both sides, and stretching the
+        x0/x1 are the ends of the LED run itself, not of the track panel.
+        The track is wider by TRACK_PAD on both sides, and stretching the
         stops over that would shift every one of them outward.
         """
         gradient = QLinearGradient(x0, 0, x1, 0)
@@ -199,7 +198,7 @@ class StripCanvas(QWidget):
             accent = QColor(theme.FOCUS)
             if selected:
                 # Breathe between "clearly outlined" and "lit up", never all
-                # the way down -- the selection has to stay readable at every
+                # the way down. The selection has to stay readable at every
                 # point in the cycle.
                 accent.setAlpha(int(165 + 90 * pulse))
 

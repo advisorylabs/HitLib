@@ -29,9 +29,7 @@ class ColorButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Click to pick a color")
         self.clicked.connect(self._pick)
-        # Tinted with the swatch's own color, and re-tinted on every change --
-        # a swatch spilling *its* light is the one glow in the app that
-        # carries information rather than just polish.
+        # Tinted with the swatch's own color, and re-tinted on every change.
         self._bloom = theme.HoverBloom(
             self,
             self._qcolor(),
@@ -88,8 +86,8 @@ class BrandRule(QWidget):
     falloff underneath, as if it were casting onto the window below.
     """
 
-    #: Crisp line, then the falloff beneath it. Alphas step down fast -- the
-    #: glow should suggest spill, not a second, fuzzier rule.
+    #: Crisp line, then the falloff beneath it. Alphas step down fast, the
+    #: glow suggests spill, not a second, fuzzier rule.
     LINE_H = 2
     FALLOFF_ALPHAS = (105, 58, 30, 14)
 
@@ -98,7 +96,7 @@ class BrandRule(QWidget):
     #:
     #: A fixed tile rather than "one tile per window width": stretched across
     #: a wide window the hue gradient gets so shallow that the roll reads as
-    #: static, because what the eye picks up is hue change per second --
+    #: static, because what the eye picks up is hue change per second or
     #: speed times the steepness of the gradient it's travelling through. At
     #: these numbers a color stop passes any given point about every 1.3s.
     TILE_PX = 560
@@ -132,7 +130,7 @@ class BrandRule(QWidget):
         """One tile of the wordmark sweep, at the current offset.
 
         RepeatSpread tiles it across the rest of the widget, so the offset can
-        run off the end without leaving a gap -- and because the stops are a
+        run off the end without leaving a gap. And because the stops are a
         palindrome, tile boundaries are invisible.
         """
         gradient = QLinearGradient(self._offset, 0, self._offset + self.TILE_PX, 0)

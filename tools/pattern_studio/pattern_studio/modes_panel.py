@@ -8,8 +8,8 @@ hardware, so toggling multiple modes on at once exercises
 priority resolution rather than just switching a single active animation.
 
 AnimationPanel/SpliceMaskPanel are reused (not re-implemented) for editing
-whichever target is currently selected -- a mode's steady animation, or one
-of its phases -- by rebinding what their `changed` signal commits into.
+whichever target is currently selected (a mode's steady animation, or one
+of its phases) by rebinding what their `changed` signal commits into.
 """
 
 from __future__ import annotations
@@ -249,7 +249,7 @@ class ModesPanel(QWidget):
         mode = self._config.profile_modes[row]
 
         # Populating these fields to reflect the newly-selected mode must not
-        # itself be treated as an edit -- suppress for this whole method
+        # itself be treated as an edit, suppress for this whole method
         # (not just the setText/setValue calls), since it cascades into
         # sequenced_check.toggled and phase_list.currentRowChanged too.
         # Save/restore rather than unconditionally clearing: this can run

@@ -1,6 +1,6 @@
 """Splash screen behaviour.
 
-The splash gates the main window -- if its `finished` signal never fires, the
+The splash gates the main window. If its `finished` signal never fires, the
 app starts up to nothing at all. These tests run its real timeline (with the
 durations shrunk) rather than poking at internals.
 """
@@ -22,7 +22,7 @@ def _make(qapp, total_ms=90):
 
 def _run_until_finished(qapp, splash, timeout_ms=5000):
     """Spin the event loop until `finished` fires. Returns how many times it
-    did -- a skip racing the hold timer could otherwise fire it twice."""
+    did. A skip racing the hold timer could otherwise fire it twice."""
     fired = []
     loop = QEventLoop()
     splash.finished.connect(lambda: fired.append(True))

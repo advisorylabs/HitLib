@@ -2,7 +2,7 @@
 
 A Sequencer walks a looping list of timed Phases, calling each phase's
 start_fn once when it begins. It must be advanced by calling update() once
-per strand tick (typically from a ProfileMode's on_tick callback) -- it does
+per strand tick (typically from a ProfileMode's on_tick callback), it does
 not advance on its own.
 """
 

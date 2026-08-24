@@ -4,7 +4,7 @@ brand rule, and the canvas's glow/spill.
 These are all painted rather than laid out, so nothing here asserts an exact
 pixel. What the tests do pin is the part that breaks silently: that a halo is
 actually installed (and removed again), that the animation clocks advance, and
-that a lit strip really does put color *outside* its own track -- a bloom that
+that a lit strip really does put color *outside* its own track. A bloom that
 gets clipped to the element it came from looks identical to no bloom at all
 until someone eyeballs a screenshot.
 """
@@ -216,7 +216,7 @@ def test_lit_strip_throws_light_past_its_own_track(qapp):
     unlit = _render_on_black(_canvas_with(AnimationKind.OFF))
 
     # Sample the column down the middle of the canvas and take the greenest
-    # pixel that is *not* inside a track -- i.e. purely spill.
+    # pixel that is *not* inside a track, i.e. purely spill.
     x = image.width() // 2
     lit_green = max(image.pixelColor(x, y).green() for y in range(image.height()))
     assert lit_green > 0
@@ -260,7 +260,7 @@ def test_group_outline_glows_rather_than_just_drawing_a_line(qapp):
 
 
 class _FakeClock:
-    """Stand-in for the canvas's QElapsedTimer -- there's no way to set a real
+    """Stand-in for the canvas's QElapsedTimer. There's no way to set a real
     one, and sleeping through a 2.6s cycle in a unit test is not an option."""
 
     def __init__(self):

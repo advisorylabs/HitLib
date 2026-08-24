@@ -1,7 +1,7 @@
 """Sidebar: list of strands in the current session, with add/remove.
 
 The list is multi-select (Ctrl/Shift-click, or Select All) so a set of strands
-can be edited as one group -- MainWindow shows the *anchor* (current row) in
+can be edited as one group, MainWindow shows the *anchor* (current row) in
 the inspector and replays each edit onto the rest of the selection. Selection
 therefore has two parts callers care about: `current_row()` (what's displayed)
 and `selected_rows()` (what an edit applies to).
@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from . import theme
 
-#: Cached across rows and repaints -- see _dither_tile().
+#: Cached across rows and repaints - see _dither_tile().
 _DITHER_TILE: QPixmap | None = None
 
 
@@ -47,7 +47,7 @@ def _dither_tile() -> QPixmap:
     dithering of its own. That is fine for a steep ramp, and visibly wrong for
     a shallow one: across a selected row the green channel only travels from
     85 to 34, so it lands as a handful of 24px-wide flat bands with hard
-    edges between them -- the stepping this exists to break up.
+    edges between them.
 
     The pattern is seeded, not random per call: a tile that changed between
     repaints would make selected rows crawl.
@@ -70,8 +70,8 @@ class _RowDelegate(QStyledItemDelegate):
     """Paints selected rows: the wash, the accent bar, and the group bloom.
 
     This lives in a delegate rather than in the stylesheet because neither of
-    those last two is expressible in QSS -- there is no dithering and no
-    box-shadow -- and because a QSS `::item:selected` background would paint
+    those last two is expressible in QSS (there is no dithering and no
+    box-shadow) and because a QSS `::item:selected` background would paint
     straight over whatever we drew underneath it.
     """
 
@@ -83,14 +83,14 @@ class _RowDelegate(QStyledItemDelegate):
 
     #: How far the painted row sits inside its item rect. Rows are
     #: contiguous and full-width, so without this inset a halo would have
-    #: nowhere to go: the view clips at the viewport and the neighbouring row
+    #: nowhere to go: the view clips at the viewport and the neighboring row
     #: covers the rest. Insetting turns each selected row into a lit chip
     #: with a gap around it for the glow to fill.
     INSET_X = 2.0
     INSET_Y = 1.5
 
     #: Halo layers around a group-selected row, outermost first:
-    #: (grow_px, alpha). Only drawn while several strands move together --
+    #: (grow_px, alpha). Only drawn while several strands move together,
     #: the same signal the canvas gives by breathing its outline.
     GROUP_BLOOM = ((4.5, 18), (2.0, 30))
 
@@ -237,7 +237,7 @@ class StrandListPanel(QWidget):
     # ------------------------------------------------------------------
 
     def current_row(self) -> int:
-        """The anchor row -- the strand whose values the inspector displays."""
+        """The anchor row - the strand whose values the inspector displays."""
         return self.list_widget.currentRow()
 
     def selected_rows(self) -> list[int]:

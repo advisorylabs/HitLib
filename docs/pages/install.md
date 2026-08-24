@@ -11,7 +11,7 @@
 ## Install via PROS CLI
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.1.0/hitlib@1.1.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.3.0/hitlib@1.3.0.zip
 pros c apply hitlib
 ```
 
@@ -88,20 +88,33 @@ pip install -e .
 pattern-studio
 ```
 
+### Getting a design onto the robot
+
+1. **Export > Export Current Strand as C++...** (or **Export All Strands as
+   C++...** for a whole document) and save the header into your PROS project's
+   `include/` directory.
+2. `#include` it after `hitlib/hitapi.hpp`.
+3. Copy the usage snippet from the top of the generated file into `main.cpp`.
+
+The exported header carries the design's port, length, refresh interval and
+brightness as `constexpr` values, and its modes as named index constants, so
+nothing has to be retyped from the GUI. See
+[Profiles & Modes](#profiles_page) for the full shape of the generated file.
+
 ---
 
 ## Building a PROS template from source
 
 If you want to build hitlib yourself rather than using a release zip: this
 repo isn't set up as a `pros make`-managed project, so it's a plain library
-build followed by manual packaging -- the same steps CI runs for every release.
+build followed by manual packaging.
 
 ```bash
 # Clone the repo
 git clone https://github.com/advisorylabs/hitlib.git
 cd hitlib
 
-# Build bin/hitlib.a -- requires an arm-none-eabi-gcc toolchain on PATH
+# Build bin/hitlib.a requires an arm-none-eabi-gcc toolchain on PATH
 # (installed alongside PROS, or via your package manager)
 make
 
@@ -110,8 +123,8 @@ mkdir -p template_pkg/include template_pkg/lib
 cp -r include/ template_pkg/
 cp bin/hitlib.a template_pkg/lib/
 cp template.pros template_pkg/
-cd template_pkg && zip -r ../hitlib@1.2.0.zip .
+cd template_pkg && zip -r ../hitlib@1.3.0.zip .
 ```
 
-This produces `hitlib@1.2.0.zip` in the project root (matching the `version`
+This produces `hitlib@1.3.0.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.

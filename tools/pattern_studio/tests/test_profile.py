@@ -70,7 +70,7 @@ def test_activate_mode_timed_expires_and_reverts():
     s.tick()  # now_ms=20
     assert s.pixels == [0xFF0000]
 
-    s.tick()  # now_ms=40 -- timed entry expires exactly here (>= check), Idle should win
+    s.tick()  # now_ms=40. Timed entry expires exactly here (>= check), Idle should win
     assert s.pixels == [0x000011]
 
 

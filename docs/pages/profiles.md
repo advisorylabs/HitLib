@@ -62,6 +62,104 @@ strand.activateMode(0);   // Idle
 
 ---
 
+## Exported from Pattern Studio
+
+[Pattern Studio](#install_page) writes the three steps above for you. Design a
+strand, pick **Export > Export Current Strand as C++...**, and save the header
+into your project's `include/` directory.
+
+The generated file puts everything for one strand in its own namespace under
+`hitlib::profiles`:
+
+```cpp
+namespace hitlib::profiles {
+namespace myRobot {
+
+// --- Hardware: the strand this design was previewed against ---
+constexpr uint8_t  adiPort    = 6;
+constexpr uint8_t  length     = 63;
+constexpr uint32_t refreshMs  = 25;
+constexpr uint8_t  brightness = 80;
+
+// --- Mode indices: pass these to activateMode() / activateModeTimed() ---
+namespace mode {
+constexpr uint8_t idle    = 0;  // "Idle", priority 10
+constexpr uint8_t endgame = 1;  // "Endgame", priority 100
+}  // namespace mode
+
+namespace detail { /* one setup function per mode and per sequenced phase */ }
+
+inline const ProfileMode modeTable[] = { ... };
+inline const Profile profile = {"My Robot", modeTable, 2};
+
+inline void apply(LedStrand& s);   // setBrightness + attachProfile
+inline void apply(LedGroup& g);
+
+}  // namespace myRobot
+}  // namespace hitlib::profiles
+```
+
+Using it: the exported file opens with this same snippet as a comment, filled
+in with your strand's real ports and mode names:
+
+```cpp
+#include "hitlib/hitapi.hpp"
+#include "my_robot.hpp"
+
+namespace myRobot = hitlib::profiles::myRobot;
+
+hitlib::LedStrand myRobotStrand(myRobot::adiPort, myRobot::length, myRobot::refreshMs);
+hitlib::LedGroup  group;
+
+void initialize() {
+    group.add(&myRobotStrand);
+    group.init();
+    group.start();
+    myRobot::apply(group);                      // brightness + attachProfile
+    group.activateMode(myRobot::mode::idle);
+}
+
+void opcontrol() {
+    group.activateModeTimed(myRobot::mode::endgame, 30000);
+}
+```
+
+The `constexpr` hardware values are why the strand on the robot matches the one
+in the preview: the port, length and refresh interval come from the design
+rather than being retyped. The `mode::` constants replace counting rows in
+`modeTable` to work out what index `activateMode()` wants.
+
+### Multiple strands
+
+Two separately exported headers can collide. If both designs have an `Idle`
+mode, each file defines its own setup function for it, and including both in one
+`.cpp` won't compile. Use **Export > Export All Strands as C++...** instead: it
+writes every strand in the document to one header, each in its own namespace.
+
+```cpp
+namespace left  = hitlib::profiles::left;
+namespace right = hitlib::profiles::right;
+
+hitlib::LedStrand leftStrand (left::adiPort,  left::length,  left::refreshMs);
+hitlib::LedStrand rightStrand(right::adiPort, right::length, right::refreshMs);
+
+void initialize() {
+    group.add(&leftStrand);
+    group.add(&rightStrand);
+    group.init();
+    group.start();
+    left::apply(leftStrand);      // each strand carries its own profile, so
+    right::apply(rightStrand);    // attach per strand rather than per group
+    leftStrand.activateMode(left::mode::idle);
+    rightStrand.activateMode(right::mode::idle);
+}
+```
+
+Strand names become namespace names, so each strand needs a distinct one.
+Pattern Studio blocks the export until they are unique.
+
+---
+
 ## Mode Stack Rules
 
 - Modes are stored in a **priority stack**, the highest-priority active mode wins.

@@ -10,7 +10,7 @@ def test_trunc_div_truncates_toward_zero():
 
 def test_wheel_known_points():
     # The `pos = 255 - pos` reversal in wheel() shifts where each hue lands,
-    # so only 0/255 (both pure red) are "obvious" -- the rest are pinned to
+    # so only 0/255 (both pure red) are "obvious". The rest are pinned to
     # directly-computed values rather than assumed R/G/B boundaries.
     assert wheel(0) == 0xFF0000
     assert wheel(255) == 0xFF0000

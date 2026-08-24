@@ -83,7 +83,7 @@ def test_custom_region_has_its_own_independent_animation_editor(qapp):
     splice._add_region()
     qapp.processEvents()
 
-    # Split's shared overlay panel is unrelated to Custom mode -- it stays hidden.
+    # Split's shared overlay panel is unrelated to Custom mode, so it stays hidden.
     assert not splice.overlay_panel.isVisible()
     assert splice.region_anim_panel.isVisible()
 

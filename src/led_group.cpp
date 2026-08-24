@@ -26,7 +26,7 @@ void LedGroup::groupTask() {
 }
 
 // ============================================================================
-// Fan-out wrappers -- forward to every strand in the group.
+// Fan-out wrappers, forward to every strand in the group.
 // ============================================================================
 
 void LedGroup::off() {

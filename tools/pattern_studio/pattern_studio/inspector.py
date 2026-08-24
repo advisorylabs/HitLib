@@ -73,7 +73,7 @@ class StrandSettingsPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._suspend = False
-        # A plain QWidget ignores a stylesheet background unless it opts in --
+        # A plain QWidget ignores a stylesheet background unless it opts in,
         # Qt only styles the backgrounds of widgets that ask for it, so the
         # strip would otherwise sit borderless on the window color.
         self.setObjectName("strandStrip")
@@ -86,7 +86,7 @@ class StrandSettingsPanel(QWidget):
         # Explicit widths, unlike the rest of the app. A styled QSpinBox sizes
         # itself from the stylesheet's padding and declared button width, not
         # from the digits it holds, so an 8-max port field ends up as wide as
-        # a 5-digit one -- and six of them side by side overflow the center
+        # a 5-digit one; and six of them side by side overflow the center
         # column. Each width below fits its widest value ("Direct", "500 ms",
         # "100 %") with room to spare.
         self.name_edit = QLineEdit()
@@ -309,7 +309,7 @@ _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
 
 
 class OverlayAnimationPanel(QGroupBox):
-    """Editor for an OverlayAnimationConfig -- reused for two different
+    """Editor for an OverlayAnimationConfig, reused for two different
     things that happen to share the same overlay*() vocabulary: Split mode's
     single shared overlay buffer (SpliceMaskConfig.overlay), and each Custom
     region's own independent animation (SpliceRegionConfig.animation). The
@@ -415,12 +415,12 @@ class OverlayAnimationPanel(QGroupBox):
 class SpliceMaskPanel(QGroupBox):
     """Splits the strip into equal alternating bins sharing one overlay
     (Split) or lets each region be placed/sized freely with its own
-    independent animation (Custom) -- see SpliceMaskConfig. Custom regions
+    independent animation (Custom) - see SpliceMaskConfig. Custom regions
     are edited like ModesPanel's mode/phase lists: Add/Remove buttons plus an
     editor (start/width fields + a per-region OverlayAnimationPanel) bound to
     whichever region is selected. Region edits mutate the loaded
     SpliceMaskConfig's `regions` list in place rather than a local copy, so
-    save() intentionally leaves `regions` untouched -- callers are expected
+    save() intentionally leaves `regions` untouched. Callers are expected
     (as ModesPanel does) to call save() with the same config object that was
     last passed to load().
     """
@@ -503,7 +503,7 @@ class SpliceMaskPanel(QGroupBox):
         region_form.addRow("Start", self.region_start_spin)
         region_form.addRow("Width", self.region_width_spin)
         region_editor_layout.addLayout(region_form)
-        # This region's own animation -- independent of every other region.
+        # This region's own animation, independent of every other region.
         self.region_anim_panel = OverlayAnimationPanel("Region Animation")
         region_editor_layout.addWidget(self.region_anim_panel)
         custom_layout.addWidget(self.region_editor)
@@ -550,7 +550,7 @@ class SpliceMaskPanel(QGroupBox):
 
     def _update_overlay_visibility(self) -> None:
         # Custom mode's per-region animation lives inside region_editor and
-        # is always relevant there -- only Split's shared overlay needs to
+        # is always relevant there, only Split's shared overlay needs to
         # hide/show based on the Content choice.
         self.overlay_panel.setVisible(bool(self.split_content_combo.currentData()))
 
@@ -674,7 +674,7 @@ class SpliceMaskPanel(QGroupBox):
         s.use_overlay = bool(self.split_content_combo.currentData())
         s.bg_color = self.split_bg_btn.color()
         self.overlay_panel.save(s.overlay)
-        # s.regions is not touched here -- see class docstring.
+        # s.regions is not touched here - see class docstring.
 
 
 class InspectorPanel(QWidget):
@@ -691,13 +691,13 @@ class InspectorPanel(QWidget):
         layout.setSpacing(8)
 
         # strand_panel is owned/wired here but deliberately NOT added to this
-        # widget's own layout -- MainWindow places it in a compact strip above
+        # widget's own layout. MainWindow places it in a compact strip above
         # the preview canvas instead, since it's "set once" hardware identity
         # rather than something tweaked as often as the animation, and the
         # right-hand column was getting crowded.
         self.strand_panel = StrandSettingsPanel()
 
-        # Shown only while several strands are selected -- the fields below
+        # Shown only while several strands are selected, the fields below
         # display the anchor strand's values, and MainWindow replays whatever
         # the user touches onto the rest of the group.
         self.group_banner = QLabel()
