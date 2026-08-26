@@ -9,13 +9,21 @@ field later doesn't break existing saved files.
 
 from __future__ import annotations
 
+import base64
 import json
+import zlib
 from pathlib import Path
 
+from .envelope import EnvelopeMode, EnvelopeSettings, TrackAnalysis
 from .models import (
     AnimationConfig,
     AnimationKind,
+    Document,
+    GaugeBlendKind,
+    GaugeStopConfig,
+    GaugeStyleKind,
     ModeConfig,
+    MusicConfig,
     OverlayAnimationConfig,
     OverlayAnimationKind,
     PhaseConfig,
@@ -25,7 +33,22 @@ from .models import (
     StrandConfig,
 )
 
-SCHEMA_VERSION = 1
+# 2 added the document-level `music` block. 3 replaced its single baked table
+# with the per-band loudness analysis it is baked from, so the shaping controls
+# keep working after the source file is gone. A schema-2 file still loads: its
+# song is dropped (there is nothing to re-analyse from) and its strands come
+# through untouched.
+#
+# 4 added the Fill animation and its source fields. Older files load unchanged
+# (the fields default), but the bump is not cosmetic in the other direction: a
+# schema-3 reader hits an unknown animation kind on a file with a Fill in it,
+# so the version is what tells it why.
+#
+# 5 added the Gauge splice region - a Fill meter scoped to a few pixels, with a
+# color scale of its own. Same story as 4 in both directions: older files load
+# with the gauge fields defaulted, and a schema-4 reader hits an unknown
+# overlay kind on a design that uses one.
+SCHEMA_VERSION = 5
 
 
 def _animation_to_dict(a: AnimationConfig) -> dict:
@@ -46,6 +69,17 @@ def _animation_to_dict(a: AnimationConfig) -> dict:
         "segment_width": a.segment_width,
         "spacing": a.spacing,
         "repeating": a.repeating,
+        "source": a.source,
+        "source_port": a.source_port,
+        "source_empty": a.source_empty,
+        "source_full": a.source_full,
+        "source_wrap": a.source_wrap,
+        "smoothing": a.smoothing,
+        "preview_level": a.preview_level,
+        "preview_sweep": a.preview_sweep,
+        "gradient": a.gradient,
+        "sensitivity": a.sensitivity,
+        "band": a.band,
     }
 
 
@@ -68,7 +102,27 @@ def _animation_from_dict(d: dict) -> AnimationConfig:
         segment_width=d.get("segment_width", default.segment_width),
         spacing=d.get("spacing", default.spacing),
         repeating=d.get("repeating", default.repeating),
+        source=d.get("source", default.source),
+        source_port=d.get("source_port", default.source_port),
+        source_empty=d.get("source_empty", default.source_empty),
+        source_full=d.get("source_full", default.source_full),
+        source_wrap=d.get("source_wrap", default.source_wrap),
+        smoothing=d.get("smoothing", default.smoothing),
+        preview_level=d.get("preview_level", default.preview_level),
+        preview_sweep=d.get("preview_sweep", default.preview_sweep),
+        gradient=d.get("gradient", default.gradient),
+        sensitivity=d.get("sensitivity", default.sensitivity),
+        band=d.get("band", default.band),
     )
+
+
+def _stop_to_dict(stop: GaugeStopConfig) -> dict:
+    return {"at": stop.at, "color": stop.color}
+
+
+def _stop_from_dict(d: dict) -> GaugeStopConfig:
+    default = GaugeStopConfig()
+    return GaugeStopConfig(at=d.get("at", default.at), color=d.get("color", default.color))
 
 
 def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
@@ -81,6 +135,18 @@ def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
         "speed": o.speed,
         "on_ms": o.on_ms,
         "off_ms": o.off_ms,
+        "source": o.source,
+        "source_port": o.source_port,
+        "source_empty": o.source_empty,
+        "source_full": o.source_full,
+        "source_wrap": o.source_wrap,
+        "smoothing": o.smoothing,
+        "invert": o.invert,
+        "style": o.style.value,
+        "blend": o.blend.value,
+        "stops": [_stop_to_dict(stop) for stop in o.stops],
+        "preview_level": o.preview_level,
+        "preview_sweep": o.preview_sweep,
     }
 
 
@@ -95,6 +161,18 @@ def _overlay_from_dict(d: dict) -> OverlayAnimationConfig:
         speed=d.get("speed", default.speed),
         on_ms=d.get("on_ms", default.on_ms),
         off_ms=d.get("off_ms", default.off_ms),
+        source=d.get("source", default.source),
+        source_port=d.get("source_port", default.source_port),
+        source_empty=d.get("source_empty", default.source_empty),
+        source_full=d.get("source_full", default.source_full),
+        source_wrap=d.get("source_wrap", default.source_wrap),
+        smoothing=d.get("smoothing", default.smoothing),
+        invert=d.get("invert", default.invert),
+        style=GaugeStyleKind(d.get("style", default.style.value)),
+        blend=GaugeBlendKind(d.get("blend", default.blend.value)),
+        stops=[_stop_from_dict(stop) for stop in d.get("stops", [])],
+        preview_level=d.get("preview_level", default.preview_level),
+        preview_sweep=d.get("preview_sweep", default.preview_sweep),
     )
 
 
@@ -219,18 +297,122 @@ def strand_from_dict(d: dict) -> StrandConfig:
     )
 
 
-def document_to_dict(strand_configs: list[StrandConfig]) -> dict:
-    return {"schema_version": SCHEMA_VERSION, "strands": [strand_to_dict(c) for c in strand_configs]}
+def _pack(values: list[int]) -> str:
+    """A byte-per-frame table as compressed base64.
+
+    A four-minute analysis is a hundred thousand values; as a JSON array of ints
+    it would dwarf the design it belongs to and make the file unreadable. dB
+    curves compress well, so deflate plus base64 gets it down to a few tens of
+    kilobytes on one line.
+    """
+    return base64.b64encode(zlib.compress(bytes(values), 6)).decode("ascii")
 
 
-def document_from_dict(d: dict) -> list[StrandConfig]:
-    return [strand_from_dict(s) for s in d.get("strands", [])]
+def _unpack(raw) -> list[int]:
+    # A hand-edited file may carry a plain list instead of the packed string, so
+    # accept either rather than failing the whole load.
+    if isinstance(raw, list):
+        return [max(0, min(255, int(v))) for v in raw]
+    if not isinstance(raw, str) or not raw:
+        return []
+    try:
+        return list(zlib.decompress(base64.b64decode(raw)))
+    except (ValueError, TypeError, zlib.error):
+        return []
 
 
-def save_document(path: str | Path, strand_configs: list[StrandConfig]) -> None:
-    Path(path).write_text(json.dumps(document_to_dict(strand_configs), indent=2), encoding="utf-8")
+def _settings_to_dict(s: EnvelopeSettings) -> dict:
+    return {
+        "mode": s.mode.value,
+        "smooth_ms": s.smooth_ms,
+        "attack_ms": s.attack_ms,
+        "release_ms": s.release_ms,
+        "auto_gain": s.auto_gain,
+        "contrast": s.contrast,
+        "range_db": s.range_db,
+        "frame_ms": s.frame_ms,
+    }
 
 
-def load_document(path: str | Path) -> list[StrandConfig]:
+def _settings_from_dict(d: dict) -> EnvelopeSettings:
+    default = EnvelopeSettings()
+    return EnvelopeSettings(
+        mode=EnvelopeMode(d.get("mode", default.mode.value)),
+        smooth_ms=d.get("smooth_ms", default.smooth_ms),
+        attack_ms=d.get("attack_ms", default.attack_ms),
+        release_ms=d.get("release_ms", default.release_ms),
+        auto_gain=d.get("auto_gain", default.auto_gain),
+        contrast=d.get("contrast", default.contrast),
+        range_db=d.get("range_db", default.range_db),
+        frame_ms=d.get("frame_ms", default.frame_ms),
+    )
+
+
+def _analysis_to_dict(a: TrackAnalysis) -> dict:
+    return {
+        "frame_ms": a.frame_ms,
+        "name": a.name,
+        "source_path": a.source_path,
+        "bands": {name: _pack(values) for name, values in a.bands.items()},
+    }
+
+
+def _analysis_from_dict(d: dict) -> TrackAnalysis:
+    default = TrackAnalysis()
+    bands = {name: _unpack(raw) for name, raw in d.get("bands", {}).items()}
+    return TrackAnalysis(
+        bands={name: values for name, values in bands.items() if values},
+        frame_ms=d.get("frame_ms", default.frame_ms),
+        name=d.get("name", default.name),
+        source_path=d.get("source_path", default.source_path),
+    )
+
+
+def _music_to_dict(m: MusicConfig) -> dict:
+    # `bands` is deliberately absent: it is re-baked from `analysis` on load.
+    return {
+        "name": m.name,
+        "source_path": m.source_path,
+        "source_kind": m.source_kind,
+        "tracks": list(m.tracks),
+        "loop": m.loop,
+        "settings": _settings_to_dict(m.settings),
+        "analysis": _analysis_to_dict(m.analysis),
+    }
+
+
+def _music_from_dict(d: dict) -> MusicConfig:
+    default = MusicConfig()
+    return MusicConfig(
+        name=d.get("name", default.name),
+        source_path=d.get("source_path", default.source_path),
+        source_kind=d.get("source_kind", default.source_kind),
+        tracks=list(d.get("tracks", [])),
+        loop=d.get("loop", default.loop),
+        settings=_settings_from_dict(d.get("settings", {})),
+        analysis=_analysis_from_dict(d.get("analysis", {})),
+    )
+
+
+def document_to_dict(doc: Document) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "strands": [strand_to_dict(c) for c in doc.strands],
+        "music": _music_to_dict(doc.music),
+    }
+
+
+def document_from_dict(d: dict) -> Document:
+    return Document(
+        strands=[strand_from_dict(s) for s in d.get("strands", [])],
+        music=_music_from_dict(d.get("music", {})),
+    )
+
+
+def save_document(path: str | Path, doc: Document) -> None:
+    Path(path).write_text(json.dumps(document_to_dict(doc), indent=2), encoding="utf-8")
+
+
+def load_document(path: str | Path) -> Document:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return document_from_dict(data)

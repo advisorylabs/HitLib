@@ -31,9 +31,12 @@ from .codegen import (
     validate_document_for_export,
     validate_for_export,
 )
+from .engine import make_music_binding
+from .envelope import BAND_BASS
 from .group_edit import apply_changes, diff_config
 from .inspector import InspectorPanel
-from .models import StrandConfig
+from .models import AnimationKind, Document, MusicConfig, StrandConfig
+from .music_panel import MusicPanel
 from .serialization import load_document, save_document
 from .session import StrandSession
 from .strand_list import StrandListPanel
@@ -64,6 +67,23 @@ def _scope_label(text: str) -> QLabel:
     return label
 
 
+def _music_band(config: StrandConfig) -> str:
+    """The band this strand's Music Sync animation follows.
+
+    A profile strand has one animation per mode, so the first Music Sync among
+    them stands in for the strand - the Song bar shows one waveform, and any
+    music band it follows is a better answer than a fixed default.
+    """
+    if config.use_profile:
+        for mode in config.profile_modes:
+            leaves = [p.animation for p in mode.phases] if mode.phases else [mode.animation]
+            for animation in leaves:
+                if animation.kind == AnimationKind.MUSIC:
+                    return animation.band
+        return BAND_BASS
+    return config.animation.band
+
+
 def _v_separator() -> QFrame:
     """A themed 1px divider. QFrame.VLine draws itself from the palette's
     Mid/Dark roles, which the stylesheet can't reach."""
@@ -85,6 +105,9 @@ class MainWindow(QMainWindow):
         self._baseline_index = -1
         self._running = True
         self._current_file_path: Path | None = None
+        # The document's one song. Held here rather than on any strand: see
+        # models.MusicConfig and the Song bar under the preview.
+        self.music = MusicConfig()
         # Frameless, with the logo/menus/title/caption buttons folded into one
         # row. See window_chrome for what that trades away and how it's
         # paid back. Built before _update_title(), which writes into it.
@@ -93,6 +116,7 @@ class MainWindow(QMainWindow):
         self._update_title()
 
         self.canvas = StripCanvas()
+        self.music_panel = MusicPanel()
         self.strand_list = StrandListPanel()
         self.inspector = InspectorPanel()
         self.inspector.setEnabled(False)
@@ -169,6 +193,7 @@ class MainWindow(QMainWindow):
         center_layout.setSpacing(8)
         center_layout.addWidget(controls_scroll)
         center_layout.addWidget(self.canvas, 1)
+        center_layout.addWidget(self.music_panel)
 
         right = QScrollArea()
         right.setWidget(self.inspector)
@@ -210,6 +235,9 @@ class MainWindow(QMainWindow):
         self.strand_list.selection_changed.connect(self._on_selection_changed)
         self.inspector.strand_settings_changed.connect(self._on_strand_settings_changed)
         self.inspector.animation_changed.connect(self._on_animation_changed)
+        self.music_panel.song_changed.connect(self._on_song_changed)
+        self.music_panel.position_changed.connect(self._on_music_position)
+        self.music_panel.playing_changed.connect(self._on_music_playing)
         self.play_all_btn.clicked.connect(self._play_all)
         self.pause_all_btn.clicked.connect(self._pause_all)
         self.reset_all_btn.clicked.connect(self._reset_all)
@@ -218,6 +246,7 @@ class MainWindow(QMainWindow):
         self.reset_selected_btn.clicked.connect(self._reset_selected)
 
         self._build_menu()
+        self.music_panel.load(self.music)
         self.add_strand()
 
         # Called last (not at the top of __init__): resize() on a QMainWindow
@@ -250,6 +279,8 @@ class MainWindow(QMainWindow):
 
     def _file_new(self) -> None:
         self._clear_sessions()
+        self.music = MusicConfig()
+        self.music_panel.load(self.music)
         self._current_file_path = None
         self._update_title()
         self.add_strand()
@@ -259,12 +290,14 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            configs = load_document(path)
+            document = load_document(path)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Open Failed", f"Couldn't load {path}:\n{exc}")
             return
         self._clear_sessions()
-        for cfg in configs:
+        self.music = document.music
+        self.music_panel.load(self.music)
+        for cfg in document.strands:
             self._add_session(cfg)
         if not self.sessions:
             self.add_strand()
@@ -293,16 +326,19 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            configs = load_document(path)
+            document = load_document(path)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Import Failed", f"Couldn't load {path}:\n{exc}")
             return
-        for cfg in configs:
+        self._adopt_music(document)
+        for cfg in document.strands:
             self._add_session(cfg)
 
     def _write_to(self, path: Path) -> None:
         try:
-            save_document(path, [s.config for s in self.sessions])
+            save_document(
+                path, Document(strands=[s.config for s in self.sessions], music=self.music)
+            )
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"Couldn't save {path}:\n{exc}")
 
@@ -362,7 +398,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Strand Selected", "Select a strand to export first.")
             return None
         self.inspector.save(session.config)  # make sure in-progress edits are flushed
-        errors = validate_for_export(session.config)
+        errors = validate_for_export(session.config, self.music)
         if errors:
             self._show_export_errors(errors)
             return None
@@ -376,7 +412,7 @@ class MainWindow(QMainWindow):
         if current is not None:
             self.inspector.save(current.config)  # only the selected strand is bound to the inspector
         configs = [s.config for s in self.sessions]
-        errors = validate_document_for_export(configs)
+        errors = validate_document_for_export(configs, self.music)
         if errors:
             self._show_export_errors(errors)
             return None
@@ -386,7 +422,7 @@ class MainWindow(QMainWindow):
         config = self._current_config_or_warn()
         if config is None:
             return None
-        return generate_cpp(config, header_name)
+        return generate_cpp(config, header_name, self.music)
 
     def _write_export(self, code_for: Callable[[str], str], title: str, suggested: str) -> None:
         """Ask for a path, then generate. The chosen filename goes into the
@@ -407,7 +443,7 @@ class MainWindow(QMainWindow):
         if config is None:
             return
         self._write_export(
-            lambda name: generate_cpp(config, name),
+            lambda name: generate_cpp(config, name, self.music),
             "Export C++ Profile",
             suggested_header_name(config.name),
         )
@@ -417,7 +453,7 @@ class MainWindow(QMainWindow):
         if configs is None:
             return
         self._write_export(
-            lambda name: generate_document_cpp(configs, name),
+            lambda name: generate_document_cpp(configs, name, self.music),
             "Export All Strands as C++",
             "led_profiles.hpp",
         )
@@ -433,9 +469,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _add_session(self, cfg: StrandConfig) -> StrandSession:
-        session = StrandSession(cfg)
+        session = StrandSession(cfg, music=make_music_binding(self.music))
         session.ticked.connect(self.canvas.update)
         self.sessions.append(session)
+        self._sync_music([session])
         if self._running:
             session.start()
         self.canvas.update()
@@ -521,6 +558,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_selected(rows)
         if session is not None:
             self.inspector.load(session.config)
+        self._sync_preview_band()
         self._capture_baseline()
 
     def _group_sessions(self) -> list[StrandSession]:
@@ -571,6 +609,8 @@ class MainWindow(QMainWindow):
                 session.rebuild()
             else:
                 session.reapply_animation()
+        self._sync_music(sessions)
+        self._sync_preview_band()
         if rebuild:
             self._refresh_list()
 
@@ -579,6 +619,72 @@ class MainWindow(QMainWindow):
 
     def _on_animation_changed(self) -> None:
         self._apply_group_edit(rebuild=False)
+
+    # ------------------------------------------------------------------
+    # Song
+    # ------------------------------------------------------------------
+
+    def _adopt_music(self, document: Document) -> bool:
+        """Take an imported document's song, but only if this one has none.
+
+        Import brings strands in alongside what is already open, so it must not
+        replace a song that is already loaded. It does adopt one when there is
+        nothing to lose, otherwise the Music Sync strands arriving with it would
+        point at no song at all.
+        """
+        if self.music.loaded or not document.music.loaded:
+            return False
+        self.music = document.music
+        self.music_panel.load(self.music)
+        # Strands that were already open get the adopted song too, not just the
+        # ones arriving with it.
+        self._on_song_changed()
+        return True
+
+    def _sync_music(self, sessions: list[StrandSession]) -> None:
+        """Put `sessions` where the Song bar's transport currently is.
+
+        Anything that recreates or re-issues an engine strand restarts its
+        playback from zero, so this runs after every rebuild as well as when
+        the transport itself moves - otherwise editing a color mid-song would
+        silently rewind that strand to the top of the track.
+        """
+        playing = self.music_panel.playing
+        position = self.music_panel.position_ms
+        for session in sessions:
+            session.strand.music_pause(not playing)
+            session.seek_music(position)
+
+    def _sync_preview_band(self) -> None:
+        """Draw the selected strand's band in the Song bar's scrubber.
+
+        Which band a strand follows is a per-strand choice, so the waveform
+        under the preview should be the one that strand is filling to - not a
+        fixed band that happens to disagree with what the LEDs are doing.
+        """
+        session = self._current_session()
+        self.music_panel.set_preview_band(
+            _music_band(session.config) if session is not None else BAND_BASS
+        )
+
+    def _on_song_changed(self) -> None:
+        """A new file, or a bake setting moved: hand every strand the new
+        envelope. Only the Music Sync ones will do anything with it."""
+        binding = make_music_binding(self.music)
+        for session in self.sessions:
+            session.set_music(binding)
+        self._sync_music(self.sessions)
+
+    def _on_music_position(self, position_ms: int) -> None:
+        for session in self.sessions:
+            session.seek_music(position_ms)
+
+    def _on_music_playing(self, playing: bool) -> None:
+        # Between position pushes a strand advances the song on its own, the
+        # same way it will on the robot. Pausing it is what stops a paused
+        # transport from drifting forward anyway.
+        for session in self.sessions:
+            session.strand.music_pause(not playing)
 
     # ------------------------------------------------------------------
     # Transport
@@ -600,6 +706,7 @@ class MainWindow(QMainWindow):
     def _reset_all(self) -> None:
         for session in self.sessions:
             session.rebuild()
+        self._sync_music(self.sessions)
 
     def _play_selected(self) -> None:
         for session in self._group_sessions():
@@ -610,5 +717,7 @@ class MainWindow(QMainWindow):
             session.stop()
 
     def _reset_selected(self) -> None:
-        for session in self._group_sessions():
+        sessions = self._group_sessions()
+        for session in sessions:
             session.rebuild()
+        self._sync_music(sessions)

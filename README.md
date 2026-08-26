@@ -4,9 +4,13 @@
 
 Drive WS2812B strips off the V5's ADI ports with animations: flow,
 rainbow, pulse, flash, twinkle, bitscroll, and center-spread composed into named,
-prioritized modes you switch at runtime. Comes with **Pattern Studio**, a
-desktop pattern selection tool that previews patterns live and exports them as
-ready-to-include C++.
+prioritized modes you switch at runtime. Strips can also fill like a meter -
+tracking a motor's heat, an arm's rotation or the battery on their own, or
+filling in time with a song. One strip can be split into several independent
+gauges, so a strand under the drivebase can show all six motors' temperatures
+at once, each segment colored by its own. Comes with
+**Pattern Studio**, a desktop pattern selection tool that previews patterns live
+and exports them as ready-to-include C++.
 
 📖 **[Documentation](https://advisorylabs.github.io/HitLib/)** ·
 📦 **[Releases](https://github.com/advisorylabs/HitLib/releases)**
@@ -67,6 +71,13 @@ handles multi-phase looks like a timed endgame sequence.
 
 A desktop app for designing patterns against a live preview instead of a robot,
 then exporting them as a HitLib profile header.
+
+Drop a song into its Song bar - MP3, M4A, FLAC, OGG, WAV or MIDI - and it
+measures the track's loudness in three frequency bands and bakes each into a
+table the strip fills to. Play it back and you hear the song while watching
+every strand react to it; scrub anywhere; point one strip at the kick and
+another at the hi-hats. The tables ship inside the exported header, which is
+how a strip syncs to music on a brain that can't hear any.
 
 ```bash
 cd tools/pattern_studio

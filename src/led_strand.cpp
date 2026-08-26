@@ -86,6 +86,7 @@ void LedStrand::tick() {
     else if (!bitscrollMaster.empty())      advanceBitscrollBounce();
     else if (animMode == AnimMode::TWINKLE) advanceTwinkle();
     else if (animMode == AnimMode::FLASH)   advanceFlash();
+    else if (animMode == AnimMode::LEVEL)   advanceLevel();
     else if (animMode == AnimMode::SHIFT)   shiftBuffer();
 
     if (overlayAnimMode == AnimMode::SHIFT)      shiftOverlayBuffer();
@@ -418,6 +419,234 @@ void LedStrand::shiftBuffer() {
 }
 
 // ============================================================================
+// Level meter / fill sources / music sync
+// ============================================================================
+
+void LedStrand::levelFill(uint32_t color, uint32_t color2, bool gradient, uint32_t bgColor,
+                          bool invert) {
+    mutex.take();
+    levelFillNL(color, color2, gradient, bgColor, invert);
+    // Manual control from here, see setLevel(). Either of the automatic
+    // drivers would overwrite it on the next tick.
+    musicTrack = nullptr;
+    levelRead  = nullptr;
+    mutex.give();
+}
+
+void LedStrand::levelFillNL(uint32_t color, uint32_t color2, bool gradient, uint32_t bg,
+                            bool invert) {
+    pulseRunLen = 0;
+    bitscrollMaster.clear();
+    // The meter's colors are laid across the whole strip once, here. All the
+    // per-tick level does is decide how much of that is revealed, so driving
+    // the meter costs no buffer work at all.
+    if (gradient) buffer = genGradient(color, color2, length);
+    else          buffer.assign(length, color);
+    levelBg      = bg;
+    levelInvert  = invert;
+    shiftStep    = 0;
+    shiftVariant = 0;
+    animMode     = AnimMode::LEVEL;
+}
+
+void LedStrand::setLevel(uint8_t level) {
+    mutex.take();
+    levelValue = level;
+    // A song or a live source would overwrite this on the next tick.
+    musicTrack = nullptr;
+    levelRead  = nullptr;
+    mutex.give();
+}
+
+void LedStrand::levelSource(LevelFn read, double emptyAt, double fullAt, bool wrap,
+                            uint8_t smoothing) {
+    mutex.take();
+    levelRead    = read;
+    levelEmptyAt = emptyAt;
+    levelFullAt  = fullAt;
+    levelWrap    = wrap;
+    levelSmooth  = smoothing > 99 ? 99 : smoothing; // 100 would never reach the target
+    levelPrimed  = false;   // first sample lands outright, see advanceLevel()
+    musicTrack   = nullptr; // a song would overwrite the reader on the next tick
+    mutex.give();
+}
+
+void LedStrand::clearLevelSource() {
+    mutex.take();
+    levelRead = nullptr;
+    mutex.give();
+}
+
+void LedStrand::musicSync(const MusicTrack& track, uint32_t color, uint32_t color2,
+                          bool gradient, uint32_t bgColor, bool invert, uint8_t sensitivity,
+                          bool loop) {
+    mutex.take();
+    levelFillNL(color, color2, gradient, bgColor, invert);
+    musicTrack       = &track;
+    levelRead        = nullptr; // the song drives the meter now
+    musicSensitivity = sensitivity;
+    musicLoop        = loop;
+    musicPaused      = false;
+    musicAnchorMs    = pros::millis();
+    musicPausedAt    = 0;
+    levelValue       = sampleMusicNL(0);
+    mutex.give();
+}
+
+void LedStrand::musicSeek(uint32_t positionMs) {
+    mutex.take();
+    // Move the anchor rather than a position counter, so a seek while playing
+    // resumes from the new spot at real-time speed with no further bookkeeping.
+    musicAnchorMs = pros::millis() - positionMs;
+    musicPausedAt = positionMs;
+    levelValue    = sampleMusicNL(positionMs);
+    mutex.give();
+}
+
+void LedStrand::musicPause(bool paused) {
+    mutex.take();
+    uint32_t now = pros::millis();
+    if (paused && !musicPaused) {
+        musicPausedAt = now - musicAnchorMs;
+        musicPaused   = true;
+    } else if (!paused && musicPaused) {
+        musicAnchorMs = now - musicPausedAt;
+        musicPaused   = false;
+    }
+    mutex.give();
+}
+
+uint32_t LedStrand::musicPositionMs() const {
+    return musicPaused ? musicPausedAt : (pros::millis() - musicAnchorMs);
+}
+
+void LedStrand::setSensitivity(uint8_t pct) {
+    mutex.take();
+    musicSensitivity = pct;
+    mutex.give();
+}
+
+void LedStrand::advanceLevel() {
+    if (musicTrack) {
+        levelValue = sampleMusicNL(musicPaused ? musicPausedAt : (pros::millis() - musicAnchorMs));
+        return;
+    }
+    if (!levelRead) return;
+
+    // The reader is user code and may well call back into this strand, so it
+    // runs with the mutex released, the same way ProfileMode callbacks do.
+    LevelFn read = levelRead;
+    mutex.give();
+    double raw = read();
+    mutex.take();
+    // Something may have re-pointed the meter while it was unlocked, in which
+    // case this sample belongs to a source that no longer drives it.
+    if (levelRead != read) return;
+    // An unplugged device reports PROS_ERR_F (infinity). Holding the fill says
+    // "no reading" far better than slamming the bar to full would.
+    if (!std::isfinite(raw)) return;
+
+    uint8_t target = mapLevelNL(raw);
+    levelValue  = levelPrimed ? smoothLevelNL(target) : target;
+    levelPrimed = true;
+}
+
+// Where a raw reading sits between emptyAt and fullAt, as 0-255. A range given
+// backwards (fullAt below emptyAt) falls out of the same arithmetic as a meter
+// that drains while the value climbs.
+uint8_t LedStrand::mapLevelTo(double raw, double emptyAt, double fullAt, bool wrap) {
+    double span = fullAt - emptyAt;
+    if (span == 0.0) return 0;
+
+    double t = (raw - emptyAt) / span;
+    if (wrap)           t -= std::floor(t);  // 1.25 -> 0.25, -0.25 -> 0.75
+    else if (t < 0.0)   t = 0.0;
+    else if (t > 1.0)   t = 1.0;
+
+    int v = (int)(t * 255.0 + 0.5);
+    if (v < 0)   v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)v;
+}
+
+uint8_t LedStrand::mapLevelNL(double raw) const {
+    return mapLevelTo(raw, levelEmptyAt, levelFullAt, levelWrap);
+}
+
+// One tick of the smoothing filter: move part of the way to the target rather
+// than snapping to it, so a jittery reading doesn't make the bar flicker.
+uint8_t LedStrand::smoothLevelTo(uint8_t target, uint8_t current, uint8_t smoothing, bool wrap) {
+    if (smoothing == 0) return target;
+
+    int delta = (int)target - (int)current;
+    if (delta == 0) return target;
+    // A wrapping meter takes the short way round, otherwise a bar rolling over
+    // from full to empty would sweep back down the whole strip to get there.
+    if (wrap) {
+        if      (delta >  128) delta -= 256;
+        else if (delta < -128) delta += 256;
+    }
+
+    int step = delta * (100 - (int)smoothing) / 100;
+    // Truncation would otherwise stall the bar a few pixels short of a target
+    // it is already close to.
+    if (step == 0) step = (delta > 0) ? 1 : -1;
+
+    int next = (int)current + step;
+    if (wrap)              next = ((next % 256) + 256) % 256;
+    else if (next < 0)     next = 0;
+    else if (next > 255)   next = 255;
+    return (uint8_t)next;
+}
+
+uint8_t LedStrand::smoothLevelNL(uint8_t target) const {
+    return smoothLevelTo(target, levelValue, levelSmooth, levelWrap);
+}
+
+// Read the envelope at an arbitrary millisecond offset, interpolating between
+// the two frames it falls between. That interpolation is what lets the export
+// use a coarse frame rate (fewer bytes of flash) without the fill visibly
+// stepping at the strand's faster refresh rate.
+uint8_t LedStrand::sampleMusicNL(uint32_t positionMs) const {
+    if (!musicTrack || musicTrack->samples == nullptr) return 0;
+    const MusicTrack& t = *musicTrack;
+    if (t.frameCount == 0 || t.frameMs == 0) return 0;
+
+    uint32_t totalMs = (uint32_t)t.frameCount * (uint32_t)t.frameMs;
+    if (positionMs >= totalMs) {
+        if (!musicLoop) return 0; // song over, let the meter drain
+        positionMs %= totalMs;
+    }
+
+    uint32_t idx  = positionMs / t.frameMs;
+    uint32_t frac = positionMs % t.frameMs;
+    int a = t.samples[idx];
+    int b;
+    if (idx + 1 < t.frameCount) b = t.samples[idx + 1];
+    else                        b = musicLoop ? t.samples[0] : a;
+
+    int raw    = a + (b - a) * (int)frac / (int)t.frameMs;
+    int scaled = raw * (int)musicSensitivity / 100;
+    if (scaled > 255) scaled = 255;
+    if (scaled < 0)   scaled = 0;
+    return (uint8_t)scaled;
+}
+
+// The color one meter pixel shows, given the fill cutoff for this frame:
+// @p full whole lit pixels, and @p frac of the way into the next one. The
+// cutoff is computed once per flush rather than per pixel, and the partial
+// pixel is what keeps a 30-pixel strand from showing only 30 distinguishable
+// levels.
+uint32_t LedStrand::levelPixel(uint8_t i, uint32_t full, uint8_t frac) const {
+    // Index along the direction of the fill, so the gradient always begins
+    // where the fill begins.
+    uint32_t f = levelInvert ? (uint32_t)(length - 1 - i) : (uint32_t)i;
+    if (f < full)  return buffer[f];
+    if (f == full) return lerpColor(levelBg, buffer[f], frac);
+    return levelBg;
+}
+
+// ============================================================================
 // Splice mask
 // ============================================================================
 
@@ -426,6 +655,7 @@ void LedStrand::spliceMask(uint8_t sections, bool invert, bool alternating, uint
     mutex.take();
     spliceMode = SpliceMode::SPLIT;
     spliceRegions.clear();
+    ++spliceGeneration;
     spliceSections = sections;
     spliceInvert = invert;
     spliceAlternating = alternating;
@@ -446,8 +676,12 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
     std::fill(spliceShowAnim.begin(), spliceShowAnim.end(), true);
     std::fill(splicePixelRegionIdx.begin(), splicePixelRegionIdx.end(), (int16_t)-1);
     spliceRegions.clear();
+    // Anything still holding a reference into spliceRegions - a gauge poll that
+    // released the mutex to run user code - has to be able to notice this.
+    ++spliceGeneration;
 
-    for (const SpliceRegion& r : regions) {
+    for (size_t userIdx = 0; userIdx < regions.size(); ++userIdx) {
+        const SpliceRegion& r = regions[userIdx];
         if (r.start >= length) continue;
         uint16_t end = (uint16_t)r.start + (uint16_t)r.width;
         if (end > length) end = length;
@@ -460,7 +694,8 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
             fallbackColor = r.color;
         } else if (r.kind != SpliceRegionAnimKind::OFF) {
             SpliceRegionState state;
-            state.start = r.start;
+            state.start   = r.start;
+            state.userIdx = (uint8_t)userIdx;
             switch (r.kind) {
                 case SpliceRegionAnimKind::PULSE: {
                     state.buffer.assign(regionWidth, r.bgColor);
@@ -491,11 +726,46 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                     state.buffer = genRainbow(regionWidth);
                     state.shiftSpeed = r.speed;
                     break;
+                case SpliceRegionAnimKind::GAUGE: {
+                    state.buffer.assign(regionWidth, r.bgColor);
+                    state.shiftSpeed   = 0;   // a gauge repaints, it never scrolls
+                    state.gauge        = true;
+                    state.levelRead    = r.read;
+                    state.levelEmptyAt = r.emptyAt;
+                    state.levelFullAt  = r.fullAt;
+                    state.levelWrap    = r.wrap;
+                    state.levelSmooth  = std::min<uint8_t>(r.smoothing, 99); // 100 never arrives
+                    state.levelPrimed  = false;
+                    state.gaugeInvert  = r.invert;
+                    state.gaugeStyle   = r.style;
+                    state.gaugeBlend   = r.blend;
+                    state.gaugeBg      = r.bgColor;
+
+                    // Resolve the scale onto the same 0-255 axis levelValue
+                    // lives on, once, so a tick only has to bracket a byte.
+                    // An empty scale becomes the two-color fallback, which is
+                    // what guarantees the runtime always has something to
+                    // bracket between.
+                    std::vector<GaugeStop> scale = r.stops;
+                    if (scale.empty()) scale = {{r.emptyAt, r.color}, {r.fullAt, r.color2}};
+                    state.gaugeStops.reserve(scale.size());
+                    for (const GaugeStop& gs : scale) {
+                        // wrap is false here whatever the gauge itself does: a
+                        // stop's place on the scale is a clamp, not a lap.
+                        state.gaugeStops.emplace_back(
+                            mapLevelTo(gs.at, r.emptyAt, r.fullAt, false), gs.color);
+                    }
+                    std::sort(state.gaugeStops.begin(), state.gaugeStops.end());
+                    break;
+                }
                 default:
                     break;
             }
             spliceRegions.push_back(std::move(state));
             regionIdx = (int16_t)(spliceRegions.size() - 1);
+            // A gauge shows the bottom of its scale rather than its background
+            // on the very first frame, instead of waiting for the first poll.
+            if (spliceRegions.back().gauge) paintGaugeRegion(spliceRegions.back());
         }
 
         for (uint16_t i = r.start; i < end; ++i) {
@@ -507,6 +777,44 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
     }
     spliceActive = !regions.empty();
     mutex.give();
+}
+
+void LedStrand::setRegionLevel(uint8_t regionIdx, uint8_t level) {
+    mutex.take();
+    for (SpliceRegionState& state : spliceRegions) {
+        // A gauge with a reader of its own would overwrite this on the next
+        // tick, so setting it would only ever look like a glitch.
+        if (!state.gauge || state.userIdx != regionIdx || state.levelRead) continue;
+        state.levelValue  = level;
+        state.levelPrimed = true;
+        paintGaugeRegion(state);
+        break;
+    }
+    mutex.give();
+}
+
+LedStrand::SpliceRegion LedStrand::motorHeatGauge(uint8_t start, uint8_t width, LevelFn read) {
+    SpliceRegion r;
+    r.start   = start;
+    r.width   = width;
+    r.kind    = SpliceRegionAnimKind::GAUGE;
+    r.read    = read;
+    r.emptyAt = 20.0;
+    r.fullAt  = 70.0;
+    // The V5 reports motor temperature in coarse steps rather than as a
+    // continuous reading, so without smoothing a segment jumps from one stop
+    // color straight to the next. This is what makes it creep instead.
+    r.smoothing = 80;
+    r.stops = {
+        {20.0, 0x00FF00}, // cold, full power
+        {45.0, 0xFFFF00}, // warm - the first current cut is coming
+        {55.0, 0xFF7000}, // current limited to 50%
+        {60.0, 0xFF2000}, // current limited to 25%
+        {65.0, 0xFF0000}, // current limited to 12.5%
+        {70.0, 0xFF00FF}, // shut down. Deliberately not on the red ramp: this
+                          // one has to not read as "slightly worse than before".
+    };
+    return r;
 }
 
 void LedStrand::clearSpliceMask() {
@@ -544,7 +852,40 @@ void LedStrand::advanceSpliceAlternating(uint32_t nowMs) {
 
 void LedStrand::advanceSpliceRegions() {
     if (!spliceActive || spliceMode != SpliceMode::CUSTOM) return;
-    for (SpliceRegionState& state : spliceRegions) {
+    // Indexed rather than ranged: polling a gauge releases the mutex, and a
+    // reference into the vector would not survive user code replacing the mask.
+    for (size_t idx = 0; idx < spliceRegions.size(); ++idx) {
+        if (spliceRegions[idx].gauge) {
+            LevelFn read = spliceRegions[idx].levelRead;
+            if (read) {
+                // The reader is user code and may well call back into this
+                // strand, so it runs unlocked, the same way advanceLevel() and
+                // the ProfileMode callbacks do.
+                uint32_t generation = spliceGeneration;
+                mutex.give();
+                double raw = read();
+                mutex.take();
+                // The mask may have been replaced while it was unlocked, in
+                // which case every state in this vector belongs to someone else
+                // now and the loop has nothing left to walk.
+                if (generation != spliceGeneration) return;
+                // An unplugged device reports PROS_ERR_F (infinity). Holding
+                // the color says "no reading" better than slamming the segment
+                // to the top of its scale would.
+                if (std::isfinite(raw)) {
+                    SpliceRegionState& g = spliceRegions[idx];
+                    uint8_t target = mapLevelTo(raw, g.levelEmptyAt, g.levelFullAt, g.levelWrap);
+                    g.levelValue = g.levelPrimed
+                        ? smoothLevelTo(target, g.levelValue, g.levelSmooth, g.levelWrap)
+                        : target;
+                    g.levelPrimed = true;
+                }
+            }
+            paintGaugeRegion(spliceRegions[idx]);
+            continue;
+        }
+
+        SpliceRegionState& state = spliceRegions[idx];
         size_t bufSize = state.buffer.size();
         if (bufSize == 0) continue;
         if (state.flashing) {
@@ -560,6 +901,63 @@ void LedStrand::advanceSpliceRegions() {
         }
         if (state.shiftSpeed == 0) continue;
         state.shiftStep = (int)((state.shiftStep + state.shiftSpeed) % (int)bufSize);
+    }
+}
+
+// The color a gauge's scale gives for a 0-255 level. Stops are already sorted
+// and already on that axis, so this is a bracket and (at most) one lerp.
+uint32_t LedStrand::gaugeColorAt(const SpliceRegionState& state, uint8_t level) {
+    const std::vector<std::pair<uint8_t, uint32_t>>& stops = state.gaugeStops;
+    if (stops.empty()) return state.gaugeBg;
+    // Past either end the scale holds, so it never has to cover a range the
+    // gauge does not care about.
+    if (level <= stops.front().first) return stops.front().second;
+    if (level >= stops.back().first)  return stops.back().second;
+
+    size_t i = 1;
+    while (i < stops.size() && stops[i].first < level) ++i;
+    const std::pair<uint8_t, uint32_t>& lo = stops[i - 1];
+    const std::pair<uint8_t, uint32_t>& hi = stops[i];
+    // STEP holds the lower stop until the higher one is actually reached, which
+    // is the honest reading when the stops are thresholds something crosses
+    // rather than points on a ramp.
+    if (state.gaugeBlend == GaugeBlend::STEP) return lo.second;
+
+    uint8_t span = (uint8_t)(hi.first - lo.first);
+    if (span == 0) return hi.second;
+    uint8_t t = (uint8_t)(((uint32_t)(level - lo.first) * 255u) / span);
+    return lerpColor(lo.second, hi.second, t);
+}
+
+// Repaint one gauge region from its current level. Called every tick rather
+// than only on a change: it is at most 64 writes, and it keeps the region
+// correct after a setRegionLevel() from another task with no dirty flag to
+// get wrong.
+void LedStrand::paintGaugeRegion(SpliceRegionState& state) {
+    size_t width = state.buffer.size();
+    if (width == 0) return;
+
+    if (state.gaugeStyle == GaugeStyle::HEAT) {
+        std::fill(state.buffer.begin(), state.buffer.end(),
+                  gaugeColorAt(state, state.levelValue));
+        return;
+    }
+
+    // BAR: flushBuffer()'s cutoff arithmetic for the strand-wide meter, scoped
+    // to this region's own pixels - whole lit pixels plus a fraction of the
+    // next one, so a 10-pixel segment still shows more than 10 levels.
+    uint32_t litQ8 = (uint32_t)state.levelValue * (uint32_t)width;
+    uint32_t full  = litQ8 / 255;
+    uint8_t  frac  = (uint8_t)(litQ8 % 255);
+    for (size_t k = 0; k < width; ++k) {
+        // Index along the direction of the fill, so the scale always begins
+        // where the fill begins - as levelPixel() does for the whole strip.
+        size_t f = state.gaugeInvert ? (width - 1 - k) : k;
+        uint8_t pos = (width <= 1) ? 255 : (uint8_t)((f * 255) / (width - 1));
+        uint32_t scale = gaugeColorAt(state, pos);
+        if      (f <  full) state.buffer[k] = scale;
+        else if (f == full) state.buffer[k] = lerpColor(state.gaugeBg, scale, frac);
+        else                state.buffer[k] = state.gaugeBg;
     }
 }
 
@@ -921,10 +1319,19 @@ void LedStrand::flushBuffer() {
     size_t bufSize = buffer.size();
     size_t overlayBufSize = overlayBuffer.size();
 
+    // Meter fill cutoff, in whole pixels plus a fraction of the next one.
+    // Constant across the frame, so it is worked out here rather than inside
+    // the per-pixel loop.
+    uint32_t litQ8     = (uint32_t)levelValue * (uint32_t)length;
+    uint32_t levelFull = litQ8 / 255;
+    uint8_t  levelFrac = (uint8_t)(litQ8 % 255);
+
     s_adiMutex.take();
     for (uint8_t i = 0; i < length; ++i) {
         uint32_t baseColor;
-        if (!spreadActive && animMode == AnimMode::SHIFT && bufSize > 0) {
+        if (animMode == AnimMode::LEVEL) {
+            baseColor = levelPixel(i, levelFull, levelFrac);
+        } else if (!spreadActive && animMode == AnimMode::SHIFT && bufSize > 0) {
             baseColor = buffer[((size_t)i + (size_t)shiftStep) % bufSize];
         } else {
             baseColor = buffer[i];

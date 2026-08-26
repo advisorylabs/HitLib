@@ -16,12 +16,13 @@ ProfileMode callback) that needs "now" for timing should read strand.now_ms.
 
 from __future__ import annotations
 
+import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, Optional, Sequence
 
-from .colors import gen_gradient, gen_rainbow, lerp_color
+from .colors import gen_gradient, gen_rainbow, lerp_color, trunc_div
 from .profile import Profile
 
 MAX_LEDS = 64
@@ -36,6 +37,7 @@ class AnimMode(Enum):
     CENTER_SPREAD = auto()
     TWINKLE = auto()
     FLASH = auto()
+    LEVEL = auto()
 
 
 class SpliceMode(Enum):
@@ -49,9 +51,32 @@ class BitScrollSegment:
     width: int
 
 
+@dataclass(frozen=True)
+class MusicTrack:
+    """Port of LedStrand::MusicTrack - a song reduced to one intensity sample
+    per frame, baked on the desktop because the V5 can neither hear audio nor
+    decode MIDI. See pattern_studio.midi for how one is built from a file.
+    """
+
+    samples: tuple[int, ...] = ()
+    frame_ms: int = 25
+
+    @property
+    def frame_count(self) -> int:
+        return len(self.samples)
+
+    @property
+    def duration_ms(self) -> int:
+        return self.frame_count * self.frame_ms
+
+
 class SpliceRegionAnimKind(Enum):
-    """Mirrors LedStrand::SpliceRegionAnimKind, same vocabulary as the
-    overlay* animations, since each region's buffer is built the same way.
+    """Mirrors LedStrand::SpliceRegionAnimKind.
+
+    OFF through RAINBOW share the overlay* animations' vocabulary, since each
+    region's buffer is built the same way. GAUGE is the exception: it animates
+    from a reading rather than from a clock, which is what makes one region an
+    independent meter.
     """
 
     OFF = auto()
@@ -60,6 +85,43 @@ class SpliceRegionAnimKind(Enum):
     FLASH = auto()
     FLOW = auto()
     RAINBOW = auto()
+    GAUGE = auto()
+
+
+@dataclass(frozen=True)
+class GaugeStop:
+    """Port of LedStrand::GaugeStop - one color on a gauge's scale, given in
+    the reading's own units rather than in pixels or in 0-255."""
+
+    at: float
+    color: int
+
+
+class GaugeStyle(Enum):
+    """Port of LedStrand::GaugeStyle."""
+
+    HEAT = auto()  # the whole region shows one color off the scale
+    BAR = auto()   # the region fills proportionally, a miniature level_fill()
+
+
+class GaugeBlend(Enum):
+    """Port of LedStrand::GaugeBlend."""
+
+    LERP = auto()  # blend between stops
+    STEP = auto()  # hold each stop until the next is reached
+
+
+#: The V5 motor's own heat schedule, as a gauge scale. Port of the table in
+#: LedStrand::motorHeatGauge(): the stops are the temperatures the motor
+#: actually changes behaviour at, not evenly spaced points on a ramp.
+MOTOR_HEAT_STOPS: tuple[GaugeStop, ...] = (
+    GaugeStop(20.0, 0x00FF00),  # cold, full power
+    GaugeStop(45.0, 0xFFFF00),  # warm - the first current cut is coming
+    GaugeStop(55.0, 0xFF7000),  # current limited to 50%
+    GaugeStop(60.0, 0xFF2000),  # current limited to 25%
+    GaugeStop(65.0, 0xFF0000),  # current limited to 12.5%
+    GaugeStop(70.0, 0xFF00FF),  # shut down - deliberately off the red ramp
+)
 
 
 @dataclass(frozen=True)
@@ -80,6 +142,19 @@ class SpliceRegion:
     speed: int = 1
     on_ms: int = 250
     off_ms: int = 250
+    # GAUGE only, ignored by every other kind. `read` of None leaves the
+    # region hand-driven through set_region_level().
+    read: Optional[Callable[[], float]] = None
+    empty_at: float = 0.0
+    full_at: float = 100.0
+    wrap: bool = False
+    smoothing: int = 0
+    invert: bool = False
+    style: GaugeStyle = GaugeStyle.HEAT
+    blend: GaugeBlend = GaugeBlend.LERP
+    #: The scale, in the reading's own units. Empty falls back to `color` at
+    #: `empty_at` blending to `color2` at `full_at`.
+    stops: tuple[GaugeStop, ...] = ()
 
 
 @dataclass
@@ -93,6 +168,10 @@ class _SpliceRegionState:
     buffer: list[int]
     shift_step: int = 0
     shift_speed: int = 0
+    # Index in the sequence passed to splice_mask_custom(), which is what
+    # set_region_level() addresses. Not the index in splice_regions: SOLID and
+    # OFF regions never get a state, so the two disagree.
+    user_idx: int = 0
     # FLASH regions blink their whole buffer on a tick timer instead of
     # shifting it, mirroring the strand-wide flash state.
     flashing: bool = False
@@ -102,6 +181,23 @@ class _SpliceRegionState:
     flash_off_ticks: int = 1
     flash_counter: int = 0
     flash_lit: bool = True
+    # GAUGE - a per-region copy of the strand-wide meter's state, so each
+    # segment follows its own reading at its own range and smoothing.
+    gauge: bool = False
+    level_read: Optional[Callable[[], float]] = None
+    level_empty_at: float = 0.0
+    level_full_at: float = 100.0
+    level_wrap: bool = False
+    level_smooth: int = 0
+    level_value: int = 0
+    level_primed: bool = False
+    gauge_invert: bool = False
+    gauge_style: GaugeStyle = GaugeStyle.HEAT
+    gauge_blend: GaugeBlend = GaugeBlend.LERP
+    gauge_bg: int = 0x000000
+    #: The scale resolved onto the 0-255 axis level_value lives on, sorted, so
+    #: a tick only has to bracket a byte.
+    gauge_stops: list[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -178,6 +274,34 @@ class Strand:
         self.twinkle_bg_color = 0
         self._rng = random.Random()
 
+        # Level meter - buffer holds the meter's colors across the whole
+        # strip and level_value picks how much of it is revealed, so changing
+        # the level costs nothing until flush time.
+        self.level_value = 0
+        self.level_bg = 0x000000
+        self.level_invert = False
+
+        # Live fill source - a reader polled once per tick plus the range that
+        # maps what it returns onto 0-255. level_primed exists so the first
+        # sample after level_source() lands instantly instead of the bar
+        # crawling up to it from empty through the smoothing filter.
+        self.level_read: Optional[Callable[[], float]] = None
+        self.level_empty_at = 0.0
+        self.level_full_at = 100.0
+        self.level_wrap = False
+        self.level_smooth = 0
+        self.level_primed = False
+
+        # Music sync - playback is a clock anchor rather than a tick counter,
+        # mirroring the firmware. now_ms stands in for pros::millis() here,
+        # which is what lets Pattern Studio scrub by seeking.
+        self.music_track: Optional[MusicTrack] = None
+        self.music_anchor_ms = 0  # now_ms that corresponds to position 0
+        self.music_paused_at = 0  # position held while paused
+        self.music_paused = False
+        self.music_loop = False
+        self.music_sensitivity = 100
+
         # Splice mask
         self.splice_active = False
         self.splice_mode = SpliceMode.SPLIT
@@ -229,6 +353,8 @@ class Strand:
             self._advance_twinkle()
         elif self.anim_mode == AnimMode.FLASH:
             self._advance_flash()
+        elif self.anim_mode == AnimMode.LEVEL:
+            self._advance_level()
         elif self.anim_mode == AnimMode.SHIFT:
             self._shift_buffer()
 
@@ -497,6 +623,207 @@ class Strand:
         self.shift_step = (self.shift_step + self.shift_variant) % buf_size
 
     # ========================================================================
+    # Level meter / fill sources / music sync
+    # ========================================================================
+
+    def level_fill(self, color: int, color2: int = 0x000000, gradient: bool = False,
+                   bg_color: int = 0x000000, invert: bool = False) -> None:
+        self._level_fill(color, color2, gradient, bg_color, invert)
+        # Manual control from here, see set_level(). Either of the automatic
+        # drivers would overwrite it on the next tick.
+        self.music_track = None
+        self.level_read = None
+
+    def _level_fill(self, color: int, color2: int, gradient: bool, bg_color: int,
+                    invert: bool) -> None:
+        self.pulse_run_len = 0
+        self.bitscroll_master = []
+        # The meter's colors are laid across the whole strip once, here. All
+        # the per-tick level does is decide how much of that is revealed.
+        self.buffer = gen_gradient(color, color2, self.length) if gradient else [color] * self.length
+        self.level_bg = bg_color
+        self.level_invert = invert
+        self.shift_step = 0
+        self.shift_variant = 0
+        self.anim_mode = AnimMode.LEVEL
+
+    def set_level(self, level: int) -> None:
+        self.level_value = max(0, min(level, 255))
+        # A song or a live source would overwrite this on the next tick.
+        self.music_track = None
+        self.level_read = None
+
+    def level_source(self, read: Optional[Callable[[], float]], empty_at: float, full_at: float,
+                     wrap: bool = False, smoothing: int = 0) -> None:
+        self.level_read = read
+        self.level_empty_at = empty_at
+        self.level_full_at = full_at
+        self.level_wrap = wrap
+        self.level_smooth = min(99, max(0, smoothing))  # 100 would never reach the target
+        self.level_primed = False  # first sample lands outright, see _advance_level()
+        self.music_track = None  # a song would overwrite the reader on the next tick
+
+    def clear_level_source(self) -> None:
+        self.level_read = None
+
+    def level_source_active(self) -> bool:
+        return self.level_read is not None
+
+    def get_level(self) -> int:
+        return self.level_value
+
+    def music_sync(self, track: MusicTrack, color: int, color2: int = 0x000000,
+                   gradient: bool = False, bg_color: int = 0x000000, invert: bool = False,
+                   sensitivity: int = 100, loop: bool = False) -> None:
+        self._level_fill(color, color2, gradient, bg_color, invert)
+        self.music_track = track
+        self.level_read = None  # the song drives the meter now
+        self.music_sensitivity = sensitivity
+        self.music_loop = loop
+        self.music_paused = False
+        self.music_anchor_ms = self.now_ms
+        self.music_paused_at = 0
+        self.level_value = self._sample_music(0)
+
+    def music_seek(self, position_ms: int) -> None:
+        # Move the anchor rather than a position counter, so a seek while
+        # playing resumes from the new spot at real-time speed.
+        self.music_anchor_ms = self.now_ms - position_ms
+        self.music_paused_at = position_ms
+        self.level_value = self._sample_music(position_ms)
+
+    def music_pause(self, paused: bool = True) -> None:
+        if paused and not self.music_paused:
+            self.music_paused_at = self.now_ms - self.music_anchor_ms
+            self.music_paused = True
+        elif not paused and self.music_paused:
+            self.music_anchor_ms = self.now_ms - self.music_paused_at
+            self.music_paused = False
+
+    def music_playing(self) -> bool:
+        return self.music_track is not None and not self.music_paused
+
+    def music_position_ms(self) -> int:
+        return self.music_paused_at if self.music_paused else (self.now_ms - self.music_anchor_ms)
+
+    def set_sensitivity(self, pct: int) -> None:
+        self.music_sensitivity = pct
+
+    def _advance_level(self) -> None:
+        if self.music_track is not None:
+            pos = self.music_paused_at if self.music_paused else (self.now_ms - self.music_anchor_ms)
+            self.level_value = self._sample_music(pos)
+            return
+        if self.level_read is None:
+            return
+
+        raw = self.level_read()
+        # An unplugged device reports PROS_ERR_F (infinity) on the robot.
+        # Holding the fill says "no reading" better than slamming it to full.
+        if not math.isfinite(raw):
+            return
+
+        target = self._map_level(raw)
+        self.level_value = self._smooth_level(target) if self.level_primed else target
+        self.level_primed = True
+
+    @staticmethod
+    def _map_level_to(raw: float, empty_at: float, full_at: float, wrap: bool) -> int:
+        """Where a raw reading sits between empty_at and full_at, as 0-255. A
+        range given backwards (full_at below empty_at) falls out of the same
+        arithmetic as a meter that drains while the value climbs.
+
+        Static, with the range passed in, so a gauge region can reuse it for
+        its own - mirrors LedStrand::mapLevelTo().
+        """
+        span = full_at - empty_at
+        if span == 0:
+            return 0
+
+        t = (raw - empty_at) / span
+        if wrap:
+            t -= math.floor(t)  # 1.25 -> 0.25, -0.25 -> 0.75
+        else:
+            t = max(0.0, min(t, 1.0))
+        return max(0, min(int(t * 255.0 + 0.5), 255))
+
+    @staticmethod
+    def _smooth_level_to(target: int, current: int, smoothing: int, wrap: bool) -> int:
+        """One tick of the smoothing filter: move part of the way to the target
+        rather than snapping to it, so a jittery reading doesn't make the bar
+        flicker. Mirrors LedStrand::smoothLevelTo()."""
+        if smoothing == 0:
+            return target
+
+        delta = target - current
+        if delta == 0:
+            return target
+        # A wrapping meter takes the short way round, otherwise a bar rolling
+        # over from full to empty would sweep back down the whole strip.
+        if wrap:
+            if delta > 128:
+                delta -= 256
+            elif delta < -128:
+                delta += 256
+
+        step = trunc_div(delta * (100 - smoothing), 100)
+        # Truncation would otherwise stall the bar a few pixels short of a
+        # target it is already close to.
+        if step == 0:
+            step = 1 if delta > 0 else -1
+
+        nxt = current + step
+        if wrap:
+            return nxt % 256
+        return max(0, min(nxt, 255))
+
+    def _map_level(self, raw: float) -> int:
+        return self._map_level_to(raw, self.level_empty_at, self.level_full_at, self.level_wrap)
+
+    def _smooth_level(self, target: int) -> int:
+        return self._smooth_level_to(target, self.level_value, self.level_smooth, self.level_wrap)
+
+    def _sample_music(self, position_ms: int) -> int:
+        """Read the envelope at an arbitrary millisecond offset, interpolating
+        between the two frames it falls between, so a coarse frame rate still
+        renders as a smooth fill at the strand's faster refresh rate."""
+        track = self.music_track
+        if track is None or track.frame_count == 0 or track.frame_ms <= 0:
+            return 0
+
+        total_ms = track.duration_ms
+        if position_ms >= total_ms:
+            if not self.music_loop:
+                return 0  # song over, let the meter drain
+            position_ms %= total_ms
+        if position_ms < 0:
+            position_ms = 0
+
+        idx, frac = divmod(position_ms, track.frame_ms)
+        a = track.samples[idx]
+        if idx + 1 < track.frame_count:
+            b = track.samples[idx + 1]
+        else:
+            b = track.samples[0] if self.music_loop else a
+
+        raw = a + trunc_div((b - a) * frac, track.frame_ms)
+        return max(0, min(trunc_div(raw * self.music_sensitivity, 100), 255))
+
+    def _level_pixel(self, i: int, full: int, frac: int) -> int:
+        """The color one meter pixel shows, given this frame's fill cutoff:
+        `full` whole lit pixels and `frac` of the way into the next one. The
+        partial pixel is what keeps a 30-pixel strand from showing only 30
+        distinguishable levels."""
+        # Index along the direction of the fill, so the gradient always begins
+        # where the fill begins.
+        f = (self.length - 1 - i) if self.level_invert else i
+        if f < full:
+            return self.buffer[f]
+        if f == full:
+            return lerp_color(self.level_bg, self.buffer[f], frac)
+        return self.level_bg
+
+    # ========================================================================
     # Splice mask
     # ========================================================================
 
@@ -521,7 +848,7 @@ class Strand:
         self.splice_pixel_region_idx = [-1] * self.length
         self.splice_regions = []
 
-        for r in regions:
+        for user_idx, r in enumerate(regions):
             if r.start >= self.length:
                 continue
             end = min(r.start + r.width, self.length)
@@ -533,7 +860,7 @@ class Strand:
             if r.kind == SpliceRegionAnimKind.SOLID:
                 fallback_color = r.color
             elif r.kind != SpliceRegionAnimKind.OFF:
-                state = _SpliceRegionState(start=r.start, buffer=[])
+                state = _SpliceRegionState(start=r.start, buffer=[], user_idx=user_idx)
                 if r.kind == SpliceRegionAnimKind.PULSE:
                     state.buffer = [r.bg_color] * region_width
                     rl = min(r.run_length, region_width)
@@ -558,8 +885,38 @@ class Strand:
                 elif r.kind == SpliceRegionAnimKind.RAINBOW:
                     state.buffer = gen_rainbow(region_width)
                     state.shift_speed = r.speed
+                elif r.kind == SpliceRegionAnimKind.GAUGE:
+                    state.buffer = [r.bg_color] * region_width
+                    state.shift_speed = 0  # a gauge repaints, it never scrolls
+                    state.gauge = True
+                    state.level_read = r.read
+                    state.level_empty_at = r.empty_at
+                    state.level_full_at = r.full_at
+                    state.level_wrap = r.wrap
+                    state.level_smooth = min(99, max(0, r.smoothing))  # 100 never arrives
+                    state.level_primed = False
+                    state.gauge_invert = r.invert
+                    state.gauge_style = r.style
+                    state.gauge_blend = r.blend
+                    state.gauge_bg = r.bg_color
+                    # Resolve the scale onto the same 0-255 axis level_value
+                    # lives on, once, so a tick only has to bracket a byte. An
+                    # empty scale becomes the two-color fallback, which is what
+                    # guarantees there is always something to bracket between.
+                    scale = r.stops or (GaugeStop(r.empty_at, r.color), GaugeStop(r.full_at, r.color2))
+                    state.gauge_stops = sorted(
+                        # wrap is False here whatever the gauge itself does: a
+                        # stop's place on the scale is a clamp, not a lap.
+                        (self._map_level_to(gs.at, r.empty_at, r.full_at, False), gs.color)
+                        for gs in scale
+                    )
                 self.splice_regions.append(state)
                 region_idx = len(self.splice_regions) - 1
+                # A gauge shows the bottom of its scale rather than its
+                # background on the very first frame, instead of waiting for
+                # the first poll.
+                if state.gauge:
+                    self._paint_gauge_region(state)
 
             for i in range(r.start, end):
                 self.splice_show_anim[i] = False
@@ -603,6 +960,27 @@ class Strand:
         if not self.splice_active or self.splice_mode != SpliceMode.CUSTOM:
             return
         for state in self.splice_regions:
+            if state.gauge:
+                if state.level_read is not None:
+                    raw = state.level_read()
+                    # An unplugged device reports PROS_ERR_F (infinity) on the
+                    # robot. Holding the color says "no reading" better than
+                    # slamming the segment to the top of its scale would.
+                    if math.isfinite(raw):
+                        target = self._map_level_to(
+                            raw, state.level_empty_at, state.level_full_at, state.level_wrap
+                        )
+                        state.level_value = (
+                            self._smooth_level_to(
+                                target, state.level_value, state.level_smooth, state.level_wrap
+                            )
+                            if state.level_primed
+                            else target
+                        )
+                        state.level_primed = True
+                self._paint_gauge_region(state)
+                continue
+
             buf_size = len(state.buffer)
             if buf_size == 0:
                 continue
@@ -618,6 +996,101 @@ class Strand:
             if state.shift_speed == 0:
                 continue
             state.shift_step = (state.shift_step + state.shift_speed) % buf_size
+
+    @staticmethod
+    def _gauge_color_at(state: _SpliceRegionState, level: int) -> int:
+        """The color a gauge's scale gives for a 0-255 level. Stops are already
+        sorted and already on that axis, so this is a bracket and at most one
+        lerp. Mirrors LedStrand::gaugeColorAt()."""
+        stops = state.gauge_stops
+        if not stops:
+            return state.gauge_bg
+        # Past either end the scale holds, so it never has to cover a range the
+        # gauge does not care about.
+        if level <= stops[0][0]:
+            return stops[0][1]
+        if level >= stops[-1][0]:
+            return stops[-1][1]
+
+        i = 1
+        while i < len(stops) and stops[i][0] < level:
+            i += 1
+        lo_at, lo_color = stops[i - 1]
+        hi_at, hi_color = stops[i]
+        # STEP holds the lower stop until the higher one is actually reached,
+        # which is the honest reading when the stops are thresholds something
+        # crosses rather than points on a ramp.
+        if state.gauge_blend == GaugeBlend.STEP:
+            return lo_color
+
+        span = hi_at - lo_at
+        if span == 0:
+            return hi_color
+        return lerp_color(lo_color, hi_color, trunc_div((level - lo_at) * 255, span))
+
+    def _paint_gauge_region(self, state: _SpliceRegionState) -> None:
+        """Repaint one gauge region from its current level. Called every tick
+        rather than only on a change: it is at most 64 writes, and it keeps the
+        region correct after a set_region_level() with no dirty flag to get
+        wrong. Mirrors LedStrand::paintGaugeRegion()."""
+        width = len(state.buffer)
+        if width == 0:
+            return
+
+        if state.gauge_style == GaugeStyle.HEAT:
+            state.buffer = [self._gauge_color_at(state, state.level_value)] * width
+            return
+
+        # BAR: the strand-wide meter's cutoff arithmetic scoped to this
+        # region's own pixels - whole lit pixels plus a fraction of the next
+        # one, so a 10-pixel segment still shows more than 10 levels.
+        lit_q8 = state.level_value * width
+        full, frac = divmod(lit_q8, 255)
+        for k in range(width):
+            # Index along the direction of the fill, so the scale always begins
+            # where the fill begins - as _level_pixel() does for the whole strip.
+            f = (width - 1 - k) if state.gauge_invert else k
+            pos = 255 if width <= 1 else trunc_div(f * 255, width - 1)
+            scale = self._gauge_color_at(state, pos)
+            if f < full:
+                state.buffer[k] = scale
+            elif f == full:
+                state.buffer[k] = lerp_color(state.gauge_bg, scale, frac)
+            else:
+                state.buffer[k] = state.gauge_bg
+
+    def set_region_level(self, region_idx: int, level: int) -> None:
+        """Set how full a hand-driven GAUGE region is - set_level()'s
+        counterpart for one region. `region_idx` indexes the sequence last
+        passed to splice_mask_custom()."""
+        for state in self.splice_regions:
+            # A gauge with a reader of its own would overwrite this on the next
+            # tick, so setting it would only ever look like a glitch.
+            if not state.gauge or state.user_idx != region_idx or state.level_read is not None:
+                continue
+            state.level_value = max(0, min(level, 255))
+            state.level_primed = True
+            self._paint_gauge_region(state)
+            break
+
+    @staticmethod
+    def motor_heat_gauge(start: int, width: int,
+                         read: Optional[Callable[[], float]] = None) -> SpliceRegion:
+        """A GAUGE region pre-loaded with the V5 motor's heat schedule - port of
+        LedStrand::motorHeatGauge(). See MOTOR_HEAT_STOPS."""
+        return SpliceRegion(
+            start=start,
+            width=width,
+            kind=SpliceRegionAnimKind.GAUGE,
+            read=read,
+            empty_at=20.0,
+            full_at=70.0,
+            # The V5 reports motor temperature in coarse steps rather than as a
+            # continuous reading, so without smoothing a segment jumps from one
+            # stop color straight to the next.
+            smoothing=80,
+            stops=MOTOR_HEAT_STOPS,
+        )
 
     # ========================================================================
     # Overlay animations
@@ -870,14 +1343,28 @@ class Strand:
     # Compositing / flush
     # ========================================================================
 
+    def render(self) -> None:
+        """Recomposite the current frame without advancing time.
+
+        No firmware counterpart - it exists so Pattern Studio can scrub a
+        paused strand and still see the frame that position lands on.
+        """
+        self._flush_buffer()
+
     def _flush_buffer(self) -> None:
         spread_active = self.anim_mode == AnimMode.CENTER_SPREAD
+        # Meter fill cutoff, in whole pixels plus a fraction of the next one.
+        # Constant across the frame, so it is worked out here rather than
+        # inside the per-pixel loop.
+        level_full, level_frac = divmod(self.level_value * self.length, 255)
         buf_size = len(self.buffer)
         overlay_buf_size = len(self.overlay_buffer)
 
         pixels = []
         for i in range(self.length):
-            if not spread_active and self.anim_mode == AnimMode.SHIFT and buf_size > 0:
+            if self.anim_mode == AnimMode.LEVEL:
+                base_color = self._level_pixel(i, level_full, level_frac)
+            elif not spread_active and self.anim_mode == AnimMode.SHIFT and buf_size > 0:
                 base_color = self.buffer[(i + self.shift_step) % buf_size]
             else:
                 base_color = self.buffer[i]

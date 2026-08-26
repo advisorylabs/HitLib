@@ -26,7 +26,8 @@ Animations run continuously in a background task, you just call a method and it 
 ```
 LedGroup
  └─ LedStrand
-      ├─ Base layer      ← flow / rainbow / pulse / bitscroll / twinkle
+      ├─ Base layer      ← flow / rainbow / pulse / bitscroll / twinkle, or a
+      │                    level meter driven by hand, by a value, or by a song
       ├─ Overlay layer   ← second independent animation
       ├─ Spread mask     ← wipes overlay over base from center outward
       ├─ Splice mask     ← alternating sections, or arbitrary custom regions
@@ -44,6 +45,8 @@ LedGroup
 | **Overlay system** | Two independent layers composited by a spread mask |
 | **Center spread** | Wipe from center outward, or edges inward |
 | **Splice mask** | Alternating sections or custom regions, solid color or overlay |
+| **Level meter** | Fill the strip in proportion to a value - by hand, or tracking a motor, sensor or the battery on its own |
+| **Music sync** | Fill in time with a song - MP3/FLAC/WAV or MIDI, analysed by Pattern Studio |
 | **Profiles** | Priority mode stack, activateMode / activateModeTimed |
 | **Sequencer** | Multi-phase timed driver for endgame sequences |
 | **Groups** | One call fans out to every strand in the group |
