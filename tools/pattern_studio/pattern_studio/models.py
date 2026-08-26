@@ -58,6 +58,9 @@ class AnimationConfig:
     off_ms: int = 250
     invert: bool = False
     bounce: bool = False
+    # FLOW only: loop the gradient back to `color` instead of cutting straight
+    # from `color2` to `color` at the wrap.
+    seamless: bool = True
     density_pct: int = 30
     fade_step: int = 16
     palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
@@ -183,6 +186,9 @@ class OverlayAnimationConfig:
     speed: int = 1
     on_ms: int = 250   # FLASH lit duration
     off_ms: int = 250  # FLASH blank duration
+    # FLOW only: loop the gradient back to `color` instead of cutting straight
+    # from `color2` to `color` at the wrap.
+    seamless: bool = True
 
     # GAUGE. The source fields match AnimationConfig's Fill ones exactly - the
     # same catalog, the same meaning, the same codegen - because a gauge region

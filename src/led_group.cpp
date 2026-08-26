@@ -46,8 +46,8 @@ void LedGroup::flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgC
     for (LedStrand* s : strands) s->flash(color, onMs, offMs, bgColor);
 }
 
-void LedGroup::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert) {
-    for (LedStrand* s : strands) s->flow(color1, color2, speed, invert);
+void LedGroup::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert, bool seamless) {
+    for (LedStrand* s : strands) s->flow(color1, color2, speed, invert, seamless);
 }
 
 void LedGroup::rainbow(uint8_t speed) {
@@ -130,8 +130,8 @@ void LedGroup::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint3
     for (LedStrand* s : strands) s->overlayFlash(color, onMs, offMs, bgColor);
 }
 
-void LedGroup::overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed) {
-    for (LedStrand* s : strands) s->overlayFlow(color1, color2, speed);
+void LedGroup::overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed, bool seamless) {
+    for (LedStrand* s : strands) s->overlayFlow(color1, color2, speed, seamless);
 }
 
 void LedGroup::overlayRainbow(uint8_t speed) {

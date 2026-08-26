@@ -467,7 +467,10 @@ def _animation_statement(a: AnimationConfig, music: _MusicRef | None = None) -> 
     if a.kind == AnimationKind.FLASH:
         return f"s.flash({_hex(a.color)}, {a.on_ms}, {a.off_ms}, {_hex(a.bg_color)});"
     if a.kind == AnimationKind.FLOW:
-        return f"s.flow({_hex(a.color)}, {_hex(a.color2)}, {a.speed}, {_bool(a.invert)});"
+        return (
+            f"s.flow({_hex(a.color)}, {_hex(a.color2)}, {a.speed}, {_bool(a.invert)}, "
+            f"{_bool(a.seamless)});"
+        )
     if a.kind == AnimationKind.RAINBOW:
         return f"s.rainbow({a.speed});"
     if a.kind == AnimationKind.TWINKLE:
@@ -505,7 +508,7 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
     if o.kind == OverlayAnimationKind.FLASH:
         return f"s.overlayFlash({_hex(o.color)}, {o.on_ms}, {o.off_ms}, {_hex(o.bg_color)});"
     if o.kind == OverlayAnimationKind.FLOW:
-        return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed});"
+        return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed}, {_bool(o.seamless)});"
     if o.kind == OverlayAnimationKind.RAINBOW:
         return f"s.overlayRainbow({o.speed});"
     if o.kind == OverlayAnimationKind.GAUGE:
@@ -552,7 +555,7 @@ def _region_literal(r: SpliceRegionConfig, reader: str | None = None) -> str:
         f"{{{head}, "
         f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}, .bgColor = {_hex(a.bg_color)}, "
         f".runLength = {a.run_length}, .speed = {a.speed}, "
-        f".onMs = {a.on_ms}, .offMs = {a.off_ms}}}"
+        f".onMs = {a.on_ms}, .offMs = {a.off_ms}, .seamless = {_bool(a.seamless)}}}"
     )
 
 

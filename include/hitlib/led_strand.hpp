@@ -157,6 +157,7 @@ public:
         uint8_t  speed     = 1;        ///< PULSE/FLOW/RAINBOW animation speed.
         uint32_t onMs      = 250;      ///< FLASH lit duration (ms).
         uint32_t offMs     = 250;      ///< FLASH blank duration (ms).
+        bool     seamless  = true;     ///< FLOW only. See @c flow().
 
         // ---- GAUGE only, ignored by every other kind ----
 
@@ -315,12 +316,16 @@ public:
     /**
      * @brief Scroll a two-color gradient across the strip.
      *
-     * @param color1  Start color (0xRRGGBB).
-     * @param color2  End color (0xRRGGBB).
-     * @param speed   Pixels shifted per tick.
-     * @param invert  Scroll in the reverse direction (default @c false).
+     * @param color1    Start color (0xRRGGBB).
+     * @param color2    End color (0xRRGGBB).
+     * @param speed     Pixels shifted per tick.
+     * @param invert    Scroll in the reverse direction (default @c false).
+     * @param seamless  Loop the gradient back to @p color1 instead of cutting
+     *                  straight from @p color2 to @p color1 at the wrap
+     *                  (default @c true).
      */
-    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
+    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false,
+              bool seamless = true);
 
     /**
      * @brief Scroll a full HSV rainbow across the strip.
@@ -677,8 +682,13 @@ public:
     void overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs,
                       uint32_t bgColor = 0x000000);
 
-    /** @brief Scroll a gradient in the overlay buffer. */
-    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed);
+    /**
+     * @brief Scroll a gradient in the overlay buffer.
+     * @param seamless  Loop the gradient back to @p color1 instead of
+     *                  cutting straight from @p color2 to @p color1 at the
+     *                  wrap (default @c true). See @c flow().
+     */
+    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed, bool seamless = true);
 
     /** @brief Scroll a rainbow in the overlay buffer. */
     void overlayRainbow(uint8_t speed);
@@ -1009,7 +1019,7 @@ private:
     void setColorNL(uint32_t color);
     void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert, bool bounce);
     void flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
-    void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert);
+    void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert, bool seamless);
     void rainbowNL(uint8_t speed);
     void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
                    uint8_t fadeStep, uint32_t bgColor);
@@ -1019,7 +1029,7 @@ private:
     void overlaySetColorNL(uint32_t color);
     void overlayPulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg);
     void overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
-    void overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed);
+    void overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool seamless);
     void overlayRainbowNL(uint8_t speed);
 
     void levelFillNL(uint32_t color, uint32_t color2, bool gradient, uint32_t bg, bool invert);
@@ -1058,7 +1068,8 @@ private:
     uint32_t applyBrightness(uint32_t color) const;
     uint16_t msToTicks(uint32_t ms) const;
 
-    static std::vector<uint32_t> genGradient(uint32_t c1, uint32_t c2, uint8_t len);
+    static std::vector<uint32_t> genGradient(uint32_t c1, uint32_t c2, uint8_t len,
+                                              bool seamless = false);
     static std::vector<uint32_t> genRainbow(uint8_t len);
 };
 

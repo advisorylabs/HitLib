@@ -46,13 +46,24 @@ def wheel(pos: int) -> int:
     return pack_rgb(pos * 3, 0, 255 - pos * 3)
 
 
-def gen_gradient(c1: int, c2: int, length: int) -> list[int]:
-    """Port of LedStrand::genGradient() (led_strand.cpp:768-780). Linear RGB lerp, no gamma."""
+def gen_gradient(c1: int, c2: int, length: int, seamless: bool = False) -> list[int]:
+    """Port of LedStrand::genGradient() (led_strand.cpp:1382-1404). Linear RGB lerp, no gamma.
+
+    `seamless` traces a triangle wave (c1 at i=0, c2 at the midpoint, back
+    toward c1 by i=length-1) instead of an open ramp, so a circular shift of
+    the result loops with no hard cut at the wrap.
+    """
     r1, g1, b1 = unpack_rgb(c1)
     r2, g2, b2 = unpack_rgb(c2)
     out = []
     for i in range(length):
-        t = 0 if length <= 1 else trunc_div(i * 255, length - 1)
+        if length <= 1:
+            t = 0
+        elif seamless:
+            x = trunc_div(i * 2 * 255, length)
+            t = 255 - abs(x - 255)
+        else:
+            t = trunc_div(i * 255, length - 1)
         r = r1 + trunc_div((r2 - r1) * t, 255)
         g = g1 + trunc_div((g2 - g1) * t, 255)
         b = b1 + trunc_div((b2 - b1) * t, 255)

@@ -172,7 +172,7 @@ def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | N
     elif a.kind == AnimationKind.FLASH:
         strand.flash(a.color, a.on_ms, a.off_ms, a.bg_color)
     elif a.kind == AnimationKind.FLOW:
-        strand.flow(a.color, a.color2, a.speed, a.invert)
+        strand.flow(a.color, a.color2, a.speed, a.invert, a.seamless)
     elif a.kind == AnimationKind.RAINBOW:
         strand.rainbow(a.speed)
     elif a.kind == AnimationKind.TWINKLE:
@@ -257,7 +257,7 @@ def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
     elif o.kind == OverlayAnimationKind.FLASH:
         strand.overlay_flash(o.color, o.on_ms, o.off_ms, o.bg_color)
     elif o.kind == OverlayAnimationKind.FLOW:
-        strand.overlay_flow(o.color, o.color2, o.speed)
+        strand.overlay_flow(o.color, o.color2, o.speed, o.seamless)
     elif o.kind == OverlayAnimationKind.RAINBOW:
         strand.overlay_rainbow(o.speed)
 
@@ -299,6 +299,7 @@ def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
         speed=a.speed,
         on_ms=a.on_ms,
         off_ms=a.off_ms,
+        seamless=a.seamless,
     )
 
 

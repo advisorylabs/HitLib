@@ -167,7 +167,7 @@ def test_splice_mask_custom_regions_animate_independently_and_simultaneously():
     ])
     # Each region's buffer is generated over just its own width, not the full strip.
     expected_rainbow = gen_rainbow(3)
-    expected_flow = gen_gradient(0xFF0000, 0x0000FF, 4)
+    expected_flow = gen_gradient(0xFF0000, 0x0000FF, 4, seamless=True)
 
     s.tick()
     assert s.pixels[0:3] == [expected_rainbow[(i + 1) % 3] for i in range(3)]

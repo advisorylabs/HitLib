@@ -142,6 +142,7 @@ class SpliceRegion:
     speed: int = 1
     on_ms: int = 250
     off_ms: int = 250
+    seamless: bool = True  # FLOW only.
     # GAUGE only, ignored by every other kind. `read` of None leaves the
     # region hand-driven through set_region_level().
     read: Optional[Callable[[], float]] = None
@@ -467,10 +468,11 @@ class Strand:
             self.buffer = [fill] * self.length
         self.flash_counter += 1
 
-    def flow(self, color1: int, color2: int, speed: int, invert: bool = False) -> None:
+    def flow(self, color1: int, color2: int, speed: int, invert: bool = False,
+             seamless: bool = True) -> None:
         self.pulse_run_len = 0
         self.bitscroll_master = []
-        self.buffer = gen_gradient(color1, color2, self.length)
+        self.buffer = gen_gradient(color1, color2, self.length, seamless)
         self.shift_step = 0
         sp = speed % self.length
         self.shift_variant = ((self.length - sp) % self.length) if invert else sp
@@ -880,7 +882,7 @@ class Strand:
                     state.flash_counter = 0
                     state.flash_lit = True
                 elif r.kind == SpliceRegionAnimKind.FLOW:
-                    state.buffer = gen_gradient(r.color, r.color2, region_width)
+                    state.buffer = gen_gradient(r.color, r.color2, region_width, r.seamless)
                     state.shift_speed = r.speed
                 elif r.kind == SpliceRegionAnimKind.RAINBOW:
                     state.buffer = gen_rainbow(region_width)
@@ -1135,8 +1137,8 @@ class Strand:
             self.overlay_buffer = [fill] * self.length
         self.overlay_flash_counter += 1
 
-    def overlay_flow(self, color1: int, color2: int, speed: int) -> None:
-        self.overlay_buffer = gen_gradient(color1, color2, self.length)
+    def overlay_flow(self, color1: int, color2: int, speed: int, seamless: bool = True) -> None:
+        self.overlay_buffer = gen_gradient(color1, color2, self.length, seamless)
         self.overlay_shift_step = 0
         self.overlay_shift_speed = speed
         self.overlay_anim_mode = AnimMode.SHIFT

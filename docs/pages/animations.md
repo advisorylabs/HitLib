@@ -21,10 +21,13 @@ strand.off();                // all pixels off (alias for setColor(0))
 ```cpp
 strand.flow(0xFF00DD, 0x000000, /*speed*/ 1);
 strand.flow(0xFF00DD, 0x000000, /*speed*/ 1, /*invert*/ true);
+strand.flow(0xFF00DD, 0x000000, /*speed*/ 1, /*invert*/ false, /*seamless*/ false);
 ```
 
 Generates a gradient between two colors and scrolls it continuously.
-`invert` reverses the scroll direction.
+`invert` reverses the scroll direction. `seamless` (default `true`) loops the
+gradient back to the first color instead of cutting straight from the second
+color back to the first at the wrap.
 
 ---
 
@@ -123,6 +126,7 @@ strand.overlaySetColor(0xFFFFFF);
 strand.overlayRainbow(1);
 strand.overlayPulse(0x0000FF, 5, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1);
+strand.overlayFlow(0xFF0000, 0x0000FF, 1, /*seamless*/ false);
 strand.overlayFlash(0xFFFFFF, 100, 100);
 ```
 

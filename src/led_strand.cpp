@@ -222,16 +222,16 @@ void LedStrand::advanceFlash() {
     ++flashCounter;
 }
 
-void LedStrand::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert) {
+void LedStrand::flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert, bool seamless) {
     mutex.take();
-    flowNL(color1, color2, speed, invert);
+    flowNL(color1, color2, speed, invert, seamless);
     mutex.give();
 }
 
-void LedStrand::flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert) {
+void LedStrand::flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert, bool seamless) {
     pulseRunLen = 0;
     bitscrollMaster.clear();
-    buffer = genGradient(c1, c2, length);
+    buffer = genGradient(c1, c2, length, seamless);
     shiftStep = 0;
     uint8_t sp = (uint8_t)(speed % length);
     shiftVariant = invert ? (uint8_t)((length - sp) % length) : sp;
@@ -719,7 +719,7 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                     break;
                 }
                 case SpliceRegionAnimKind::FLOW:
-                    state.buffer = genGradient(r.color, r.color2, regionWidth);
+                    state.buffer = genGradient(r.color, r.color2, regionWidth, r.seamless);
                     state.shiftSpeed = r.speed;
                     break;
                 case SpliceRegionAnimKind::RAINBOW:
@@ -979,9 +979,9 @@ void LedStrand::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint
     mutex.give();
 }
 
-void LedStrand::overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed) {
+void LedStrand::overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed, bool seamless) {
     mutex.take();
-    overlayFlowNL(color1, color2, speed);
+    overlayFlowNL(color1, color2, speed, seamless);
     mutex.give();
 }
 
@@ -1033,8 +1033,8 @@ void LedStrand::advanceOverlayFlash() {
     ++overlayFlashCounter;
 }
 
-void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed) {
-    overlayBuffer = genGradient(c1, c2, length);
+void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool seamless) {
+    overlayBuffer = genGradient(c1, c2, length, seamless);
     overlayShiftStep = 0;
     overlayShiftSpeed = speed;
     overlayAnimMode = AnimMode::SHIFT;
@@ -1379,12 +1379,23 @@ void LedStrand::flushBuffer() {
 // Static generators
 // ============================================================================
 
-std::vector<uint32_t> LedStrand::genGradient(uint32_t c1, uint32_t c2, uint8_t len) {
+std::vector<uint32_t> LedStrand::genGradient(uint32_t c1, uint32_t c2, uint8_t len, bool seamless) {
     std::vector<uint32_t> out(len);
     int r1 = (c1 >> 16) & 0xFF, g1 = (c1 >> 8) & 0xFF, b1 = c1 & 0xFF;
     int r2 = (c2 >> 16) & 0xFF, g2 = (c2 >> 8) & 0xFF, b2 = c2 & 0xFF;
     for (uint8_t i = 0; i < len; ++i) {
-        int t = (len <= 1) ? 0 : (int)i * 255 / (len - 1);
+        int t;
+        if (len <= 1) {
+            t = 0;
+        } else if (seamless) {
+            // Triangle wave over the ring: c1 at i=0, c2 at the midpoint, and
+            // back toward c1 by i=len-1, so a circular shift loops with no
+            // hard cut where the buffer wraps.
+            int x = (int)i * 2 * 255 / len;
+            t = 255 - std::abs(x - 255);
+        } else {
+            t = (int)i * 255 / (len - 1);
+        }
         uint8_t r = (uint8_t)(r1 + (r2 - r1) * t / 255);
         uint8_t g = (uint8_t)(g1 + (g2 - g1) * t / 255);
         uint8_t b = (uint8_t)(b1 + (b2 - b1) * t / 255);

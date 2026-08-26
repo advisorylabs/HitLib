@@ -94,7 +94,8 @@ public:
     void flash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::flow */
-    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false);
+    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false,
+              bool seamless = true);
 
     /** @copydoc LedStrand::rainbow */
     void rainbow(uint8_t speed);
@@ -168,7 +169,7 @@ public:
                       uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::overlayFlow */
-    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed);
+    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed, bool seamless = true);
 
     /** @copydoc LedStrand::overlayRainbow */
     void overlayRainbow(uint8_t speed);

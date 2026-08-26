@@ -142,7 +142,7 @@ def test_generates_expected_structure():
     assert "namespace classicDemo {" in out
     assert "inline const ProfileMode modeTable[] = {" in out
     assert 'inline const Profile profile = {"Classic Demo", modeTable, 5};' in out
-    assert "s.flow(0xFF00DD, 0x0000FF, 1, false);" in out  # color2 left at its AnimationConfig default
+    assert "s.flow(0xFF00DD, 0x0000FF, 1, false, true);" in out  # color2 left at its AnimationConfig default
     assert "s.twinkle({0xFF0000, 0x00FF00, 0x0000FF}, 30, 16, 0x000000);" in out
     assert "s.spliceMask(2, false, false, 400, 0x000000, false);" in out
     assert "LedStrand::BitScrollSegment{0x00FFAA, 3}" in out
@@ -337,10 +337,10 @@ def test_custom_splice_emits_independent_region_literals_and_never_shared_overla
         "    s.spliceMaskCustom({\n"
         "        {.start = 0, .width = 5, .kind = LedStrand::SpliceRegionAnimKind::SOLID, "
         ".color = 0xFF0000, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 1, "
-        ".onMs = 250, .offMs = 250},\n"
+        ".onMs = 250, .offMs = 250, .seamless = true},\n"
         "        {.start = 20, .width = 8, .kind = LedStrand::SpliceRegionAnimKind::RAINBOW, "
         ".color = 0xFFFFFF, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 2, "
-        ".onMs = 250, .offMs = 250},\n"
+        ".onMs = 250, .offMs = 250, .seamless = true},\n"
         "    });"
     ) in out
 

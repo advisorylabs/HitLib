@@ -82,7 +82,7 @@ _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
     AnimationKind.SOLID: {"color"},
     AnimationKind.PULSE: {"color", "bg_color", "run_length", "speed", "invert", "bounce"},
     AnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
-    AnimationKind.FLOW: {"color", "color2", "speed", "invert"},
+    AnimationKind.FLOW: {"color", "color2", "speed", "invert", "seamless"},
     AnimationKind.RAINBOW: {"speed"},
     AnimationKind.TWINKLE: {"palette", "bg_color", "density_pct", "fade_step"},
     AnimationKind.BITSCROLL: {
@@ -212,6 +212,7 @@ class AnimationPanel(QGroupBox):
         self.off_ms_spin = _duration_spin()
         self.invert_check = QCheckBox()
         self.bounce_check = QCheckBox()
+        self.seamless_check = QCheckBox()
         self.density_spin = QSpinBox()
         self.density_spin.setRange(0, 100)
         self.density_spin.setSuffix(" %")
@@ -296,6 +297,10 @@ class AnimationPanel(QGroupBox):
         self.music_hint.setWordWrap(True)
         self.music_hint.setProperty("role", "hint")
         self.invert_check.setToolTip("Reverse the direction")
+        self.seamless_check.setToolTip(
+            "Loop the gradient back to Color instead of cutting straight from "
+            "Color 2 to Color at the wrap."
+        )
 
         self._rows: dict[str, tuple] = {}
 
@@ -312,6 +317,7 @@ class AnimationPanel(QGroupBox):
         add_row("off_ms", "Off Time", self.off_ms_spin)
         add_row("invert", "Invert", self.invert_check)
         add_row("bounce", "Bounce", self.bounce_check)
+        add_row("seamless", "Seamless", self.seamless_check)
         add_row("density_pct", "Density", self.density_spin)
         add_row("fade_step", "Fade Step", self.fade_spin)
         add_row("palette", "Palette", self.palette_edit)
@@ -345,6 +351,7 @@ class AnimationPanel(QGroupBox):
             (self.off_ms_spin, "valueChanged"),
             (self.invert_check, "toggled"),
             (self.bounce_check, "toggled"),
+            (self.seamless_check, "toggled"),
             (self.density_spin, "valueChanged"),
             (self.fade_spin, "valueChanged"),
             (self.palette_edit, "textChanged"),
@@ -482,6 +489,7 @@ class AnimationPanel(QGroupBox):
         self.off_ms_spin.setValue(a.off_ms)
         self.invert_check.setChecked(a.invert)
         self.bounce_check.setChecked(a.bounce)
+        self.seamless_check.setChecked(a.seamless)
         self.density_spin.setValue(a.density_pct)
         self.fade_spin.setValue(a.fade_step)
         self.palette_edit.setText(format_palette(a.palette))
@@ -523,6 +531,7 @@ class AnimationPanel(QGroupBox):
         a.off_ms = self.off_ms_spin.value()
         a.invert = self.invert_check.isChecked()
         a.bounce = self.bounce_check.isChecked()
+        a.seamless = self.seamless_check.isChecked()
         a.density_pct = self.density_spin.value()
         a.fade_step = self.fade_spin.value()
         parsed = parse_palette(self.palette_edit.text())
@@ -549,7 +558,7 @@ _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
     OverlayAnimationKind.SOLID: {"color"},
     OverlayAnimationKind.PULSE: {"color", "bg_color", "run_length", "speed"},
     OverlayAnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
-    OverlayAnimationKind.FLOW: {"color", "color2", "speed"},
+    OverlayAnimationKind.FLOW: {"color", "color2", "speed", "seamless"},
     OverlayAnimationKind.RAINBOW: {"speed"},
     OverlayAnimationKind.GAUGE: {
         "fill_hint", "source", "source_port", "source_empty", "source_full", "source_wrap",
@@ -715,6 +724,11 @@ class OverlayAnimationPanel(QGroupBox):
         self.speed_spin.setRange(1, 64)
         self.on_ms_spin = _duration_spin()
         self.off_ms_spin = _duration_spin()
+        self.seamless_check = QCheckBox()
+        self.seamless_check.setToolTip(
+            "Loop the gradient back to Color instead of cutting straight from "
+            "Color 2 to Color at the wrap."
+        )
         # Gauge. Same source fields as the Fill animation, under the same names
         # and with the same meanings - a gauge region is a Fill meter scoped to
         # a few pixels, so anything learned on one applies to the other.
@@ -788,6 +802,7 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("speed", "Speed", self.speed_spin)
         add_row("on_ms", "On Time", self.on_ms_spin)
         add_row("off_ms", "Off Time", self.off_ms_spin)
+        add_row("seamless", "Seamless", self.seamless_check)
         add_row("source", "Follows", self.source_combo)
         add_row("source_port", "Port", self.source_port_spin)
         add_row("source_empty", "Empty At", self.source_empty_spin)
@@ -827,6 +842,7 @@ class OverlayAnimationPanel(QGroupBox):
         self.preview_sweep_check.toggled.connect(self._on_visible_field_changed)
         self.style_combo.currentIndexChanged.connect(self._on_visible_field_changed)
         self.invert_check.toggled.connect(self._emit_changed)
+        self.seamless_check.toggled.connect(self._emit_changed)
         self.stops_editor.changed.connect(self._on_visible_field_changed)
         self.stops_editor.reset_requested.connect(self._reset_stops_to_source_default)
 
@@ -962,6 +978,7 @@ class OverlayAnimationPanel(QGroupBox):
         self.bg_btn.set_color(o.bg_color)
         self.run_length_spin.setValue(o.run_length)
         self.speed_spin.setValue(o.speed)
+        self.seamless_check.setChecked(o.seamless)
         # Before the values below it: picking the source is what re-ranges the
         # port field and re-labels the units the bounds and stops land in.
         source_idx = self.source_combo.findData(o.source)
@@ -997,6 +1014,7 @@ class OverlayAnimationPanel(QGroupBox):
         o.speed = self.speed_spin.value()
         o.on_ms = self.on_ms_spin.value()
         o.off_ms = self.off_ms_spin.value()
+        o.seamless = self.seamless_check.isChecked()
         o.source = self.source_combo.currentData()
         o.source_port = self.source_port_spin.value()
         o.source_empty = self.source_empty_spin.value()
