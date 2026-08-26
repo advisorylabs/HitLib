@@ -69,11 +69,17 @@ a = Analysis(
         ('pattern_studio/resources/hitliblogo.png', 'pattern_studio/resources'),
         ('pattern_studio/resources/icons', 'pattern_studio/resources/icons'),
     ],
-    # The theme's spin/chevron/check/transport icons are SVG, and Qt only
+    # QtSvg: the theme's spin/chevron/check/transport icons are SVG, and Qt only
     # decodes SVG when the QtSvg module (and its imageformat plugin) is in the
     # bundle. Nothing imports it in Python, so PyInstaller can't infer it --
     # without this the frozen build silently loses every icon.
-    hiddenimports=['PySide6.QtSvg'],
+    #
+    # QtMultimedia is imported by pattern_studio.audio, so PyInstaller finds the
+    # module on its own -- but the ffmpeg media backend it needs is a Qt plugin
+    # loaded at runtime, which nothing imports. Without the plugin the frozen
+    # build cannot decode a single audio file, and the Song bar can only load
+    # MIDI. The PySide6 hook collects it once QtMultimedia is known to be in.
+    hiddenimports=['PySide6.QtSvg', 'PySide6.QtMultimedia'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

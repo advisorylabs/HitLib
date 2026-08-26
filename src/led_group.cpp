@@ -64,6 +64,43 @@ void LedGroup::bitscroll(const std::vector<LedStrand::BitScrollSegment>& segment
     for (LedStrand* s : strands) s->bitscroll(segments, speed, invert, bgColor, bounce, spacing, repeating);
 }
 
+void LedGroup::levelFill(uint32_t color, uint32_t color2, bool gradient, uint32_t bgColor,
+                         bool invert) {
+    for (LedStrand* s : strands) s->levelFill(color, color2, gradient, bgColor, invert);
+}
+
+void LedGroup::setLevel(uint8_t level) {
+    for (LedStrand* s : strands) s->setLevel(level);
+}
+
+void LedGroup::levelSource(LedStrand::LevelFn read, double emptyAt, double fullAt, bool wrap,
+                           uint8_t smoothing) {
+    for (LedStrand* s : strands) s->levelSource(read, emptyAt, fullAt, wrap, smoothing);
+}
+
+void LedGroup::clearLevelSource() {
+    for (LedStrand* s : strands) s->clearLevelSource();
+}
+
+void LedGroup::musicSync(const LedStrand::MusicTrack& track, uint32_t color, uint32_t color2,
+                          bool gradient, uint32_t bgColor, bool invert, uint8_t sensitivity,
+                          bool loop) {
+    for (LedStrand* s : strands)
+        s->musicSync(track, color, color2, gradient, bgColor, invert, sensitivity, loop);
+}
+
+void LedGroup::musicSeek(uint32_t positionMs) {
+    for (LedStrand* s : strands) s->musicSeek(positionMs);
+}
+
+void LedGroup::musicPause(bool paused) {
+    for (LedStrand* s : strands) s->musicPause(paused);
+}
+
+void LedGroup::setSensitivity(uint8_t pct) {
+    for (LedStrand* s : strands) s->setSensitivity(pct);
+}
+
 void LedGroup::spliceMask(uint8_t sections, bool invert, bool alternating,
                            uint32_t altPeriodMs, uint32_t bgColor, bool useOverlay) {
     for (LedStrand* s : strands) s->spliceMask(sections, invert, alternating, altPeriodMs, bgColor, useOverlay);

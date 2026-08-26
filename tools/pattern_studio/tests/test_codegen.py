@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pattern_studio import fill_sources
 from pattern_studio.codegen import (
     generate_cpp,
     generate_document_cpp,
@@ -12,10 +13,17 @@ from pattern_studio.codegen import (
     validate_for_export,
 )
 from pattern_studio.models import (
+    AnimationConfig,
     AnimationKind,
+    GaugeBlendKind,
+    GaugeStopConfig,
+    GaugeStyleKind,
     ModeConfig,
+    MusicConfig,
+    OverlayAnimationConfig,
     OverlayAnimationKind,
     PhaseConfig,
+    SpliceMaskConfig,
     SpliceModeKind,
     SpliceRegionConfig,
     StrandConfig,
@@ -323,15 +331,17 @@ def test_custom_splice_emits_independent_region_literals_and_never_shared_overla
     out = generate_cpp(cfg)
     assert "overlaySetColor" not in out
     assert "overlayRainbow" not in out
+    # One region per line: a row of gauges with a color scale each is far too
+    # long to read on one, so every custom mask is emitted the same way.
     assert (
-        "s.spliceMaskCustom({"
-        "{.start = 0, .width = 5, .kind = LedStrand::SpliceRegionAnimKind::SOLID, "
+        "    s.spliceMaskCustom({\n"
+        "        {.start = 0, .width = 5, .kind = LedStrand::SpliceRegionAnimKind::SOLID, "
         ".color = 0xFF0000, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 1, "
-        ".onMs = 250, .offMs = 250}, "
-        "{.start = 20, .width = 8, .kind = LedStrand::SpliceRegionAnimKind::RAINBOW, "
+        ".onMs = 250, .offMs = 250},\n"
+        "        {.start = 20, .width = 8, .kind = LedStrand::SpliceRegionAnimKind::RAINBOW, "
         ".color = 0xFFFFFF, .color2 = 0x0000FF, .bgColor = 0x000000, .runLength = 5, .speed = 2, "
-        ".onMs = 250, .offMs = 250}"
-        "});"
+        ".onMs = 250, .offMs = 250},\n"
+        "    });"
     ) in out
 
 
@@ -453,5 +463,494 @@ def test_non_profile_export_compiles_despite_default_mode_name(tmp_path):
         "void useProfile() {\n"
         "    solo::apply(testStrand);\n"
         "    testStrand.activateMode(solo::mode::defaultMode);\n"
+        "}\n",
+    )
+
+
+# ============================================================================
+# Music sync
+# ============================================================================
+
+
+_DEFAULT_BANDS = {
+    "bass": [0, 40, 255, 128, 0],
+    "mid": [4, 4, 4, 4, 4],
+    "treble": [9, 200, 9, 0, 9],
+    "full": [7, 7, 7, 7, 7],
+}
+
+
+def _music(**kwargs) -> MusicConfig:
+    kwargs.setdefault("bands", dict(_DEFAULT_BANDS))
+    return MusicConfig(name="Anthem", **kwargs)
+
+
+def _music_strand(**animation) -> StrandConfig:
+    cfg = StrandConfig(name="Meter", length=24)
+    cfg.animation.kind = AnimationKind.MUSIC
+    cfg.animation.color = 0x00FF88
+    cfg.animation.color2 = 0xFF0044
+    cfg.animation.gradient = True
+    cfg.animation.sensitivity = 140
+    for key, value in animation.items():
+        setattr(cfg.animation, key, value)
+    return cfg
+
+
+def test_music_sync_emits_the_sample_table_and_the_call():
+    out = generate_cpp(_music_strand(), "meter.hpp", _music())
+
+    assert "namespace music {" in out
+    assert "inline const uint8_t anthemBassSamples[] = {" in out
+    assert "inline const LedStrand::MusicTrack anthemBass = {anthemBassSamples, 5, 25};" in out
+    # Only the band this design uses: three more tables would be dead weight.
+    assert "anthemTrebleSamples" not in out
+    assert (
+        "s.musicSync(music::anthemBass, 0x00FF88, 0xFF0044, true, 0x000000, false, 140, false);"
+    ) in out
+
+
+def test_loop_comes_from_the_song():
+    music = _music()
+    music.loop = True
+    assert "140, true);" in generate_cpp(_music_strand(), "meter.hpp", music)
+
+
+def test_the_sample_table_is_only_emitted_when_something_uses_it():
+    plain = StrandConfig(name="Plain")
+    plain.animation.kind = AnimationKind.RAINBOW
+    out = generate_cpp(plain, "plain.hpp", _music())
+
+    assert "namespace music {" not in out
+    assert "anthemBassSamples" not in out
+
+
+def test_strands_on_one_band_share_its_table():
+    left = _music_strand()
+    left.name = "Left"
+    right = _music_strand(invert=True, gradient=False)
+    right.name = "Right"
+    out = generate_document_cpp([left, right], "led_profiles.hpp", _music())
+
+    assert out.count("inline const uint8_t anthemBassSamples[] = {") == 1
+    assert out.count("s.musicSync(music::anthemBass,") == 2
+
+
+def test_strands_on_different_bands_each_get_their_own_table():
+    low = _music_strand()
+    low.name = "Low"
+    high = _music_strand(band="treble")
+    high.name = "High"
+    out = generate_document_cpp([low, high], "led_profiles.hpp", _music())
+
+    assert "anthemBassSamples" in out
+    assert "anthemTrebleSamples" in out
+    assert "anthemMidSamples" not in out
+    assert "s.musicSync(music::anthemBass," in out
+    assert "s.musicSync(music::anthemTreble," in out
+
+
+def test_a_band_the_song_has_nothing_in_is_an_export_error():
+    silent = _music(bands={"bass": [0, 40, 255], "treble": []})
+    assert any("treble" in e for e in validate_for_export(_music_strand(band="treble"), silent))
+
+
+def test_music_sync_without_a_song_is_an_export_error():
+    errors = validate_for_export(_music_strand())
+    assert any("Music Sync needs a song" in e for e in errors)
+    assert validate_for_export(_music_strand(), _music()) == []
+
+
+def test_music_sync_inside_a_sequenced_phase_reaches_the_table():
+    cfg = StrandConfig(name="Show", use_profile=True)
+    mode = ModeConfig(name="Endgame", priority=90)
+    phase = PhaseConfig(name="Drop", duration_ms=4000)
+    phase.animation.kind = AnimationKind.MUSIC
+    mode.phases = [phase]
+    cfg.profile_modes = [mode]
+
+    assert validate_for_export(cfg) != []
+    out = generate_cpp(cfg, "show.hpp", _music())
+    assert "s.musicSync(music::anthemBass," in out
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_a_music_sync_export_compiles_against_real_hitlib_headers(tmp_path):
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_music_strand(), "meter.hpp", _music()),
+        "namespace meter = hitlib::profiles::meter;\n\n"
+        "hitlib::LedStrand testStrand(meter::adiPort, meter::length, meter::refreshMs);\n\n"
+        "void useProfile() {\n"
+        "    meter::apply(testStrand);\n"
+        "    testStrand.activateMode(meter::mode::defaultMode);\n"
+        "    testStrand.setSensitivity(180);\n"
+        "    testStrand.musicSeek(0);\n"
+        "}\n",
+    )
+
+
+# ============================================================================
+# Fill meters
+# ============================================================================
+
+
+def _fill_strand(name: str = "Gauge", **animation) -> StrandConfig:
+    cfg = StrandConfig(name=name, length=24)
+    cfg.animation.kind = AnimationKind.FILL
+    cfg.animation.color = 0x00FF00
+    cfg.animation.color2 = 0xFF0000
+    cfg.animation.gradient = True
+    cfg.animation.source = "motor_temp"
+    cfg.animation.source_port = 11
+    cfg.animation.source_empty = 20
+    cfg.animation.source_full = 70
+    for key, value in animation.items():
+        setattr(cfg.animation, key, value)
+    return cfg
+
+
+def test_a_device_source_emits_a_reader_and_wires_it_to_the_meter():
+    out = generate_cpp(_fill_strand(smoothing=25), "gauge.hpp")
+
+    assert "namespace source {" in out
+    assert (
+        "inline double motorTemperature11() { static pros::Motor device(11); "
+        "return device.get_temperature(); }"
+    ) in out
+    assert "s.levelFill(0x00FF00, 0xFF0000, true, 0x000000, false);" in out
+    assert "s.levelSource(source::motorTemperature11, 20.0, 70.0, false, 25);" in out
+
+
+def test_a_device_source_pulls_in_the_header_it_needs():
+    out = generate_cpp(_fill_strand(), "gauge.hpp")
+    assert '#include "pros/motors.hpp"' in out
+    # And only the ones actually read - a design with no fill carries none.
+    plain = StrandConfig(name="Plain")
+    plain.animation.kind = AnimationKind.RAINBOW
+    assert "pros/motors.hpp" not in generate_cpp(plain, "plain.hpp")
+
+
+def test_a_portless_source_needs_no_port_in_its_reader():
+    out = generate_cpp(_fill_strand(source="battery", source_empty=0, source_full=100), "batt.hpp")
+    assert "inline double batteryCapacity() { return pros::battery::get_capacity(); }" in out
+    assert "s.levelSource(source::batteryCapacity, 0.0, 100.0, false, 0);" in out
+    assert '#include "pros/misc.hpp"' in out
+
+
+def test_two_meters_on_the_same_device_share_one_reader():
+    cfg = StrandConfig(name="Twin", use_profile=True)
+    low = ModeConfig(name="Low", priority=10)
+    low.animation = _fill_strand().animation
+    high = ModeConfig(name="High", priority=20)
+    high.animation = _fill_strand(invert=True).animation
+    cfg.profile_modes = [low, high]
+
+    out = generate_cpp(cfg, "twin.hpp")
+    assert out.count("inline double motorTemperature11()") == 1
+    assert out.count("s.levelSource(source::motorTemperature11,") == 2
+
+
+def test_the_same_device_on_a_different_port_is_a_different_reader():
+    cfg = StrandConfig(name="Pair", use_profile=True)
+    left = ModeConfig(name="Left", priority=10)
+    left.animation = _fill_strand(source_port=11).animation
+    right = ModeConfig(name="Right", priority=20)
+    right.animation = _fill_strand(source_port=12).animation
+    cfg.profile_modes = [left, right]
+
+    out = generate_cpp(cfg, "pair.hpp")
+    assert "inline double motorTemperature11()" in out
+    assert "inline double motorTemperature12()" in out
+
+
+def test_a_custom_source_leaves_a_hook_and_says_how_to_assign_it():
+    # The hook is named after the mode it feeds, since that is what the user
+    # has to line it up with when assigning it.
+    cfg = StrandConfig(name="Arm", use_profile=True)
+    mode = ModeConfig(name="Overheat", priority=90)
+    mode.animation = _fill_strand(source="custom").animation
+    cfg.profile_modes = [mode]
+    out = generate_cpp(cfg, "custom.hpp")
+
+    assert "inline LedStrand::LevelFn overheat = nullptr;" in out
+    assert "s.levelSource(source::overheat, 20.0, 70.0, false, 0);" in out
+    # The banner is the copy-paste instructions, so the assignment belongs there.
+    assert "//        arm::source::overheat = [] { return someValue(); };" in out
+
+
+def test_a_manual_meter_is_a_levelfill_with_nothing_attached():
+    out = generate_cpp(_fill_strand(source="manual"), "manual.hpp")
+
+    assert "s.levelFill(0x00FF00, 0xFF0000, true, 0x000000, false);" in out
+    assert "s.levelSource(" not in out
+    assert "namespace source {" not in out
+    assert ".setLevel(128);" in out  # the banner says how to move it
+
+
+def test_each_strand_gets_its_own_source_namespace():
+    left = _fill_strand(name="Left")
+    right = _fill_strand(name="Right", source="battery", source_empty=0, source_full=100)
+    out = generate_document_cpp([left, right], "led_profiles.hpp")
+
+    assert out.count("namespace source {") == 2
+    assert "inline double motorTemperature11()" in out
+    assert "inline double batteryCapacity() { return pros::battery::get_capacity(); }" in out
+
+
+def test_a_fill_inside_a_sequenced_phase_gets_its_own_reader():
+    cfg = StrandConfig(name="Show", use_profile=True)
+    mode = ModeConfig(name="Endgame", priority=90)
+    phase = PhaseConfig(name="Heat", duration_ms=4000)
+    phase.animation = _fill_strand(source="custom").animation
+    mode.phases = [phase]
+    cfg.profile_modes = [mode]
+
+    out = generate_cpp(cfg, "show.hpp")
+    assert "inline LedStrand::LevelFn endgameHeat = nullptr;" in out
+    assert "s.levelSource(source::endgameHeat," in out
+
+
+def test_a_port_outside_its_devices_range_is_an_export_error():
+    errors = validate_for_export(_fill_strand(source_port=44))
+    assert any("port between 1 and 21" in e for e in errors)
+    assert validate_for_export(_fill_strand(source_port=21)) == []
+
+
+def test_an_adi_source_is_checked_against_the_adi_range():
+    assert any("port between 1 and 8" in e for e in validate_for_export(
+        _fill_strand(source="potentiometer", source_port=9, source_empty=0, source_full=250)))
+
+
+def test_a_meter_with_no_range_to_fill_across_is_an_export_error():
+    errors = validate_for_export(_fill_strand(source_empty=50, source_full=50))
+    assert any("no range to fill across" in e for e in errors)
+    # Manual meters have no range to speak of, so they are not held to it.
+    assert validate_for_export(_fill_strand(source="manual", source_empty=0, source_full=0)) == []
+
+
+def test_out_of_range_smoothing_is_an_export_error():
+    assert any("smoothing" in e for e in validate_for_export(_fill_strand(smoothing=100)))
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_a_fill_export_compiles_against_real_hitlib_headers(tmp_path):
+    """Every kind of source at once: a device reader, a custom hook to assign,
+    and a hand-driven meter."""
+    cfg = StrandConfig(name="Gauges", length=24, use_profile=True)
+    heat = ModeConfig(name="Heat", priority=20)
+    heat.animation = _fill_strand().animation
+    spin = ModeConfig(name="Spin", priority=30)
+    spin.animation = _fill_strand(source="rotation", source_empty=0, source_full=36000,
+                                  source_wrap=True).animation
+    custom = ModeConfig(name="Pressure", priority=40)
+    custom.animation = _fill_strand(source="custom", source_empty=0, source_full=100).animation
+    hand = ModeConfig(name="Hand", priority=10)
+    hand.animation = _fill_strand(source="manual").animation
+    cfg.profile_modes = [heat, spin, custom, hand]
+
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(cfg, "gauges.hpp"),
+        "namespace gauges = hitlib::profiles::gauges;\n"
+        "\n"
+        "hitlib::LedStrand testStrand(gauges::adiPort, gauges::length, gauges::refreshMs);\n"
+        "\n"
+        "void useProfile() {\n"
+        "    gauges::apply(testStrand);\n"
+        "    gauges::source::pressure = [] { return 42.0; };\n"
+        "    testStrand.activateMode(gauges::mode::heat);\n"
+        "    testStrand.activateMode(gauges::mode::hand);\n"
+        "    testStrand.setLevel(128);\n"
+        "}\n",
+    )
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_every_fill_source_in_the_catalog_compiles(tmp_path):
+    """One mode per source, compiled for real.
+
+    The catalog names PROS types and calls as strings, which nothing else would
+    catch a typo in until someone picked that source and tried to build.
+    """
+    cfg = StrandConfig(name="Every Source", length=24, use_profile=True)
+    for source_id in fill_sources.ORDER:
+        source = fill_sources.get(source_id)
+        mode = ModeConfig(name=source.label.replace("(", "").replace(")", ""), priority=10)
+        mode.animation.kind = AnimationKind.FILL
+        mode.animation.source = source_id
+        mode.animation.source_port = 1 if source.port_kind == fill_sources.PORT_ADI else 11
+        mode.animation.source_empty = source.empty_default
+        mode.animation.source_full = source.full_default
+        mode.animation.source_wrap = source.wrap_default
+        cfg.profile_modes.append(mode)
+
+    assert validate_for_export(cfg) == []
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(cfg, "every_source.hpp"),
+        "namespace es = hitlib::profiles::everySource;\n"
+        "\n"
+        "hitlib::LedStrand testStrand(es::adiPort, es::length, es::refreshMs);\n"
+        "\n"
+        "void useProfile() {\n"
+        "    es::apply(testStrand);\n"
+        "    es::source::customAssignInCode = [] { return 1.0; };\n"
+        "}\n",
+    )
+
+
+# ============================================================================
+# Gauge regions - a strip split into one meter per motor
+# ============================================================================
+
+
+def _gauge_region(start: int, port: int, *, source: str = "motor_temp",
+                  width: int = 9) -> SpliceRegionConfig:
+    animation = OverlayAnimationConfig(
+        kind=OverlayAnimationKind.GAUGE,
+        source=source,
+        source_port=port,
+        source_empty=20,
+        source_full=70,
+        smoothing=80,
+        stops=[GaugeStopConfig(at=at, color=color)
+               for at, color in fill_sources.default_stops("motor_temp")],
+    )
+    return SpliceRegionConfig(start=start, width=width, animation=animation)
+
+
+def _drive_heat_config(ports=(1, 2, 3, 11, 12, 13)) -> StrandConfig:
+    """The six-motor drivebase design, as Pattern Studio would hand it over."""
+    return StrandConfig(
+        name="Drive Heat",
+        adi_port=6,
+        length=60,
+        refresh_ms=25,
+        brightness=40,
+        animation=AnimationConfig(kind=AnimationKind.OFF),
+        splice=SpliceMaskConfig(
+            enabled=True,
+            mode=SpliceModeKind.CUSTOM,
+            regions=[_gauge_region(i * 10, port) for i, port in enumerate(ports)],
+        ),
+    )
+
+
+def test_a_gauge_region_exports_its_reader_its_range_and_its_scale():
+    out = generate_cpp(_gauge_strand())
+
+    assert "static pros::Motor device(7); return device.get_temperature();" in out
+    assert "LedStrand::SpliceRegionAnimKind::GAUGE" in out
+    assert ".emptyAt = 20.0, .fullAt = 70.0" in out
+    assert ".style = LedStrand::GaugeStyle::HEAT" in out
+    assert ".blend = LedStrand::GaugeBlend::LERP" in out
+    # The scale goes out in the reading's own units, not pre-mapped to 0-255,
+    # so the generated file still says what the numbers mean.
+    assert ".stops = {{20.0, 0x00FF00}, {45.0, 0xFFFF00}, {55.0, 0xFF7000}, " \
+           "{60.0, 0xFF2000}, {65.0, 0xFF0000}, {70.0, 0xFF00FF}}" in out
+
+
+def _gauge_strand() -> StrandConfig:
+    return StrandConfig(
+        name="One Gauge",
+        length=20,
+        animation=AnimationConfig(kind=AnimationKind.OFF),
+        splice=SpliceMaskConfig(
+            enabled=True, mode=SpliceModeKind.CUSTOM, regions=[_gauge_region(0, 7)]
+        ),
+    )
+
+
+def test_six_gauges_export_six_readers_and_one_include():
+    out = generate_cpp(_drive_heat_config())
+
+    for port in (1, 2, 3, 11, 12, 13):
+        assert f"static pros::Motor device({port});" in out
+    assert out.count('#include "pros/motors.hpp"') == 1
+    assert out.count("LedStrand::SpliceRegionAnimKind::GAUGE") == 6
+
+
+def test_two_gauges_on_the_same_motor_share_one_reader():
+    """Two segments watching the same motor are the same reading, and one
+    function holding one device says that better than two copies would."""
+    cfg = _drive_heat_config(ports=(1, 1))
+    out = generate_cpp(cfg)
+
+    assert out.count("static pros::Motor device(1);") == 1
+    assert out.count("source::motorTemperature1") == 2
+
+
+def test_a_manual_gauge_exports_no_reader():
+    cfg = _gauge_strand()
+    cfg.splice.regions[0].animation.source = fill_sources.MANUAL
+    out = generate_cpp(cfg)
+
+    assert ".read =" not in out
+    assert "LedStrand::SpliceRegionAnimKind::GAUGE" in out
+    # Still a gauge with a scale - the robot's code drives it with
+    # setRegionLevel() instead of a reader doing it.
+    assert ".stops = {" in out
+
+
+def test_a_custom_gauge_leaves_a_hook_named_after_its_segment():
+    """Six identical "assign this" hooks would be useless; each says which
+    segment it feeds."""
+    cfg = _drive_heat_config(ports=(1, 2))
+    for region in cfg.splice.regions:
+        region.animation.source = fill_sources.CUSTOM
+    out = generate_cpp(cfg)
+
+    assert "segment 1" in out.lower() or "segment1" in out.lower()
+    assert out.count("inline LedStrand::LevelFn") == 2
+
+
+def test_a_gauge_on_a_bad_port_is_caught_before_export():
+    cfg = _gauge_strand()
+    cfg.splice.regions[0].animation.source_port = 40
+    errors = validate_for_export(cfg)
+    assert any("port between 1 and 21" in e for e in errors)
+
+
+def test_a_gauge_with_no_range_is_caught_before_export():
+    """Empty At == Full At leaves the color stops nowhere to spread across."""
+    cfg = _gauge_strand()
+    cfg.splice.regions[0].animation.source_full = 20
+    errors = validate_for_export(cfg)
+    assert any("no range" in e for e in errors)
+
+
+def test_a_valid_drivebase_design_exports_clean():
+    assert validate_for_export(_drive_heat_config()) == []
+
+
+def test_bar_style_and_step_blend_reach_the_export():
+    cfg = _gauge_strand()
+    cfg.splice.regions[0].animation.style = GaugeStyleKind.BAR
+    cfg.splice.regions[0].animation.blend = GaugeBlendKind.STEP
+    cfg.splice.regions[0].animation.invert = True
+    out = generate_cpp(cfg)
+
+    assert ".style = LedStrand::GaugeStyle::BAR" in out
+    assert ".blend = LedStrand::GaugeBlend::STEP" in out
+    assert ".invert = true" in out
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_the_drivebase_heat_export_compiles_against_real_hitlib_headers(tmp_path):
+    """The one check that proves a six-gauge export is valid C++."""
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_drive_heat_config()),
+        "namespace driveHeat = hitlib::profiles::driveHeat;\n\n"
+        "hitlib::LedStrand underStrand(driveHeat::adiPort, driveHeat::length,\n"
+        "                             driveHeat::refreshMs);\n"
+        "hitlib::LedGroup group;\n\n"
+        "void initialize() {\n"
+        "    group.add(&underStrand);\n"
+        "    group.init();\n"
+        "    group.start();\n"
+        "    driveHeat::apply(group);\n"
+        "    group.activateMode(driveHeat::mode::defaultMode);\n"
         "}\n",
     )

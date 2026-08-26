@@ -154,6 +154,8 @@ class ModesPanel(QWidget):
     def load(self, config: StrandConfig) -> None:
         self._loading = True
         self._config = config
+        # Divide shares out this strand's pixels, not the last one's.
+        self.splice_panel.set_strip_length(config.length)
         self._mode_idx = -1
         self._phase_idx = -1
         self._refresh_mode_list()

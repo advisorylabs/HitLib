@@ -108,6 +108,34 @@ public:
                    bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
                    uint8_t spacing = 5, bool repeating = true);
 
+    /** @copydoc LedStrand::levelFill */
+    void levelFill(uint32_t color, uint32_t color2 = 0x000000, bool gradient = false,
+                   uint32_t bgColor = 0x000000, bool invert = false);
+
+    /** @copydoc LedStrand::setLevel */
+    void setLevel(uint8_t level);
+
+    /** @copydoc LedStrand::levelSource */
+    void levelSource(LedStrand::LevelFn read, double emptyAt, double fullAt, bool wrap = false,
+                     uint8_t smoothing = 0);
+
+    /** @copydoc LedStrand::clearLevelSource */
+    void clearLevelSource();
+
+    /** @copydoc LedStrand::musicSync */
+    void musicSync(const LedStrand::MusicTrack& track, uint32_t color, uint32_t color2 = 0x000000,
+                   bool gradient = false, uint32_t bgColor = 0x000000, bool invert = false,
+                   uint8_t sensitivity = 100, bool loop = false);
+
+    /** @copydoc LedStrand::musicSeek */
+    void musicSeek(uint32_t positionMs);
+
+    /** @copydoc LedStrand::musicPause */
+    void musicPause(bool paused = true);
+
+    /** @copydoc LedStrand::setSensitivity */
+    void setSensitivity(uint8_t pct);
+
     /** @copydoc LedStrand::spliceMask */
     void spliceMask(uint8_t sections, bool invert = false, bool alternating = false,
                     uint32_t altPeriodMs = 100, uint32_t bgColor = 0x000000,

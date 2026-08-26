@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pattern_studio import __version__
 from pattern_studio.main_window import MainWindow
-from pattern_studio.models import AnimationKind
+from pattern_studio.models import AnimationKind, Document
 from pattern_studio.serialization import load_document, save_document
 
 
@@ -22,9 +22,9 @@ def test_save_as_writes_current_sessions(qapp, tmp_path):
 
     assert path.exists()
     loaded = load_document(path)
-    assert len(loaded) == 1
-    assert loaded[0].name == "Only"
-    assert loaded[0].animation.kind == AnimationKind.RAINBOW
+    assert len(loaded.strands) == 1
+    assert loaded.strands[0].name == "Only"
+    assert loaded.strands[0].animation.kind == AnimationKind.RAINBOW
 
 
 def test_save_reuses_current_path_without_dialog(qapp, tmp_path):
@@ -45,11 +45,13 @@ def test_open_replaces_sessions(qapp, tmp_path):
     path = tmp_path / "loaded.hlprofile"
     from pattern_studio.models import StrandConfig
 
-    save_document(path, [StrandConfig(name="A"), StrandConfig(name="B"), StrandConfig(name="C")])
+    save_document(
+        path, Document(strands=[StrandConfig(name="A"), StrandConfig(name="B"), StrandConfig(name="C")])
+    )
 
     # Mirrors _file_open()'s body without the QFileDialog call.
     win._clear_sessions()
-    for cfg in load_document(path):
+    for cfg in load_document(path).strands:
         win._add_session(cfg)
     win._current_file_path = path
     win._update_title()
@@ -65,9 +67,9 @@ def test_import_appends_without_clearing(qapp, tmp_path):
     from pattern_studio.models import StrandConfig
 
     path = tmp_path / "extra.hlprofile"
-    save_document(path, [StrandConfig(name="Imported")])
+    save_document(path, Document(strands=[StrandConfig(name="Imported")]))
 
-    for cfg in load_document(path):
+    for cfg in load_document(path).strands:
         win._add_session(cfg)
 
     assert [s.config.name for s in win.sessions] == [original_name, "Imported"]

@@ -430,6 +430,14 @@ QWidget#strandStrip {
     border-radius: 8px;
 }
 
+/* The Song bar under the preview. Same card as the strand strip: both are
+   "settings for the whole thing below/above me" strips rather than chrome. */
+QWidget#musicPanel {
+    background-color: $panel;
+    border: 1px solid $border;
+    border-radius: 8px;
+}
+
 /* =========================== labels =========================== */
 QLabel {
     background: transparent;
@@ -446,6 +454,11 @@ QLabel[role="sectionHeader"] {
 QLabel[role="groupCount"] {
     color: $focus;
     font-weight: 600;
+}
+/* Secondary text: what a field means, or what state something is in. Reads as
+   annotation next to the control it belongs to rather than as another label. */
+QLabel[role="hint"] {
+    color: $muted;
 }
 QLabel#groupBanner {
     background-color: rgba(168, 85, 247, 0.10);
