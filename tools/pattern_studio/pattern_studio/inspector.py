@@ -9,6 +9,8 @@ rebuild() vs reapply_animation() split.
 
 from __future__ import annotations
 
+import copy
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,11 +30,18 @@ from PySide6.QtWidgets import (
 # ModesPanel imports AnimationPanel/SpliceMaskPanel from this module, so it must
 # be imported lazily inside InspectorPanel to avoid a circular import.
 
+from . import fill_sources
+from .envelope import BAND_HELP, BAND_LABELS, BAND_NAMES
 from .models import (
     ANIMATION_KIND_LABELS,
+    GAUGE_BLEND_LABELS,
+    GAUGE_STYLE_LABELS,
     OVERLAY_ANIMATION_KIND_LABELS,
     AnimationConfig,
     AnimationKind,
+    GaugeBlendKind,
+    GaugeStopConfig,
+    GaugeStyleKind,
     OverlayAnimationConfig,
     OverlayAnimationKind,
     SpliceMaskConfig,
@@ -41,7 +50,7 @@ from .models import (
     StrandConfig,
 )
 from . import theme
-from .widgets import ColorButton, format_palette, parse_palette
+from .widgets import ColorButton, enum_data, format_palette, parse_palette
 
 
 def _duration_spin() -> QSpinBox:
@@ -50,6 +59,21 @@ def _duration_spin() -> QSpinBox:
     spin.setRange(10, 10000)
     spin.setSingleStep(10)
     spin.setSuffix(" ms")
+    return spin
+
+
+def _reading_spin() -> QSpinBox:
+    """A Fill meter's Empty At / Full At field.
+
+    Deliberately wide open and signed: these are readings in the source's own
+    units, which run from a battery percentage to 36000 centidegrees, and a
+    negative end is how a meter that reads a reversed motor is written. Whole
+    numbers only - fractional bounds are rare enough on a robot that they are
+    not worth a second spin-box style, and levelSource() takes doubles for the
+    hand-written cases that do need them.
+    """
+    spin = QSpinBox()
+    spin.setRange(-1000000, 1000000)
     return spin
 
 
@@ -63,6 +87,14 @@ _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
     AnimationKind.TWINKLE: {"palette", "bg_color", "density_pct", "fade_step"},
     AnimationKind.BITSCROLL: {
         "color", "bg_color", "segment_width", "spacing", "speed", "invert", "bounce", "repeating",
+    },
+    AnimationKind.FILL: {
+        "fill_hint", "source", "source_port", "source_empty", "source_full", "source_wrap",
+        "smoothing", "preview_sweep", "preview_level",
+        "gradient", "color", "color2", "bg_color", "invert",
+    },
+    AnimationKind.MUSIC: {
+        "music_hint", "band", "gradient", "color", "color2", "bg_color", "invert", "sensitivity",
     },
 }
 
@@ -192,6 +224,78 @@ class AnimationPanel(QGroupBox):
         self.spacing_spin = QSpinBox()
         self.spacing_spin.setRange(0, 64)
         self.repeating_check = QCheckBox()
+        self.gradient_combo = QComboBox()
+        self.gradient_combo.addItem("Solid Color", False)
+        self.gradient_combo.addItem("2-Color Gradient", True)
+        # Fill. The source is the whole point of the animation, so it leads,
+        # and the fields under it re-range and re-label themselves to whatever
+        # it reads - see _sync_source_fields().
+        self.source_combo = QComboBox()
+        for source_id in fill_sources.ORDER:
+            self.source_combo.addItem(fill_sources.SOURCES[source_id].label, source_id)
+        self.source_port_spin = QSpinBox()
+        self.source_port_spin.setRange(1, 21)
+        self.source_empty_spin = _reading_spin()
+        self.source_empty_spin.setToolTip("The reading that shows an empty strip.")
+        self.source_full_spin = _reading_spin()
+        self.source_full_spin.setToolTip(
+            "The reading that fills it. Put it below Empty At to reverse the "
+            "meter, so the bar drains as the number climbs."
+        )
+        self.source_wrap_check = QCheckBox()
+        self.source_wrap_check.setToolTip(
+            "Past Full At, start over from empty instead of pinning at full - "
+            "what a continuously turning motor or a heading wants."
+        )
+        self.smoothing_spin = QSpinBox()
+        self.smoothing_spin.setRange(0, 99)
+        self.smoothing_spin.setSuffix(" %")
+        self.smoothing_spin.setToolTip(
+            "How much of the previous frame's fill to keep each tick. 0 follows "
+            "the reading exactly; higher glides toward it, which is worth "
+            "having on anything noisy."
+        )
+        # Preview stand-ins. The desktop has no motor to read, so these decide
+        # what the meter follows *here* - neither is exported.
+        self.preview_sweep_check = QCheckBox()
+        self.preview_sweep_check.setToolTip(
+            "Preview only: run a made-up reading through the range so the bar "
+            "moves. Never exported."
+        )
+        self.preview_level_spin = QSpinBox()
+        self.preview_level_spin.setRange(0, 100)
+        self.preview_level_spin.setSuffix(" %")
+        self.preview_level_spin.setToolTip(
+            "Preview only: hold the reading this far through the range. Never "
+            "exported."
+        )
+        self.fill_hint = QLabel()
+        self.fill_hint.setWordWrap(True)
+        self.fill_hint.setProperty("role", "hint")
+        # Per-strand rather than per-song: two strips on the same robot look far
+        # better following different parts of the track than the same one.
+        self.band_combo = QComboBox()
+        for band in BAND_NAMES:
+            self.band_combo.addItem(BAND_LABELS[band], band)
+        self.band_combo.setToolTip("\n".join(BAND_HELP[b] for b in BAND_NAMES))
+        self.band_combo.setMaximumWidth(150)
+        self.sensitivity_spin = QSpinBox()
+        # Above 100% the meter reaches further up the strip for the same music
+        # and clips at the top; below it, only the loudest passages fill.
+        self.sensitivity_spin.setRange(10, 255)
+        self.sensitivity_spin.setSuffix(" %")
+        self.sensitivity_spin.setToolTip(
+            "Gain on the baked envelope. Adjustable on the robot too - "
+            "exported as musicSync()'s sensitivity argument."
+        )
+        # The song itself is a document-level thing edited in the Song bar, so
+        # this panel says where to find it rather than duplicating the controls.
+        self.music_hint = QLabel(
+            "Fills in time with the song in the Song bar, under the preview."
+        )
+        self.music_hint.setWordWrap(True)
+        self.music_hint.setProperty("role", "hint")
+        self.invert_check.setToolTip("Reverse the direction")
 
         self._rows: dict[str, tuple] = {}
 
@@ -214,6 +318,21 @@ class AnimationPanel(QGroupBox):
         add_row("segment_width", "Seg. Width", self.segment_width_spin)
         add_row("spacing", "Spacing", self.spacing_spin)
         add_row("repeating", "Repeating", self.repeating_check)
+        add_row("band", "Follows", self.band_combo)
+        add_row("gradient", "Fill Style", self.gradient_combo)
+        add_row("sensitivity", "Sensitivity", self.sensitivity_spin)
+        add_row("source", "Follows", self.source_combo)
+        add_row("source_port", "Port", self.source_port_spin)
+        add_row("source_empty", "Empty At", self.source_empty_spin)
+        add_row("source_full", "Full At", self.source_full_spin)
+        add_row("source_wrap", "Wrap", self.source_wrap_check)
+        add_row("smoothing", "Smoothing", self.smoothing_spin)
+        add_row("preview_sweep", "Sweep Preview", self.preview_sweep_check)
+        add_row("preview_level", "Preview At", self.preview_level_spin)
+        form.addRow(self.fill_hint)
+        self._rows["fill_hint"] = (None, self.fill_hint)
+        form.addRow(self.music_hint)
+        self._rows["music_hint"] = (None, self.music_hint)
 
         self.kind_combo.currentIndexChanged.connect(self._on_kind_changed)
         for widget, signal_name in (
@@ -232,9 +351,23 @@ class AnimationPanel(QGroupBox):
             (self.segment_width_spin, "valueChanged"),
             (self.spacing_spin, "valueChanged"),
             (self.repeating_check, "toggled"),
+            (self.sensitivity_spin, "valueChanged"),
+            (self.band_combo, "currentIndexChanged"),
+            (self.source_empty_spin, "valueChanged"),
+            (self.source_full_spin, "valueChanged"),
+            (self.smoothing_spin, "valueChanged"),
+            (self.preview_level_spin, "valueChanged"),
         ):
             getattr(widget, signal_name).connect(self._emit_changed)
+        # Not in the loop above: each of these also decides what else is worth
+        # showing, so they refresh visibility before emitting.
+        self.gradient_combo.currentIndexChanged.connect(self._on_gradient_changed)
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        self.source_port_spin.valueChanged.connect(self._on_port_changed)
+        self.source_wrap_check.toggled.connect(self._on_visible_field_changed)
+        self.preview_sweep_check.toggled.connect(self._on_visible_field_changed)
 
+        self._sync_source_fields()
         self._update_visibility()
 
     def _emit_changed(self, *_args) -> None:
@@ -245,9 +378,90 @@ class AnimationPanel(QGroupBox):
         self._update_visibility()
         self._emit_changed()
 
+    def _on_gradient_changed(self, *_args) -> None:
+        self._update_visibility()
+        self._emit_changed()
+
+    def _on_visible_field_changed(self, *_args) -> None:
+        """For fields that decide whether another field is worth showing."""
+        self._update_visibility()
+        self._emit_changed()
+
+    def _on_port_changed(self, *_args) -> None:
+        self._sync_source_fields()  # the hint names the port
+        self._emit_changed()
+
+    def _on_source_changed(self, *_args) -> None:
+        self._sync_source_fields()
+        # Only a deliberate pick re-ranges the fields. During load() the values
+        # coming out of the file are the answer, not the source's defaults.
+        if not self._suspend:
+            self._prefill_source_defaults()
+        self._update_visibility()
+        self._emit_changed()
+
+    def _sync_source_fields(self) -> None:
+        """Re-range and re-label the source fields for whatever is selected.
+
+        The numbers a Fill meter takes only mean anything in the source's own
+        units, so the fields carry them: picking Motor Temperature makes the
+        bounds read "70 °C", and picking a Rotation Sensor makes them
+        centidegrees. Values are left alone - see _prefill_source_defaults()
+        for the part that overwrites them.
+        """
+        source = fill_sources.get(self.source_combo.currentData())
+        low, high = fill_sources.port_range(source.id)
+        if high:
+            self.source_port_spin.setRange(low, high)
+        self.source_empty_spin.setSuffix(source.unit)
+        self.source_full_spin.setSuffix(source.unit)
+        self.fill_hint.setText(self._fill_hint_text(source))
+
+    def _prefill_source_defaults(self) -> None:
+        """Fill the range in with something that already works for this source.
+
+        A meter is far more likely to want 20-70 °C for a motor than whatever
+        the last source's numbers happened to be, so switching sources starts
+        from the useful answer and leaves it there to be adjusted.
+        """
+        source = fill_sources.get(self.source_combo.currentData())
+        self.source_empty_spin.setValue(source.empty_default)
+        self.source_full_spin.setValue(source.full_default)
+        self.source_wrap_check.setChecked(source.wrap_default)
+
+    def _fill_hint_text(self, source: fill_sources.FillSource) -> str:
+        """What this source does, plus what the export will do about it."""
+        if source.id == fill_sources.MANUAL:
+            return f"{source.hint} Exported as levelFill() alone, with no reader attached."
+        if source.id == fill_sources.CUSTOM:
+            return (
+                f"{source.hint} Export leaves a LevelFn in the strand's source:: "
+                f"namespace - assign it a lambda returning a double before the mode runs."
+            )
+        where = ""
+        if source.port_kind == fill_sources.PORT_SMART:
+            where = f" Reads port {self.source_port_spin.value()}."
+        elif source.port_kind == fill_sources.PORT_ADI:
+            where = f" Reads ADI port {self.source_port_spin.value()}."
+        return f"{source.hint}{where} Exported ready to run."
+
     def _update_visibility(self) -> None:
         kind = self.kind_combo.currentData()
-        visible = _VISIBLE_FIELDS.get(kind, set())
+        visible = set(_VISIBLE_FIELDS.get(kind, set()))
+        # A meter's second color only means anything when it has a gradient to
+        # be the far end of.
+        if kind in (AnimationKind.MUSIC, AnimationKind.FILL) and not self.gradient_combo.currentData():
+            visible.discard("color2")
+        if kind == AnimationKind.FILL:
+            source = self.source_combo.currentData()
+            if not fill_sources.get(source).port_kind:
+                visible.discard("source_port")
+            if not fill_sources.polls_a_device(source):
+                # Manual means the robot's code calls setLevel(0-255) itself.
+                # Nothing here maps a reading, so none of the mapping applies.
+                visible -= {"source_empty", "source_full", "source_wrap", "smoothing"}
+            if self.preview_sweep_check.isChecked():
+                visible.discard("preview_level")
         for name, (label, widget) in self._rows.items():
             show = name in visible
             widget.setVisible(show)
@@ -274,11 +488,32 @@ class AnimationPanel(QGroupBox):
         self.segment_width_spin.setValue(a.segment_width)
         self.spacing_spin.setValue(a.spacing)
         self.repeating_check.setChecked(a.repeating)
+        # Before the values below it: picking the source is what re-ranges the
+        # port field and re-labels the bounds they land in.
+        source_idx = self.source_combo.findData(a.source)
+        if source_idx >= 0:
+            self.source_combo.setCurrentIndex(source_idx)
+        self._sync_source_fields()
+        self.source_port_spin.setValue(a.source_port)
+        self.source_empty_spin.setValue(a.source_empty)
+        self.source_full_spin.setValue(a.source_full)
+        self.source_wrap_check.setChecked(a.source_wrap)
+        self.smoothing_spin.setValue(a.smoothing)
+        self.preview_sweep_check.setChecked(a.preview_sweep)
+        self.preview_level_spin.setValue(a.preview_level)
+        gradient_idx = self.gradient_combo.findData(a.gradient)
+        if gradient_idx >= 0:
+            self.gradient_combo.setCurrentIndex(gradient_idx)
+        self.sensitivity_spin.setValue(a.sensitivity)
+        band_idx = self.band_combo.findData(a.band)
+        if band_idx >= 0:
+            self.band_combo.setCurrentIndex(band_idx)
         self._suspend = False
+        self._sync_source_fields()  # the hint quotes the port that was just set
         self._update_visibility()
 
     def save(self, a: AnimationConfig) -> None:
-        a.kind = self.kind_combo.currentData()
+        a.kind = enum_data(self.kind_combo, AnimationKind)
         a.color = self.color_btn.color()
         a.color2 = self.color2_btn.color()
         a.bg_color = self.bg_btn.color()
@@ -296,6 +531,17 @@ class AnimationPanel(QGroupBox):
         a.segment_width = self.segment_width_spin.value()
         a.spacing = self.spacing_spin.value()
         a.repeating = self.repeating_check.isChecked()
+        a.gradient = bool(self.gradient_combo.currentData())
+        a.sensitivity = self.sensitivity_spin.value()
+        a.band = self.band_combo.currentData()
+        a.source = self.source_combo.currentData()
+        a.source_port = self.source_port_spin.value()
+        a.source_empty = self.source_empty_spin.value()
+        a.source_full = self.source_full_spin.value()
+        a.source_wrap = self.source_wrap_check.isChecked()
+        a.smoothing = self.smoothing_spin.value()
+        a.preview_sweep = self.preview_sweep_check.isChecked()
+        a.preview_level = self.preview_level_spin.value()
 
 
 _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
@@ -305,7 +551,131 @@ _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
     OverlayAnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
     OverlayAnimationKind.FLOW: {"color", "color2", "speed"},
     OverlayAnimationKind.RAINBOW: {"speed"},
+    OverlayAnimationKind.GAUGE: {
+        "fill_hint", "source", "source_port", "source_empty", "source_full", "source_wrap",
+        "smoothing", "style", "blend", "stops", "invert", "bg_color",
+        "preview_sweep", "preview_level", "color", "color2",
+    },
 }
+
+
+class GaugeStopsEditor(QWidget):
+    """The color scale of one Gauge region: a row per stop, all visible at once.
+
+    Deliberately not a list-plus-editor like the region and mode lists. A scale
+    is read as a whole - "green until 45, then it starts warning" - and hiding
+    five of six stops behind a selection would make the one thing worth seeing
+    the one thing you cannot. Six rows fit; a scale with enough stops to not fit
+    is a scale nobody can read off a robot anyway.
+    """
+
+    changed = Signal()
+    reset_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._suspend = False
+        self._unit = ""
+        self._rows: list[tuple[QWidget, QSpinBox, ColorButton]] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        self._rows_box = QVBoxLayout()
+        self._rows_box.setContentsMargins(0, 0, 0, 0)
+        self._rows_box.setSpacing(2)
+        outer.addLayout(self._rows_box)
+
+        btn_row = QHBoxLayout()
+        self.add_btn = QPushButton(theme.icon("plus"), " Stop")
+        self.add_btn.setToolTip("Add a color stop to the scale.")
+        self.reset_btn = QPushButton(" Source Default")
+        self.reset_btn.setToolTip(
+            "Replace the scale with the one this source ships with - for a motor's "
+            "temperature, the points the motor itself changes behaviour at."
+        )
+        btn_row.addWidget(self.add_btn)
+        btn_row.addWidget(self.reset_btn)
+        btn_row.addStretch(1)
+        outer.addLayout(btn_row)
+
+        self.add_btn.clicked.connect(self._add_stop)
+        self.reset_btn.clicked.connect(self.reset_requested)
+
+    def set_unit(self, unit: str) -> None:
+        """Re-label every row in the source's own units, so a scale reads as
+        "55 °C" rather than as a bare number."""
+        self._unit = unit
+        for _row, spin, _btn in self._rows:
+            spin.setSuffix(unit)
+
+    def set_stops(self, stops: list[GaugeStopConfig], unit: str = "") -> None:
+        self._suspend = True
+        self._unit = unit
+        try:
+            self._clear()
+            # Sorted on the way in rather than as they are typed: the runtime
+            # sorts anyway, and reordering rows under the cursor mid-edit is
+            # worse than a briefly out-of-order scale.
+            for stop in sorted(stops, key=lambda s: s.at):
+                self._append_row(stop.at, stop.color)
+        finally:
+            self._suspend = False
+
+    def stops(self) -> list[GaugeStopConfig]:
+        return [GaugeStopConfig(at=float(spin.value()), color=btn.color())
+                for _row, spin, btn in self._rows]
+
+    def _clear(self) -> None:
+        for row, _spin, _btn in self._rows:
+            self._rows_box.removeWidget(row)
+            row.deleteLater()
+        self._rows = []
+
+    def _append_row(self, at: float, color: int) -> None:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        spin = _reading_spin()
+        spin.setSuffix(self._unit)
+        spin.setValue(int(at))
+        color_btn = ColorButton(color)
+        remove_btn = QPushButton(theme.icon("minus"), "")
+        remove_btn.setProperty("role", "danger")
+        remove_btn.setToolTip("Remove this stop.")
+        remove_btn.setMaximumWidth(36)
+
+        layout.addWidget(spin, 1)
+        layout.addWidget(color_btn, 1)
+        layout.addWidget(remove_btn)
+        self._rows_box.addWidget(row)
+        self._rows.append((row, spin, color_btn))
+
+        spin.valueChanged.connect(self._emit_changed)
+        color_btn.color_changed.connect(self._emit_changed)
+        remove_btn.clicked.connect(lambda _checked=False, w=row: self._remove_row(w))
+
+    def _add_stop(self) -> None:
+        # A new stop lands past the last one rather than on top of it, so it is
+        # somewhere visible on the scale before it is dragged into place.
+        last = self._rows[-1][1].value() if self._rows else 0
+        self._append_row(last + 5, 0xFFFFFF)
+        self._emit_changed()
+
+    def _remove_row(self, row: QWidget) -> None:
+        for i, (candidate, _spin, _btn) in enumerate(self._rows):
+            if candidate is row:
+                self._rows_box.removeWidget(candidate)
+                candidate.deleteLater()
+                del self._rows[i]
+                break
+        self._emit_changed()
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
 
 
 class OverlayAnimationPanel(QGroupBox):
@@ -318,13 +688,18 @@ class OverlayAnimationPanel(QGroupBox):
 
     changed = Signal()
 
-    def __init__(self, title: str = "Overlay Animation", parent=None):
+    def __init__(self, title: str = "Overlay Animation", parent=None, allow_gauge: bool = False):
         super().__init__(title, parent)
         self._suspend = False
         outer = QVBoxLayout(self)
 
         self.kind_combo = QComboBox()
         for kind in OverlayAnimationKind:
+            # Split mode's overlay is one shared buffer for every masked bin, so
+            # a gauge there would be a single meter smeared across all of them.
+            # It is only offered where it means something: a Custom region.
+            if kind == OverlayAnimationKind.GAUGE and not allow_gauge:
+                continue
             self.kind_combo.addItem(OVERLAY_ANIMATION_KIND_LABELS[kind], kind)
         outer.addWidget(self.kind_combo)
 
@@ -340,6 +715,65 @@ class OverlayAnimationPanel(QGroupBox):
         self.speed_spin.setRange(1, 64)
         self.on_ms_spin = _duration_spin()
         self.off_ms_spin = _duration_spin()
+        # Gauge. Same source fields as the Fill animation, under the same names
+        # and with the same meanings - a gauge region is a Fill meter scoped to
+        # a few pixels, so anything learned on one applies to the other.
+        self.source_combo = QComboBox()
+        for source_id in fill_sources.ORDER:
+            self.source_combo.addItem(fill_sources.SOURCES[source_id].label, source_id)
+        self.source_port_spin = QSpinBox()
+        self.source_port_spin.setRange(1, 21)
+        self.source_empty_spin = _reading_spin()
+        self.source_empty_spin.setToolTip("The reading at the bottom of this gauge's scale.")
+        self.source_full_spin = _reading_spin()
+        self.source_full_spin.setToolTip(
+            "The reading at the top of it. Put it below Empty At to reverse the "
+            "gauge, so it climbs as the number falls."
+        )
+        self.source_wrap_check = QCheckBox()
+        self.source_wrap_check.setToolTip(
+            "Past Full At, start over from the bottom instead of pinning at the top."
+        )
+        self.smoothing_spin = QSpinBox()
+        self.smoothing_spin.setRange(0, 99)
+        self.smoothing_spin.setSuffix(" %")
+        self.smoothing_spin.setToolTip(
+            "How much of the previous frame's level to keep each tick. Worth "
+            "having on a motor's temperature: the V5 reports it in coarse steps, "
+            "and smoothing is what turns those steps into a creep."
+        )
+        self.style_combo = QComboBox()
+        for style in GaugeStyleKind:
+            self.style_combo.addItem(GAUGE_STYLE_LABELS[style], style)
+        self.style_combo.setToolTip(
+            "Whole Segment colors every pixel off the scale at once. Fill Bar "
+            "fills the segment proportionally instead, like a small meter."
+        )
+        self.blend_combo = QComboBox()
+        for blend in GaugeBlendKind:
+            self.blend_combo.addItem(GAUGE_BLEND_LABELS[blend], blend)
+        self.blend_combo.setToolTip(
+            "Blend slides between neighbouring stops. Hold keeps each stop's "
+            "color until the next is actually reached - the honest choice when "
+            "the stops are thresholds something crosses."
+        )
+        self.stops_editor = GaugeStopsEditor()
+        self.preview_sweep_check = QCheckBox()
+        self.preview_sweep_check.setToolTip(
+            "Preview only: run a made-up reading through the range so the gauge "
+            "moves. Never exported."
+        )
+        self.preview_level_spin = QSpinBox()
+        self.preview_level_spin.setRange(0, 100)
+        self.preview_level_spin.setSuffix(" %")
+        self.preview_level_spin.setToolTip(
+            "Preview only: hold the reading this far through the range. Never exported."
+        )
+        self.invert_check = QCheckBox()
+        self.invert_check.setToolTip("Fill the bar from the far end of the segment.")
+        self.fill_hint = QLabel()
+        self.fill_hint.setWordWrap(True)
+        self.fill_hint.setProperty("role", "hint")
 
         self._rows: dict[str, tuple] = {}
 
@@ -354,6 +788,20 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("speed", "Speed", self.speed_spin)
         add_row("on_ms", "On Time", self.on_ms_spin)
         add_row("off_ms", "Off Time", self.off_ms_spin)
+        add_row("source", "Follows", self.source_combo)
+        add_row("source_port", "Port", self.source_port_spin)
+        add_row("source_empty", "Empty At", self.source_empty_spin)
+        add_row("source_full", "Full At", self.source_full_spin)
+        add_row("source_wrap", "Wrap", self.source_wrap_check)
+        add_row("smoothing", "Smoothing", self.smoothing_spin)
+        add_row("style", "Shows", self.style_combo)
+        add_row("blend", "Between Stops", self.blend_combo)
+        add_row("invert", "Invert", self.invert_check)
+        add_row("stops", "Scale", self.stops_editor)
+        add_row("preview_sweep", "Sweep Preview", self.preview_sweep_check)
+        add_row("preview_level", "Preview At", self.preview_level_spin)
+        form.addRow(self.fill_hint)
+        self._rows["fill_hint"] = (None, self.fill_hint)
 
         self.kind_combo.currentIndexChanged.connect(self._on_kind_changed)
         for widget, signal_name in (
@@ -364,9 +812,25 @@ class OverlayAnimationPanel(QGroupBox):
             (self.speed_spin, "valueChanged"),
             (self.on_ms_spin, "valueChanged"),
             (self.off_ms_spin, "valueChanged"),
+            (self.source_empty_spin, "valueChanged"),
+            (self.source_full_spin, "valueChanged"),
+            (self.smoothing_spin, "valueChanged"),
+            (self.blend_combo, "currentIndexChanged"),
+            (self.preview_level_spin, "valueChanged"),
         ):
             getattr(widget, signal_name).connect(self._emit_changed)
+        # Not in the loop above: each of these also decides what else is worth
+        # showing, so they refresh visibility before emitting.
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        self.source_port_spin.valueChanged.connect(self._on_port_changed)
+        self.source_wrap_check.toggled.connect(self._on_visible_field_changed)
+        self.preview_sweep_check.toggled.connect(self._on_visible_field_changed)
+        self.style_combo.currentIndexChanged.connect(self._on_visible_field_changed)
+        self.invert_check.toggled.connect(self._emit_changed)
+        self.stops_editor.changed.connect(self._on_visible_field_changed)
+        self.stops_editor.reset_requested.connect(self._reset_stops_to_source_default)
 
+        self._sync_source_fields()
         self._update_visibility()
 
     def _emit_changed(self, *_args) -> None:
@@ -377,9 +841,111 @@ class OverlayAnimationPanel(QGroupBox):
         self._update_visibility()
         self._emit_changed()
 
+    def _on_visible_field_changed(self, *_args) -> None:
+        """For fields that decide whether another field is worth showing."""
+        self._update_visibility()
+        self._emit_changed()
+
+    def _on_port_changed(self, *_args) -> None:
+        self._sync_source_fields()  # the hint names the port
+        self._emit_changed()
+
+    def _on_source_changed(self, *_args) -> None:
+        self._sync_source_fields()
+        # Only a deliberate pick re-ranges the fields. During load() the values
+        # coming out of the file are the answer, not the source's defaults.
+        if not self._suspend:
+            self._prefill_source_defaults()
+        self._update_visibility()
+        self._emit_changed()
+
+    def _sync_source_fields(self) -> None:
+        """Re-range and re-label the source fields for whatever is selected.
+
+        The numbers a Fill meter takes only mean anything in the source's own
+        units, so the fields carry them: picking Motor Temperature makes the
+        bounds read "70 °C", and picking a Rotation Sensor makes them
+        centidegrees. Values are left alone - see _prefill_source_defaults()
+        for the part that overwrites them.
+        """
+        source = fill_sources.get(self.source_combo.currentData())
+        low, high = fill_sources.port_range(source.id)
+        if high:
+            self.source_port_spin.setRange(low, high)
+        self.source_empty_spin.setSuffix(source.unit)
+        self.source_full_spin.setSuffix(source.unit)
+        self.stops_editor.set_unit(source.unit)
+        self.fill_hint.setText(self._fill_hint_text(source))
+
+    def _prefill_source_defaults(self) -> None:
+        """Fill the range in with something that already works for this source.
+
+        A gauge is far more likely to want 20-70 °C for a motor than whatever
+        the last source's numbers happened to be, so switching sources starts
+        from the useful answer and leaves it there to be adjusted. The scale
+        comes with it: picking Motor Temperature is what puts the six stops of
+        the V5's own derating schedule on the segment, which is the difference
+        between designing this and typing it.
+        """
+        source = fill_sources.get(self.source_combo.currentData())
+        self.source_empty_spin.setValue(source.empty_default)
+        self.source_full_spin.setValue(source.full_default)
+        self.source_wrap_check.setChecked(source.wrap_default)
+        self._reset_stops_to_source_default()
+
+    def _reset_stops_to_source_default(self) -> None:
+        """Load this source's shipped scale, or clear the scale when it has
+        none - in which case the gauge falls back to Color -> Color 2, which is
+        all most readings warrant."""
+        source = fill_sources.get(self.source_combo.currentData())
+        stops = [GaugeStopConfig(at=at, color=color)
+                 for at, color in fill_sources.default_stops(source.id)]
+        self.stops_editor.set_stops(stops, source.unit)
+        self._update_visibility()  # a scale hides the two fallback colors
+        self._emit_changed()
+
+    def _fill_hint_text(self, source: fill_sources.FillSource) -> str:
+        """What this source does, plus what the export will do about it."""
+        if source.id == fill_sources.MANUAL:
+            return (
+                f"{source.hint.replace('setLevel', 'setRegionLevel')} Exported with no "
+                f"reader attached - call setRegionLevel(regionIndex, 0-255) yourself."
+            )
+        if source.id == fill_sources.CUSTOM:
+            return (
+                f"{source.hint} Export leaves a LevelFn in the strand's source:: "
+                f"namespace - assign it a lambda returning a double before the mode runs."
+            )
+        where = ""
+        if source.port_kind == fill_sources.PORT_SMART:
+            where = f" Reads port {self.source_port_spin.value()}."
+        elif source.port_kind == fill_sources.PORT_ADI:
+            where = f" Reads ADI port {self.source_port_spin.value()}."
+        return f"{source.hint}{where} Exported ready to run."
+
     def _update_visibility(self) -> None:
         kind = self.kind_combo.currentData()
-        visible = _OVERLAY_VISIBLE_FIELDS.get(kind, set())
+        visible = set(_OVERLAY_VISIBLE_FIELDS.get(kind, set()))
+        if kind == OverlayAnimationKind.GAUGE:
+            source = self.source_combo.currentData()
+            if not fill_sources.get(source).port_kind:
+                visible.discard("source_port")
+            if not fill_sources.polls_a_device(source):
+                # Nothing is being read, so there is nothing to wrap or smooth.
+                # Empty At / Full At stay: unlike a Fill meter's, they are what
+                # place the color stops, not just what maps a reading.
+                visible -= {"source_wrap", "smoothing"}
+            if self.preview_sweep_check.isChecked():
+                visible.discard("preview_level")
+            if self.style_combo.currentData() != GaugeStyleKind.BAR:
+                # A whole-segment gauge covers every pixel it owns, so it has
+                # no unlit part to color and no direction to reverse.
+                visible -= {"invert", "bg_color"}
+            if self.stops_editor.stops():
+                # Color / Color 2 are only the fallback scale for a gauge with
+                # no stops of its own. Showing them next to a real scale invites
+                # editing the one thing that has no effect.
+                visible -= {"color", "color2"}
         for name, (label, widget) in self._rows.items():
             show = name in visible
             widget.setVisible(show)
@@ -396,13 +962,34 @@ class OverlayAnimationPanel(QGroupBox):
         self.bg_btn.set_color(o.bg_color)
         self.run_length_spin.setValue(o.run_length)
         self.speed_spin.setValue(o.speed)
+        # Before the values below it: picking the source is what re-ranges the
+        # port field and re-labels the units the bounds and stops land in.
+        source_idx = self.source_combo.findData(o.source)
+        if source_idx >= 0:
+            self.source_combo.setCurrentIndex(source_idx)
+        self._sync_source_fields()
+        self.source_port_spin.setValue(o.source_port)
+        self.source_empty_spin.setValue(o.source_empty)
+        self.source_full_spin.setValue(o.source_full)
+        self.source_wrap_check.setChecked(o.source_wrap)
+        self.smoothing_spin.setValue(o.smoothing)
+        self.invert_check.setChecked(o.invert)
+        style_idx = self.style_combo.findData(o.style)
+        if style_idx >= 0:
+            self.style_combo.setCurrentIndex(style_idx)
+        blend_idx = self.blend_combo.findData(o.blend)
+        if blend_idx >= 0:
+            self.blend_combo.setCurrentIndex(blend_idx)
+        self.stops_editor.set_stops(o.stops, fill_sources.get(o.source).unit)
+        self.preview_sweep_check.setChecked(o.preview_sweep)
+        self.preview_level_spin.setValue(o.preview_level)
         self.on_ms_spin.setValue(o.on_ms)
         self.off_ms_spin.setValue(o.off_ms)
         self._suspend = False
         self._update_visibility()
 
     def save(self, o: OverlayAnimationConfig) -> None:
-        o.kind = self.kind_combo.currentData()
+        o.kind = enum_data(self.kind_combo, OverlayAnimationKind)
         o.color = self.color_btn.color()
         o.color2 = self.color2_btn.color()
         o.bg_color = self.bg_btn.color()
@@ -410,6 +997,18 @@ class OverlayAnimationPanel(QGroupBox):
         o.speed = self.speed_spin.value()
         o.on_ms = self.on_ms_spin.value()
         o.off_ms = self.off_ms_spin.value()
+        o.source = self.source_combo.currentData()
+        o.source_port = self.source_port_spin.value()
+        o.source_empty = self.source_empty_spin.value()
+        o.source_full = self.source_full_spin.value()
+        o.source_wrap = self.source_wrap_check.isChecked()
+        o.smoothing = self.smoothing_spin.value()
+        o.invert = self.invert_check.isChecked()
+        o.style = enum_data(self.style_combo, GaugeStyleKind)
+        o.blend = enum_data(self.blend_combo, GaugeBlendKind)
+        o.stops = self.stops_editor.stops()
+        o.preview_sweep = self.preview_sweep_check.isChecked()
+        o.preview_level = self.preview_level_spin.value()
 
 
 class SpliceMaskPanel(QGroupBox):
@@ -418,7 +1017,9 @@ class SpliceMaskPanel(QGroupBox):
     independent animation (Custom) - see SpliceMaskConfig. Custom regions
     are edited like ModesPanel's mode/phase lists: Add/Remove buttons plus an
     editor (start/width fields + a per-region OverlayAnimationPanel) bound to
-    whichever region is selected. Region edits mutate the loaded
+    whichever region is selected, with a Divide action for the common case of
+    wanting N equal segments rather than N hand-placed ones. Region edits
+    mutate the loaded
     SpliceMaskConfig's `regions` list in place rather than a local copy, so
     save() intentionally leaves `regions` untouched. Callers are expected
     (as ModesPanel does) to call save() with the same config object that was
@@ -432,6 +1033,9 @@ class SpliceMaskPanel(QGroupBox):
         self._suspend = False
         self._splice: SpliceMaskConfig | None = None
         self._region_idx = -1
+        # What Divide splits up. The panel edits a mask, not a strand, so the
+        # length has to be handed to it - see set_strip_length().
+        self._strip_length = 64
         self.setCheckable(True)
         self.setChecked(False)
         outer = QVBoxLayout(self)
@@ -492,6 +1096,33 @@ class SpliceMaskPanel(QGroupBox):
         region_btn_row.addWidget(self.remove_region_btn)
         custom_layout.addLayout(region_btn_row)
 
+        # Placing six equal segments by hand is six start/width pairs to work
+        # out and re-work out every time the strip length changes. This is the
+        # same arithmetic, done once: set one segment up the way you want it,
+        # then divide and only the ports differ between them.
+        divide_row = QHBoxLayout()
+        self.divide_count_spin = QSpinBox()
+        self.divide_count_spin.setRange(1, 32)
+        self.divide_count_spin.setValue(6)
+        self.divide_count_spin.setToolTip("How many equal segments to split the strip into.")
+        self.divide_gap_check = QCheckBox("Gap")
+        self.divide_gap_check.setChecked(True)
+        self.divide_gap_check.setToolTip(
+            "Leave one unlit pixel between segments. Worth having - without it, "
+            "two neighbouring segments at similar levels read as one long one."
+        )
+        self.divide_btn = QPushButton(" Divide")
+        self.divide_btn.setToolTip(
+            "Replace the regions with this many equal segments, keeping the "
+            "animation each one already had (and copying the first onto any new ones)."
+        )
+        divide_row.addWidget(QLabel("Segments"))
+        divide_row.addWidget(self.divide_count_spin)
+        divide_row.addWidget(self.divide_gap_check)
+        divide_row.addWidget(self.divide_btn)
+        divide_row.addStretch(1)
+        custom_layout.addLayout(divide_row)
+
         self.region_editor = QWidget()
         region_editor_layout = QVBoxLayout(self.region_editor)
         region_editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -504,7 +1135,8 @@ class SpliceMaskPanel(QGroupBox):
         region_form.addRow("Width", self.region_width_spin)
         region_editor_layout.addLayout(region_form)
         # This region's own animation, independent of every other region.
-        self.region_anim_panel = OverlayAnimationPanel("Region Animation")
+        # allow_gauge: a Custom region is the one place a gauge means anything.
+        self.region_anim_panel = OverlayAnimationPanel("Region Animation", allow_gauge=True)
         region_editor_layout.addWidget(self.region_anim_panel)
         custom_layout.addWidget(self.region_editor)
         self.region_editor.setEnabled(False)
@@ -523,6 +1155,7 @@ class SpliceMaskPanel(QGroupBox):
         self.region_list.currentRowChanged.connect(self._on_region_selected)
         self.add_region_btn.clicked.connect(self._add_region)
         self.remove_region_btn.clicked.connect(self._remove_region)
+        self.divide_btn.clicked.connect(self._divide_strip)
         self.region_start_spin.valueChanged.connect(self._on_region_field_changed)
         self.region_width_spin.valueChanged.connect(self._on_region_field_changed)
         self.region_anim_panel.changed.connect(self._on_region_anim_changed)
@@ -585,6 +1218,50 @@ class SpliceMaskPanel(QGroupBox):
         self._splice.regions.append(SpliceRegionConfig())
         self._refresh_region_list()
         self.region_list.setCurrentRow(len(self._splice.regions) - 1)
+        self._emit_changed()
+
+    def set_strip_length(self, length: int) -> None:
+        """Tell the panel how many pixels Divide has to share out."""
+        self._strip_length = max(1, length)
+
+    def _divide_strip(self) -> None:
+        """Replace the regions with N equal segments spanning the strip.
+
+        Each segment keeps the animation the region in its place already had,
+        so dividing again after a length change re-spaces them without losing
+        six configured motor ports. New segments copy the first region's
+        animation, which makes "set one up, then divide" the natural flow.
+        """
+        if self._splice is None:
+            return
+        count = self.divide_count_spin.value()
+        if count > self._strip_length:
+            return  # fewer pixels than segments: nothing sensible to make
+
+        existing = list(self._splice.regions)
+        template = existing[0].animation if existing else None
+        gap = self.divide_gap_check.isChecked()
+
+        # Same share-out as LedStrand::rebuildSpliceMask(): the remainder goes
+        # to the first bins, so no pixel is left stranded at the end.
+        base, remainder = divmod(self._strip_length, count)
+        regions: list[SpliceRegionConfig] = []
+        start = 0
+        for i in range(count):
+            size = base + (1 if i < remainder else 0)
+            width = max(1, size - 1) if gap else size
+            if i < len(existing):
+                animation = copy.deepcopy(existing[i].animation)
+            elif template is not None:
+                animation = copy.deepcopy(template)
+            else:
+                animation = OverlayAnimationConfig()
+            regions.append(SpliceRegionConfig(start=start, width=width, animation=animation))
+            start += size
+
+        self._splice.regions = regions
+        self._refresh_region_list()
+        self.region_list.setCurrentRow(0)
         self._emit_changed()
 
     def _remove_region(self) -> None:
@@ -666,7 +1343,7 @@ class SpliceMaskPanel(QGroupBox):
 
     def save(self, s: SpliceMaskConfig) -> None:
         s.enabled = self.isChecked()
-        s.mode = self.mode_combo.currentData()
+        s.mode = enum_data(self.mode_combo, SpliceModeKind)
         s.sections = self.sections_spin.value()
         s.invert = self.invert_check.isChecked()
         s.alternating = self.alternating_check.isChecked()
@@ -759,6 +1436,8 @@ class InspectorPanel(QWidget):
         self.use_profile_check.setChecked(cfg.use_profile)
         self._apply_mode_visibility(cfg.use_profile)
         self.anim_panel.load(cfg.animation)
+        # Before load(): Divide shares out this strand's pixels, not the last one's.
+        self.splice_panel.set_strip_length(cfg.length)
         self.splice_panel.load(cfg.splice)
         self.modes_panel.load(cfg)
         self._loading = False

@@ -149,6 +149,22 @@ class BrandRule(QWidget):
             painter.fillRect(0, self.LINE_H + i, width, 1, self._gradient(alpha))
 
 
+def enum_data(combo, enum_cls):
+    """The enum member a combo box's current item carries.
+
+    Qt stores item data as a QVariant, and every kind/mode enum in the models
+    is a `str, Enum` - which goes into a QVariant as a string and comes back
+    out as a plain `str`, not as the member that was put in. It compares equal
+    and hashes the same, so dict lookups and `==` checks never notice; what
+    notices is serialization, which calls `.value` on it and gets an
+    AttributeError instead of a saved file.
+
+    So every save() that writes an enum field goes through here, and the config
+    keeps holding the type it is annotated with.
+    """
+    return enum_cls(combo.currentData())
+
+
 def parse_palette(text: str) -> list[int]:
     """Parses a comma-separated list of hex colors ("FF0000, 00FF00") into ints."""
     colors = []
