@@ -10,6 +10,7 @@ change six ports.
 import pytest
 
 from pattern_studio import fill_sources
+from pattern_studio.inspector import MASK_SPLICE
 from pattern_studio.main_window import MainWindow
 from pattern_studio.models import (
     Document,
@@ -39,8 +40,9 @@ def win(qapp):
 
 def _custom_splice(win: MainWindow):
     """The splice panel, switched to Custom mode with one region to edit."""
-    panel = win.inspector.splice_panel
-    panel.setChecked(True)
+    masks = win.inspector.masks_panel
+    masks.mask_kind_combo.setCurrentIndex(masks.mask_kind_combo.findData(MASK_SPLICE))
+    panel = masks.splice_panel
     panel.mode_combo.setCurrentIndex(panel.mode_combo.findData(SpliceModeKind.CUSTOM))
     panel._add_region()
     panel.region_list.setCurrentRow(0)

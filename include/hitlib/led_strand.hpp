@@ -28,7 +28,6 @@ namespace hitlib {
  *                     level meter driven by hand, by a live value, or by a
  *                     music envelope
  * overlay buffer   <- second independent animation
- * spreadMask       <- CENTER_SPREAD composites base <-> overlay per-pixel
  * spliceMask       <- final per-pixel override (bgColor or overlay), by
  *                     equal alternating bins or by arbitrary regions
  * ```
@@ -204,14 +203,6 @@ public:
         uint16_t       frameCount; ///< Number of samples in @p samples.
         uint16_t       frameMs;    ///< Milliseconds between consecutive samples.
     };
-
-    /**
-     * @brief Signature for animation-setup callbacks used by stacked spreads.
-     *
-     * Called with the strand when a new layer is about to become active.
-     * The callback should call any animation method (rainbow, flow, etc.).
-     */
-    using AnimSetupFn = void (*)(LedStrand&);
 
     /// @}
 
@@ -667,8 +658,8 @@ public:
     // ========================================================================
     /// @name Overlay Animations
     ///
-    /// Write into a second buffer.  The overlay is revealed by the spread mask
-    /// during a centerSpread animation.
+    /// Write into a second buffer, shown in spliceMask()'s masked bins instead
+    /// of @c bgColor when @p useOverlay is set.
     /// @{
 
     /** @brief Set the overlay buffer to a solid color. */
@@ -692,63 +683,6 @@ public:
 
     /** @brief Scroll a rainbow in the overlay buffer. */
     void overlayRainbow(uint8_t speed);
-
-    /// @}
-
-    // ========================================================================
-    /// @name Center Spread
-    ///
-    /// Reveals the overlay buffer from the center outward (or edges inward),
-    /// then swaps layers and repeats.
-    /// @{
-
-    /**
-     * @brief Begin a center-outward reveal of the overlay buffer.
-     *
-     * The spread mask advances one step every @p tickInterval ticks.  When
-     * the mask has covered the full strip, the overlay becomes the new base
-     * and the animation restarts.
-     *
-     * @param tickInterval  Ticks between each pixel step (1 = fastest).
-     *                      At refreshMs=20, interval=10 → 200 ms/pixel.
-     * @param invert        Reveal from the edges inward instead of center out.
-     */
-    void centerSpread(uint8_t tickInterval = 8, bool invert = false);
-
-    /**
-     * @brief center spread that cycles through a list of setup functions.
-     *
-     * Each function is called with the strand just before it becomes the next
-     * spreading overlay.  Requires at least two functions.
-     *
-     * @param layers        List of AnimSetupFn callbacks, called in order (cycling).
-     * @param tickInterval  Ticks between each pixel step.
-     * @param invert        Reveal from the edges inward.
-     */
-    void centerSpreadStacked(const std::vector<AnimSetupFn>& layers,
-                             uint8_t tickInterval = 8, bool invert = false);
-
-    /**
-     * @brief Center spread that expands, then contracts before swapping layers.
-     *
-     * Gives a "wipe in, wipe out, next layer" rhythm.
-     *
-     * @param tickInterval  Ticks between each pixel step.
-     * @param invert        Reveal from the edges inward.
-     */
-    void centerSpreadBounce(uint8_t tickInterval = 8, bool invert = false);
-
-    /**
-     * @brief Bounce spread with automatic layer cycling.
-     *
-     * Combines the behaviour of centerSpreadBounce() and centerSpreadStacked().
-     *
-     * @param layers        List of AnimSetupFn callbacks.
-     * @param tickInterval  Ticks between each pixel step.
-     * @param invert        Reveal from the edges inward.
-     */
-    void centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers,
-                                   uint8_t tickInterval = 8, bool invert = false);
 
     /// @}
 
@@ -844,7 +778,7 @@ private:
     pros::adi::Led* led = nullptr;
     pros::Mutex mutex;
 
-    enum class AnimMode : uint8_t { STATIC, SHIFT, CENTER_SPREAD, TWINKLE, FLASH, LEVEL };
+    enum class AnimMode : uint8_t { STATIC, SHIFT, TWINKLE, FLASH, LEVEL };
 
     // Base buffer
     AnimMode              animMode     = AnimMode::STATIC;
@@ -991,17 +925,6 @@ private:
     uint16_t overlayFlashCounter  = 0;
     bool     overlayFlashLit      = true;
 
-    // Center spread
-    std::vector<bool>        spreadMask;
-    uint8_t                  spreadPos          = 0;
-    uint8_t                  spreadTickInterval = 8;
-    uint8_t                  spreadTickCounter  = 0;
-    std::vector<AnimSetupFn> spreadLayers;
-    uint8_t                  spreadLayerIdx  = 0;
-    bool                     spreadInvert    = false;
-    bool                     spreadBounce    = false;
-    bool                     spreadReturning = false;
-
     // Brightness
     uint8_t brightnessPct = 100;
 
@@ -1034,7 +957,6 @@ private:
 
     void levelFillNL(uint32_t color, uint32_t color2, bool gradient, uint32_t bg, bool invert);
 
-    void advanceCenterSpread();
     void advanceLevel();
     void advanceTwinkle();
     void advanceFlash();
@@ -1046,12 +968,10 @@ private:
     void advanceSpliceRegions();
     void paintGaugeRegion(SpliceRegionState& state);
     void rebuildSpliceMask();
-    void doLayerSwap();
 
     void     shiftBuffer();
     void     shiftOverlayBuffer();
     void     flushBuffer();
-    uint32_t composite(uint32_t base, uint32_t overlay, bool useOverlay) const;
     uint32_t levelPixel(uint8_t i, uint32_t full, uint8_t frac) const;
     uint8_t  sampleMusicNL(uint32_t positionMs) const;
     uint8_t  mapLevelNL(double raw) const;

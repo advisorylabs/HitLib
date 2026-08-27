@@ -50,7 +50,6 @@ LedStrand::LedStrand(uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
     splicePixelBg.assign(length, 0);
     splicePixelUseOverlay.assign(length, false);
     splicePixelRegionIdx.assign(length, -1);
-    spreadMask.assign(length, false);
 }
 
 LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
@@ -62,7 +61,6 @@ LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint
     splicePixelBg.assign(length, 0);
     splicePixelUseOverlay.assign(length, false);
     splicePixelRegionIdx.assign(length, -1);
-    spreadMask.assign(length, false);
 }
 
 void LedStrand::init() {
@@ -91,10 +89,6 @@ void LedStrand::tick() {
 
     if (overlayAnimMode == AnimMode::SHIFT)      shiftOverlayBuffer();
     else if (overlayAnimMode == AnimMode::FLASH) advanceOverlayFlash();
-
-    // May call doLayerSwap(), which briefly releases/reacquires the mutex to
-    // safely invoke a user-supplied AnimSetupFn.
-    if (animMode == AnimMode::CENTER_SPREAD) advanceCenterSpread();
 
     advanceSpliceAlternating(now);
     advanceSpliceRegions();
@@ -1054,152 +1048,6 @@ void LedStrand::shiftOverlayBuffer() {
 }
 
 // ============================================================================
-// Center spread
-// ============================================================================
-
-void LedStrand::centerSpread(uint8_t tickInterval, bool invert) {
-    mutex.take();
-    pulseRunLen = 0;
-    bitscrollMaster.clear();
-    spreadLayers.clear();
-    spreadLayerIdx = 0;
-    spreadBounce = false;
-    spreadInvert = invert;
-    spreadTickInterval = std::max<uint8_t>(tickInterval, 1);
-    spreadPos = 0;
-    spreadTickCounter = 0;
-    spreadReturning = false;
-    std::fill(spreadMask.begin(), spreadMask.end(), false);
-    animMode = AnimMode::CENTER_SPREAD;
-    mutex.give();
-}
-
-void LedStrand::centerSpreadStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval, bool invert) {
-    mutex.take();
-    pulseRunLen = 0;
-    bitscrollMaster.clear();
-    spreadLayers = layers;
-    spreadLayerIdx = 0;
-    spreadBounce = false;
-    spreadInvert = invert;
-    spreadTickInterval = std::max<uint8_t>(tickInterval, 1);
-    spreadPos = 0;
-    spreadTickCounter = 0;
-    spreadReturning = false;
-    std::fill(spreadMask.begin(), spreadMask.end(), false);
-    animMode = AnimMode::CENTER_SPREAD;
-    mutex.give();
-}
-
-void LedStrand::centerSpreadBounce(uint8_t tickInterval, bool invert) {
-    mutex.take();
-    pulseRunLen = 0;
-    bitscrollMaster.clear();
-    spreadLayers.clear();
-    spreadLayerIdx = 0;
-    spreadBounce = true;
-    spreadInvert = invert;
-    spreadTickInterval = std::max<uint8_t>(tickInterval, 1);
-    spreadPos = 0;
-    spreadTickCounter = 0;
-    spreadReturning = false;
-    std::fill(spreadMask.begin(), spreadMask.end(), false);
-    animMode = AnimMode::CENTER_SPREAD;
-    mutex.give();
-}
-
-void LedStrand::centerSpreadBounceStacked(const std::vector<AnimSetupFn>& layers, uint8_t tickInterval,
-                                           bool invert) {
-    mutex.take();
-    pulseRunLen = 0;
-    bitscrollMaster.clear();
-    spreadLayers = layers;
-    spreadLayerIdx = 0;
-    spreadBounce = true;
-    spreadInvert = invert;
-    spreadTickInterval = std::max<uint8_t>(tickInterval, 1);
-    spreadPos = 0;
-    spreadTickCounter = 0;
-    spreadReturning = false;
-    std::fill(spreadMask.begin(), spreadMask.end(), false);
-    animMode = AnimMode::CENTER_SPREAD;
-    mutex.give();
-}
-
-void LedStrand::advanceCenterSpread() {
-    uint8_t maxPos = (uint8_t)(length / 2 + 1);
-
-    if (++spreadTickCounter >= spreadTickInterval) {
-        spreadTickCounter = 0;
-        if (!spreadBounce) {
-            if (spreadPos < maxPos) spreadPos++;
-            if (spreadPos >= maxPos) { doLayerSwap(); return; }
-        } else if (!spreadReturning) {
-            if (spreadPos < maxPos) spreadPos++;
-            if (spreadPos >= maxPos) spreadReturning = true;
-        } else {
-            if (spreadPos > 0) spreadPos--;
-            if (spreadPos == 0) { doLayerSwap(); return; }
-        }
-    }
-
-    uint8_t mid = length / 2;
-    for (uint8_t i = 0; i < length; ++i) {
-        uint8_t dist = spreadInvert ? std::min<uint8_t>(i, (uint8_t)(length - 1 - i))
-                                     : (uint8_t)std::abs((int)i - (int)mid);
-        spreadMask[i] = dist < spreadPos;
-    }
-}
-
-void LedStrand::doLayerSwap() {
-    // What was the overlay is about to become the visible (frozen) base.
-    std::vector<uint32_t> promotedBase = std::move(overlayBuffer);
-
-    if (!spreadLayers.empty()) {
-        spreadLayerIdx = (uint8_t)((spreadLayerIdx + 1) % spreadLayers.size());
-        AnimSetupFn fn = spreadLayers[spreadLayerIdx];
-        if (fn) {
-            // fn() is user code and is written like any other setup callback,
-            // it calls normal base methods (rainbow/flow/...). Let it run against
-            // `buffer` as usual (lock released so it can safely call the public,
-            // locking API), then capture the result as the *next* overlay instead
-            // of the visible base.
-            mutex.give();
-            fn(*this);
-            mutex.take();
-
-            overlayBuffer = std::move(buffer);
-            overlayAnimMode = animMode;
-            overlayShiftStep = shiftStep;
-            overlayShiftSpeed = shiftVariant;
-            // FLASH keeps its state in dedicated timing fields rather than the
-            // shift step, so hand those over too or the promoted overlay would
-            // sit frozen on whatever frame it was captured at.
-            overlayFlashColor    = flashColor;
-            overlayFlashBgColor  = flashBgColor;
-            overlayFlashOnTicks  = flashOnTicks;
-            overlayFlashOffTicks = flashOffTicks;
-            overlayFlashCounter  = flashCounter;
-            overlayFlashLit      = flashLit;
-        }
-    }
-    // If spreadLayers is empty (plain centerSpread/centerSpreadBounce), the
-    // overlay is left as-is. It keeps animating every tick via
-    // shiftOverlayBuffer() and the next reveal cycle runs against it again.
-
-    buffer = std::move(promotedBase);
-    if (buffer.size() != length) buffer.assign(length, 0);
-    pulseRunLen = 0;
-    bitscrollMaster.clear();
-
-    spreadPos = 0;
-    spreadTickCounter = 0;
-    spreadReturning = false;
-    std::fill(spreadMask.begin(), spreadMask.end(), false);
-    animMode = AnimMode::CENTER_SPREAD;
-}
-
-// ============================================================================
 // Brightness
 // ============================================================================
 
@@ -1310,12 +1158,7 @@ int16_t LedStrand::computeEffectiveMode() const {
 // Compositing / flush
 // ============================================================================
 
-uint32_t LedStrand::composite(uint32_t base, uint32_t overlay, bool useOverlay) const {
-    return useOverlay ? overlay : base;
-}
-
 void LedStrand::flushBuffer() {
-    bool spreadActive = (animMode == AnimMode::CENTER_SPREAD);
     size_t bufSize = buffer.size();
     size_t overlayBufSize = overlayBuffer.size();
 
@@ -1331,7 +1174,7 @@ void LedStrand::flushBuffer() {
         uint32_t baseColor;
         if (animMode == AnimMode::LEVEL) {
             baseColor = levelPixel(i, levelFull, levelFrac);
-        } else if (!spreadActive && animMode == AnimMode::SHIFT && bufSize > 0) {
+        } else if (animMode == AnimMode::SHIFT && bufSize > 0) {
             baseColor = buffer[((size_t)i + (size_t)shiftStep) % bufSize];
         } else {
             baseColor = buffer[i];
@@ -1348,8 +1191,7 @@ void LedStrand::flushBuffer() {
             overlayColor = overlayBuffer[i];
         }
 
-        bool showOverlay = spreadActive && spreadMask[i];
-        uint32_t color = composite(baseColor, overlayColor, showOverlay);
+        uint32_t color = baseColor;
 
         if (spliceActive && !spliceShowAnim[i]) {
             int16_t regionIdx = splicePixelRegionIdx[i];

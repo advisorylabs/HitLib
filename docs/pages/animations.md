@@ -116,10 +116,8 @@ the whole strip, with `false` a single copy travels the strip on its own.
 
 ## Overlay Animations
 
-A second animation buffer, independent of the base animation. It's composited
-over the base by the [center spread](\ref LedStrand::centerSpread) mask, and/or
-shown directly in [splice mask](\ref LedStrand::spliceMask) regions that set
-`useOverlay`.
+A second animation buffer, independent of the base animation. Shown directly
+in [splice mask](\ref LedStrand::spliceMask) regions that set `useOverlay`.
 
 ```cpp
 strand.overlaySetColor(0xFFFFFF);
@@ -129,32 +127,6 @@ strand.overlayFlow(0xFF0000, 0x0000FF, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1, /*seamless*/ false);
 strand.overlayFlash(0xFFFFFF, 100, 100);
 ```
-
----
-
-## Center Spread
-
-Reveals the overlay buffer from the center outward (or edges inward).
-
-```cpp
-// Set up base, then overlay, then trigger the spread
-strand.flow(0xFF00DD, 0x000000, 1);
-strand.overlayRainbow(1);
-strand.centerSpread(/*tickInterval*/ 8);
-
-// Edges -> center
-strand.centerSpread(8, /*invert*/ true);
-
-// Bounce: expand fully, contract, then swap layers
-strand.centerSpreadBounce(8);
-
-// Cycle through an arbitrary list of setup functions automatically
-strand.centerSpreadStacked({layerA, layerB, layerC}, 8);
-strand.centerSpreadBounceStacked({layerA, layerB}, 8);
-```
-
-`tickInterval` controls speed: at `refreshMs=20`, `tickInterval=10` advances one
-pixel every 200 ms (~6 s across 63 LEDs).
 
 ---
 

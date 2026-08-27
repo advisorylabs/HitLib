@@ -270,24 +270,6 @@ def test_twinkle_single_pixel_fade_cycle():
     assert s.pixels == [0x000000]
 
 
-def test_center_spread_grows_from_middle_then_swaps_layers():
-    s = Strand(adi_port=1, length=6, refresh_ms=20)
-    s.overlay_set_color(0x00FF00)
-    s.center_spread(tick_interval=1)
-
-    s.tick()
-    assert s.spread_mask == [False, False, False, True, False, False]
-    s.tick()
-    assert s.spread_mask == [False, False, True, True, True, False]
-    s.tick()
-    assert s.spread_mask == [False, True, True, True, True, True]
-
-    s.tick()  # spread_pos reaches max_pos (4) -> layer swap, mask resets
-    assert s.spread_mask == [False] * 6
-    assert s.buffer == [0x00FF00] * 6  # promoted from the overlay we set
-    assert s.overlay_buffer == [0] * 6  # no stacked layers -> backfilled black
-
-
 def test_brightness_scales_linearly_without_touching_buffer():
     s = Strand(adi_port=1, length=1, refresh_ms=20)
     s.set_color(0xFF8040)

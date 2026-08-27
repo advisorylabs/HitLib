@@ -138,24 +138,6 @@ void LedGroup::overlayRainbow(uint8_t speed) {
     for (LedStrand* s : strands) s->overlayRainbow(speed);
 }
 
-void LedGroup::centerSpread(uint8_t tickInterval, bool invert) {
-    for (LedStrand* s : strands) s->centerSpread(tickInterval, invert);
-}
-
-void LedGroup::centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
-                                    uint8_t tickInterval, bool invert) {
-    for (LedStrand* s : strands) s->centerSpreadStacked(layers, tickInterval, invert);
-}
-
-void LedGroup::centerSpreadBounce(uint8_t tickInterval, bool invert) {
-    for (LedStrand* s : strands) s->centerSpreadBounce(tickInterval, invert);
-}
-
-void LedGroup::centerSpreadBounceStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
-                                          uint8_t tickInterval, bool invert) {
-    for (LedStrand* s : strands) s->centerSpreadBounceStacked(layers, tickInterval, invert);
-}
-
 void LedGroup::attachProfile(const Profile* profile) {
     for (LedStrand* s : strands) s->attachProfile(profile);
 }

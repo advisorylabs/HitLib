@@ -20,7 +20,7 @@ import math
 import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Callable, Optional, Sequence
+from typing import Optional, Sequence
 
 from .colors import gen_gradient, gen_rainbow, lerp_color, trunc_div
 from .profile import Profile
@@ -28,13 +28,10 @@ from .profile import Profile
 MAX_LEDS = 64
 _TWINKLE_HOLD_TICKS = 8
 
-AnimSetupFn = Callable[["Strand"], None]
-
 
 class AnimMode(Enum):
     STATIC = auto()
     SHIFT = auto()
-    CENTER_SPREAD = auto()
     TWINKLE = auto()
     FLASH = auto()
     LEVEL = auto()
@@ -223,7 +220,6 @@ class Strand:
         self.splice_pixel_use_overlay: list[bool] = [False] * self.length
         self.splice_pixel_region_idx: list[int] = [-1] * self.length
         self.splice_regions: list[_SpliceRegionState] = []
-        self.spread_mask: list[bool] = [False] * self.length
 
         # Rendered output of the last tick(), what the GUI should draw.
         self.pixels: list[int] = [0] * self.length
@@ -319,16 +315,6 @@ class Strand:
         self.overlay_shift_step = 0
         self.overlay_shift_speed = 0
 
-        # Center spread
-        self.spread_pos = 0
-        self.spread_tick_interval = 8
-        self.spread_tick_counter = 0
-        self.spread_layers: list[AnimSetupFn] = []
-        self.spread_layer_idx = 0
-        self.spread_invert = False
-        self.spread_bounce = False
-        self.spread_returning = False
-
         # Brightness
         self.brightness_pct = 100
 
@@ -363,9 +349,6 @@ class Strand:
             self._shift_overlay_buffer()
         elif self.overlay_anim_mode == AnimMode.FLASH:
             self._advance_overlay_flash()
-
-        if self.anim_mode == AnimMode.CENTER_SPREAD:
-            self._advance_center_spread()
 
         self._advance_splice_alternating(now)
         self._advance_splice_regions()
@@ -1156,114 +1139,6 @@ class Strand:
         self.overlay_shift_step = (self.overlay_shift_step + self.overlay_shift_speed) % buf_size
 
     # ========================================================================
-    # Center spread
-    # ========================================================================
-
-    def _start_center_spread(self, layers: Sequence[AnimSetupFn], bounce: bool,
-                              tick_interval: int, invert: bool) -> None:
-        self.pulse_run_len = 0
-        self.bitscroll_master = []
-        self.spread_layers = list(layers)
-        self.spread_layer_idx = 0
-        self.spread_bounce = bounce
-        self.spread_invert = invert
-        self.spread_tick_interval = max(tick_interval, 1)
-        self.spread_pos = 0
-        self.spread_tick_counter = 0
-        self.spread_returning = False
-        self.spread_mask = [False] * self.length
-        self.anim_mode = AnimMode.CENTER_SPREAD
-
-    def center_spread(self, tick_interval: int = 8, invert: bool = False) -> None:
-        self._start_center_spread([], False, tick_interval, invert)
-
-    def center_spread_stacked(self, layers: Sequence[AnimSetupFn], tick_interval: int = 8,
-                               invert: bool = False) -> None:
-        self._start_center_spread(layers, False, tick_interval, invert)
-
-    def center_spread_bounce(self, tick_interval: int = 8, invert: bool = False) -> None:
-        self._start_center_spread([], True, tick_interval, invert)
-
-    def center_spread_bounce_stacked(self, layers: Sequence[AnimSetupFn], tick_interval: int = 8,
-                                      invert: bool = False) -> None:
-        self._start_center_spread(layers, True, tick_interval, invert)
-
-    def _advance_center_spread(self) -> None:
-        max_pos = self.length // 2 + 1
-
-        self.spread_tick_counter += 1
-        if self.spread_tick_counter >= self.spread_tick_interval:
-            self.spread_tick_counter = 0
-            if not self.spread_bounce:
-                if self.spread_pos < max_pos:
-                    self.spread_pos += 1
-                if self.spread_pos >= max_pos:
-                    self._do_layer_swap()
-                    return
-            elif not self.spread_returning:
-                if self.spread_pos < max_pos:
-                    self.spread_pos += 1
-                if self.spread_pos >= max_pos:
-                    self.spread_returning = True
-            else:
-                if self.spread_pos > 0:
-                    self.spread_pos -= 1
-                if self.spread_pos == 0:
-                    self._do_layer_swap()
-                    return
-
-        mid = self.length // 2
-        for i in range(self.length):
-            if self.spread_invert:
-                dist = min(i, self.length - 1 - i)
-            else:
-                dist = abs(i - mid)
-            self.spread_mask[i] = dist < self.spread_pos
-
-    def _do_layer_swap(self) -> None:
-        promoted_base = self.overlay_buffer
-        self.overlay_buffer = []
-
-        if self.spread_layers:
-            self.spread_layer_idx = (self.spread_layer_idx + 1) % len(self.spread_layers)
-            fn = self.spread_layers[self.spread_layer_idx]
-            if fn is not None:
-                fn(self)
-                self.overlay_buffer = self.buffer
-                self.overlay_anim_mode = self.anim_mode
-                self.overlay_shift_step = self.shift_step
-                self.overlay_shift_speed = self.shift_variant
-                # FLASH keeps its state in dedicated timing fields rather than
-                # the shift step, so hand those over too or the promoted overlay
-                # would sit frozen on whatever frame it was captured at.
-                self.overlay_flash_color = self.flash_color
-                self.overlay_flash_bg_color = self.flash_bg_color
-                self.overlay_flash_on_ticks = self.flash_on_ticks
-                self.overlay_flash_off_ticks = self.flash_off_ticks
-                self.overlay_flash_counter = self.flash_counter
-                self.overlay_flash_lit = self.flash_lit
-        # If spread_layers is empty (plain center_spread/center_spread_bounce), the
-        # C++ source leaves overlayBuffer moved-from (empty) here and relies on the
-        # caller to have re-primed it before the mask grows again. Backfill with
-        # black instead of letting a masked-pixel read run off the end of the list.
-        # Same intent as the `buffer` size safety-net two lines down, just
-        # applied to the side the original didn't guard.
-        if len(self.overlay_buffer) != self.length:
-            self.overlay_buffer = [0] * self.length
-
-        self.buffer = promoted_base
-        if len(self.buffer) != self.length:
-            self.buffer = [0] * self.length
-        self.pulse_run_len = 0
-        self.bitscroll_master = []
-
-        self.spread_pos = 0
-        self.spread_tick_counter = 0
-        self.spread_returning = False
-        self.spread_mask = [False] * self.length
-        self.anim_mode = AnimMode.CENTER_SPREAD
-
-    # ========================================================================
     # Brightness
     # ========================================================================
 
@@ -1354,7 +1229,6 @@ class Strand:
         self._flush_buffer()
 
     def _flush_buffer(self) -> None:
-        spread_active = self.anim_mode == AnimMode.CENTER_SPREAD
         # Meter fill cutoff, in whole pixels plus a fraction of the next one.
         # Constant across the frame, so it is worked out here rather than
         # inside the per-pixel loop.
@@ -1366,7 +1240,7 @@ class Strand:
         for i in range(self.length):
             if self.anim_mode == AnimMode.LEVEL:
                 base_color = self._level_pixel(i, level_full, level_frac)
-            elif not spread_active and self.anim_mode == AnimMode.SHIFT and buf_size > 0:
+            elif self.anim_mode == AnimMode.SHIFT and buf_size > 0:
                 base_color = self.buffer[(i + self.shift_step) % buf_size]
             else:
                 base_color = self.buffer[i]
@@ -1380,8 +1254,7 @@ class Strand:
             else:
                 overlay_color = self.overlay_buffer[i]
 
-            show_overlay = spread_active and self.spread_mask[i]
-            color = overlay_color if show_overlay else base_color
+            color = base_color
 
             if self.splice_active and not self.splice_show_anim[i]:
                 region_idx = self.splice_pixel_region_idx[i]

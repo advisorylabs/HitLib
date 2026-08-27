@@ -2,15 +2,39 @@
 widgets (not by mutating config directly).
 """
 
+import pytest
+
+from pattern_studio.inspector import MASK_SPLICE
 from pattern_studio.main_window import MainWindow
 from pattern_studio.models import AnimationKind, OverlayAnimationKind, SpliceModeKind
 
 
-def test_split_mode_animation_content_reveals_overlay_in_masked_bins(qapp):
-    win = MainWindow()
-    win.show()
+@pytest.fixture
+def win(qapp):
+    """One window per test, taken back down afterwards.
+
+    Every StrandSession owns a running QTimer and the canvas owns another, so a
+    window left alive keeps ticking and repainting a strand belonging to a test
+    that finished long ago. A dozen of those in one file is enough to bring the
+    whole run down inside the painter.
+    """
+    window = MainWindow()
+    window.show()
+    yield window
+    window.close()
+    window.deleteLater()
+    qapp.processEvents()
+
+
+def _select_splice_mask(masks):
+    """Pick "Splice Mask" from the Masks dropdown, revealing its panel."""
+    masks.mask_kind_combo.setCurrentIndex(masks.mask_kind_combo.findData(MASK_SPLICE))
+
+
+def test_split_mode_animation_content_reveals_overlay_in_masked_bins(win, qapp):
     inspector = win.inspector
-    splice = inspector.splice_panel
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
 
     inspector.strand_panel.length_spin.setValue(4)
     inspector.strand_panel.changed.emit()
@@ -20,7 +44,7 @@ def test_split_mode_animation_content_reveals_overlay_in_masked_bins(qapp):
     inspector.anim_panel.kind_combo.setCurrentIndex(idx)
     qapp.processEvents()
 
-    splice.setChecked(True)
+    _select_splice_mask(masks)
     splice.sections_spin.setValue(1)  # two halves
     idx = splice.split_content_combo.findData(True)  # "Animation"
     splice.split_content_combo.setCurrentIndex(idx)
@@ -42,13 +66,12 @@ def test_split_mode_animation_content_reveals_overlay_in_masked_bins(qapp):
     assert strand.pixels[1] == 0x00FF00
 
 
-def test_custom_mode_add_region_updates_config_and_list(qapp):
-    win = MainWindow()
-    win.show()  # isVisible() reflects the whole ancestor chain, not just setVisible() on the widget itself
+def test_custom_mode_add_region_updates_config_and_list(win, qapp):
     inspector = win.inspector
-    splice = inspector.splice_panel
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
 
-    splice.setChecked(True)
+    _select_splice_mask(masks)
     idx = splice.mode_combo.findData(SpliceModeKind.CUSTOM)
     splice.mode_combo.setCurrentIndex(idx)
     qapp.processEvents()
@@ -71,13 +94,12 @@ def test_custom_mode_add_region_updates_config_and_list(qapp):
     assert splice.region_list.item(0).text() == "2-4  Solid Color"
 
 
-def test_custom_region_has_its_own_independent_animation_editor(qapp):
-    win = MainWindow()
-    win.show()
+def test_custom_region_has_its_own_independent_animation_editor(win, qapp):
     inspector = win.inspector
-    splice = inspector.splice_panel
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
 
-    splice.setChecked(True)
+    _select_splice_mask(masks)
     idx = splice.mode_combo.findData(SpliceModeKind.CUSTOM)
     splice.mode_combo.setCurrentIndex(idx)
     splice._add_region()
@@ -99,13 +121,12 @@ def test_custom_region_has_its_own_independent_animation_editor(qapp):
     assert splice.region_list.item(0).text().endswith("Rainbow")
 
 
-def test_two_custom_regions_keep_independent_animations(qapp):
-    win = MainWindow()
-    win.show()
+def test_two_custom_regions_keep_independent_animations(win, qapp):
     inspector = win.inspector
-    splice = inspector.splice_panel
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
 
-    splice.setChecked(True)
+    _select_splice_mask(masks)
     idx = splice.mode_combo.findData(SpliceModeKind.CUSTOM)
     splice.mode_combo.setCurrentIndex(idx)
     splice._add_region()
@@ -125,12 +146,12 @@ def test_two_custom_regions_keep_independent_animations(qapp):
     assert regions[1].animation.kind == OverlayAnimationKind.FLOW
 
 
-def test_remove_region_clears_editor_when_list_empties(qapp):
-    win = MainWindow()
+def test_remove_region_clears_editor_when_list_empties(win, qapp):
     inspector = win.inspector
-    splice = inspector.splice_panel
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
 
-    splice.setChecked(True)
+    _select_splice_mask(masks)
     idx = splice.mode_combo.findData(SpliceModeKind.CUSTOM)
     splice.mode_combo.setCurrentIndex(idx)
     splice._add_region()

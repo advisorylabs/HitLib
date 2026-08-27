@@ -42,8 +42,7 @@ LedGroup
 |---|---|
 | **Animations** | Static, flow gradient, rainbow, pulse, flash, twinkle, bitscroll |
 | **Bounce variants** | Pulse bounce, bitscroll bounce |
-| **Overlay system** | Two independent layers composited by a spread mask |
-| **Center spread** | Wipe from center outward, or edges inward |
+| **Overlay system** | A second animation layer, shown in a splice mask's masked bins |
 | **Splice mask** | Alternating sections or custom regions, solid color or overlay |
 | **Level meter** | Fill the strip in proportion to a value - by hand, or tracking a motor, sensor or the battery on its own |
 | **Music sync** | Fill in time with a song - MP3/FLAC/WAV or MIDI, analysed by Pattern Studio |

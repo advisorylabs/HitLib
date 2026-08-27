@@ -1042,6 +1042,10 @@ class SpliceMaskPanel(QGroupBox):
     save() intentionally leaves `regions` untouched. Callers are expected
     (as ModesPanel does) to call save() with the same config object that was
     last passed to load().
+
+    Whether this is the active mask (SpliceMaskConfig.enabled) is decided by
+    the enclosing MasksPanel's dropdown, not here - load()/save() leave
+    `enabled` alone and only touch this mask's own fields.
     """
 
     changed = Signal()
@@ -1054,8 +1058,6 @@ class SpliceMaskPanel(QGroupBox):
         # What Divide splits up. The panel edits a mask, not a strand, so the
         # length has to be handed to it - see set_strip_length().
         self._strip_length = 64
-        self.setCheckable(True)
-        self.setChecked(False)
         outer = QVBoxLayout(self)
 
         mode_row = QHBoxLayout()
@@ -1160,7 +1162,6 @@ class SpliceMaskPanel(QGroupBox):
         self.region_editor.setEnabled(False)
         outer.addWidget(self.custom_widget)
 
-        self.toggled.connect(self._emit_changed)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.sections_spin.valueChanged.connect(self._emit_changed)
         self.invert_check.toggled.connect(self._emit_changed)
@@ -1336,7 +1337,6 @@ class SpliceMaskPanel(QGroupBox):
         self._suspend = True
         self._splice = s
         self._region_idx = -1
-        self.setChecked(s.enabled)
         idx = self.mode_combo.findData(s.mode)
         if idx >= 0:
             self.mode_combo.setCurrentIndex(idx)
@@ -1360,7 +1360,6 @@ class SpliceMaskPanel(QGroupBox):
         self._suspend = False
 
     def save(self, s: SpliceMaskConfig) -> None:
-        s.enabled = self.isChecked()
         s.mode = enum_data(self.mode_combo, SpliceModeKind)
         s.sections = self.sections_spin.value()
         s.invert = self.invert_check.isChecked()
@@ -1370,6 +1369,84 @@ class SpliceMaskPanel(QGroupBox):
         s.bg_color = self.split_bg_btn.color()
         self.overlay_panel.save(s.overlay)
         # s.regions is not touched here - see class docstring.
+
+
+# A strand has exactly one mask active at a time (or none), despite `enabled`
+# being an independent flag on the model (that is what LedStrand's API takes)
+# - MasksPanel is what enforces that at the UI level, the same way
+# AnimationPanel's kind_combo makes only one AnimationKind selectable even
+# though nothing stops hand-edited JSON from doing otherwise. Kept as its own
+# dropdown-plus-panel structure (rather than folding straight into
+# SpliceMaskPanel) so a future second mask kind has somewhere to go.
+MASK_NONE = "none"
+MASK_SPLICE = "splice"
+
+MASK_KIND_LABELS = {
+    MASK_NONE: "None",
+    MASK_SPLICE: "Splice Mask",
+}
+
+
+class MasksPanel(QGroupBox):
+    """Picks which mask (if any) is active, mirroring AnimationPanel's
+    kind_combo: one dropdown, and selecting an entry reveals that mask's own
+    panel below it instead of showing every mask's fields side by side.
+
+    SpliceMaskConfig still carries its own `enabled` flag on the model (that
+    is what LedStrand's API takes), but this panel owns that decision - save()
+    sets it to match whatever the dropdown shows. SpliceMaskPanel no longer
+    owns that decision itself (see its docstring).
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__("Masks", parent)
+        self._suspend = False
+        outer = QVBoxLayout(self)
+
+        self.mask_kind_combo = QComboBox()
+        for kind in (MASK_NONE, MASK_SPLICE):
+            self.mask_kind_combo.addItem(MASK_KIND_LABELS[kind], kind)
+        outer.addWidget(self.mask_kind_combo)
+
+        self.splice_panel = SpliceMaskPanel()
+        outer.addWidget(self.splice_panel)
+
+        self.mask_kind_combo.currentIndexChanged.connect(self._on_kind_changed)
+        self.splice_panel.changed.connect(self._emit_changed)
+
+        self._update_visibility()
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
+
+    def _on_kind_changed(self, *_args) -> None:
+        self._update_visibility()
+        self._emit_changed()
+
+    def _update_visibility(self) -> None:
+        kind = self.mask_kind_combo.currentData()
+        self.splice_panel.setVisible(kind == MASK_SPLICE)
+
+    def set_strip_length(self, length: int) -> None:
+        """Forwarded to SpliceMaskPanel - see its own set_strip_length()."""
+        self.splice_panel.set_strip_length(length)
+
+    def load(self, splice: SpliceMaskConfig) -> None:
+        self._suspend = True
+        kind = MASK_SPLICE if splice.enabled else MASK_NONE
+        idx = self.mask_kind_combo.findData(kind)
+        if idx >= 0:
+            self.mask_kind_combo.setCurrentIndex(idx)
+        self.splice_panel.load(splice)
+        self._update_visibility()
+        self._suspend = False
+
+    def save(self, splice: SpliceMaskConfig) -> None:
+        self.splice_panel.save(splice)
+        splice.enabled = self.mask_kind_combo.currentData() == MASK_SPLICE
 
 
 class InspectorPanel(QWidget):
@@ -1412,19 +1489,19 @@ class InspectorPanel(QWidget):
             "Switch this strand from a single animation to a prioritized list of modes"
         )
         self.anim_panel = AnimationPanel()
-        self.splice_panel = SpliceMaskPanel()
+        self.masks_panel = MasksPanel()
         self.modes_panel = ModesPanel()
 
         layout.addWidget(self.group_banner)
         layout.addWidget(self.use_profile_check)
         layout.addWidget(self.anim_panel)
-        layout.addWidget(self.splice_panel)
+        layout.addWidget(self.masks_panel)
         layout.addWidget(self.modes_panel)
         layout.addStretch(1)
 
         self.strand_panel.changed.connect(self.strand_settings_changed)
         self.anim_panel.changed.connect(self.animation_changed)
-        self.splice_panel.changed.connect(self.animation_changed)
+        self.masks_panel.changed.connect(self.animation_changed)
         self.modes_panel.changed.connect(self.animation_changed)
         self.use_profile_check.toggled.connect(self._on_use_profile_toggled)
 
@@ -1445,7 +1522,7 @@ class InspectorPanel(QWidget):
 
     def _apply_mode_visibility(self, use_profile: bool) -> None:
         self.anim_panel.setVisible(not use_profile)
-        self.splice_panel.setVisible(not use_profile)
+        self.masks_panel.setVisible(not use_profile)
         self.modes_panel.setVisible(use_profile)
 
     def load(self, cfg: StrandConfig) -> None:
@@ -1455,8 +1532,8 @@ class InspectorPanel(QWidget):
         self._apply_mode_visibility(cfg.use_profile)
         self.anim_panel.load(cfg.animation)
         # Before load(): Divide shares out this strand's pixels, not the last one's.
-        self.splice_panel.set_strip_length(cfg.length)
-        self.splice_panel.load(cfg.splice)
+        self.masks_panel.set_strip_length(cfg.length)
+        self.masks_panel.load(cfg.splice)
         self.modes_panel.load(cfg)
         self._loading = False
 
@@ -1464,5 +1541,5 @@ class InspectorPanel(QWidget):
         self.strand_panel.save(cfg)
         cfg.use_profile = self.use_profile_check.isChecked()
         self.anim_panel.save(cfg.animation)
-        self.splice_panel.save(cfg.splice)
+        self.masks_panel.save(cfg.splice)
         self.modes_panel.save(cfg)

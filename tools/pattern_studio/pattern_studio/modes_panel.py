@@ -7,7 +7,7 @@ the same activate_mode()/deactivate_mode() the priority stack uses on real
 hardware, so toggling multiple modes on at once exercises
 priority resolution rather than just switching a single active animation.
 
-AnimationPanel/SpliceMaskPanel are reused (not re-implemented) for editing
+AnimationPanel/MasksPanel are reused (not re-implemented) for editing
 whichever target is currently selected (a mode's steady animation, or one
 of its phases) by rebinding what their `changed` signal commits into.
 """
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
-from .inspector import AnimationPanel, SpliceMaskPanel
+from .inspector import AnimationPanel, MasksPanel
 from .models import ModeConfig, PhaseConfig, StrandConfig
 
 
@@ -83,9 +83,9 @@ class ModesPanel(QWidget):
 
         # Steady-state editor (reused for phase editing too, rebound below)
         self.anim_panel = AnimationPanel()
-        self.splice_panel = SpliceMaskPanel()
+        self.masks_panel = MasksPanel()
         editor_layout.addWidget(self.anim_panel)
-        editor_layout.addWidget(self.splice_panel)
+        editor_layout.addWidget(self.masks_panel)
 
         # Phase list (only visible when sequenced_check is on)
         self.phase_container = QWidget()
@@ -137,7 +137,7 @@ class ModesPanel(QWidget):
         self.sequenced_check.toggled.connect(self._on_sequenced_toggled)
 
         self.anim_panel.changed.connect(self._on_leaf_changed)
-        self.splice_panel.changed.connect(self._on_leaf_changed)
+        self.masks_panel.changed.connect(self._on_leaf_changed)
 
         self.phase_list.currentRowChanged.connect(self._on_phase_selected)
         self.add_phase_btn.clicked.connect(self._add_phase)
@@ -155,7 +155,7 @@ class ModesPanel(QWidget):
         self._loading = True
         self._config = config
         # Divide shares out this strand's pixels, not the last one's.
-        self.splice_panel.set_strip_length(config.length)
+        self.masks_panel.set_strip_length(config.length)
         self._mode_idx = -1
         self._phase_idx = -1
         self._refresh_mode_list()
@@ -301,7 +301,7 @@ class ModesPanel(QWidget):
         self.phase_container.setVisible(sequenced)
         if not sequenced:
             self.anim_panel.setVisible(True)
-            self.splice_panel.setVisible(True)
+            self.masks_panel.setVisible(True)
 
     # ------------------------------------------------------------------
     # Phase list (only relevant while sequenced_check is checked)
@@ -345,7 +345,7 @@ class ModesPanel(QWidget):
         else:
             self._phase_idx = -1
             self.anim_panel.setVisible(False)
-            self.splice_panel.setVisible(False)
+            self.masks_panel.setVisible(False)
         self._emit_changed()
 
     def _move_phase(self, delta: int) -> None:
@@ -366,7 +366,7 @@ class ModesPanel(QWidget):
         mode = self._current_mode()
         if mode is None or not (0 <= row < len(mode.phases)):
             self.anim_panel.setVisible(False)
-            self.splice_panel.setVisible(False)
+            self.masks_panel.setVisible(False)
             return
         phase = mode.phases[row]
         was_loading = self._loading
@@ -395,9 +395,9 @@ class ModesPanel(QWidget):
 
     def _bind_leaf(self, animation, splice) -> None:
         self.anim_panel.setVisible(True)
-        self.splice_panel.setVisible(True)
+        self.masks_panel.setVisible(True)
         self.anim_panel.load(animation)
-        self.splice_panel.load(splice)
+        self.masks_panel.load(splice)
 
     def _on_leaf_changed(self) -> None:
         if self._loading:
@@ -408,8 +408,8 @@ class ModesPanel(QWidget):
         if mode.phases and 0 <= self._phase_idx < len(mode.phases):
             phase = mode.phases[self._phase_idx]
             self.anim_panel.save(phase.animation)
-            self.splice_panel.save(phase.splice)
+            self.masks_panel.save(phase.splice)
         elif not mode.phases:
             self.anim_panel.save(mode.animation)
-            self.splice_panel.save(mode.splice)
+            self.masks_panel.save(mode.splice)
         self._emit_changed()

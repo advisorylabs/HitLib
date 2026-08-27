@@ -177,26 +177,6 @@ public:
     /// @}
 
     // ========================================================================
-    /// @name Center Spread
-    /// @{
-
-    /** @copydoc LedStrand::centerSpread */
-    void centerSpread(uint8_t tickInterval = 8, bool invert = false);
-
-    /** @copydoc LedStrand::centerSpreadStacked */
-    void centerSpreadStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
-                             uint8_t tickInterval = 8, bool invert = false);
-
-    /** @copydoc LedStrand::centerSpreadBounce */
-    void centerSpreadBounce(uint8_t tickInterval = 8, bool invert = false);
-
-    /** @copydoc LedStrand::centerSpreadBounceStacked */
-    void centerSpreadBounceStacked(const std::vector<LedStrand::AnimSetupFn>& layers,
-                                   uint8_t tickInterval = 8, bool invert = false);
-
-    /// @}
-
-    // ========================================================================
     /// @name Profile System
     /// @{
 
