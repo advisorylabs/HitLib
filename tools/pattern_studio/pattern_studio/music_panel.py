@@ -15,7 +15,7 @@ Three signals go out. `song_changed` means the tables were replaced (a new
 file, or a shaping control moved) and the engine strands need re-issuing;
 `position_changed` is the transport moving, which only needs a seek; and
 `playing_changed` tells the strands whether to advance the song on their own
-between those seeks, which is what keeps a paused transport actually paused.
+between those seeks, so a paused transport stays paused.
 
 Collapsed to a single row until a file is loaded, so an unused Song bar costs
 the preview one row of height rather than a panel's worth.

@@ -70,8 +70,7 @@ public:
      *
      * Called once per refresh tick, from the LedGroup task rather than from
      * your loop, and expected to just read something and return it, in
-     * whatever units that something already speaks.  Mapping the number onto
-     * the strip is levelSource()'s job, not the reader's.
+     * whatever units that something already speaks.
      *
      * A capture-less lambda converts to one of these, which is how it usually
      * gets written:
@@ -93,23 +92,25 @@ public:
     /**
      * @brief What a custom splice mask region shows.
      *
-     * OFF through RAINBOW mirror the overlay*() animation vocabulary (see
+     * OFF through BITSCROLL mirror the overlay*() animation vocabulary (see
      * @ref overlaySetColor "Overlay Animations"), since each region gets a
      * buffer built and animated the same way.
      *
-     * @c GAUGE is the odd one out: it animates from a *reading* rather than
-     * from a clock, which is what turns one region into an independent meter.
-     * See @ref GaugeStop and SpliceRegion's gauge fields.
+     * @c GAUGE animates from a *reading* rather than from a clock, making the
+     * region an independent meter.  See @ref GaugeStop and SpliceRegion's
+     * gauge fields.
      */
-    enum class SpliceRegionAnimKind : uint8_t { OFF, SOLID, PULSE, FLASH, FLOW, RAINBOW, GAUGE };
+    enum class SpliceRegionAnimKind : uint8_t {
+        OFF, SOLID, PULSE, FLASH, FLOW, RAINBOW, TWINKLE, BITSCROLL, GAUGE
+    };
 
     /**
      * @brief One color on a GAUGE region's scale.
      *
-     * Stops are given in the reading's own units, not in pixels or in 0-255,
-     * so a scale reads as what it means: `{55.0, 0xFF7000}` is "orange at
-     * 55 °C".  They are sorted and mapped onto the region's @c emptyAt -
-     * @c fullAt range once, when the mask is applied.
+     * Stops are given in the reading's own units, not in pixels or 0-255:
+     * `{55.0, 0xFF7000}` is "orange at 55 °C".  They are sorted and mapped
+     * onto the region's @c emptyAt - @c fullAt range once, when the mask is
+     * applied.
      *
      * Below the first stop and above the last, the gauge shows that stop's
      * color, so a scale never has to cover a range it doesn't care about.
@@ -149,14 +150,30 @@ public:
         uint8_t  start;                                        ///< First pixel index covered by this region.
         uint8_t  width;                                         ///< Number of pixels covered.
         SpliceRegionAnimKind kind = SpliceRegionAnimKind::OFF;  ///< What this region shows.
-        uint32_t color     = 0xFFFFFF; ///< Foreground color (SOLID/PULSE/FLASH/FLOW start).
+        uint32_t color     = 0xFFFFFF; ///< Foreground color (SOLID/PULSE/FLASH/FLOW/BITSCROLL).
         uint32_t color2    = 0x0000FF; ///< FLOW end color.
-        uint32_t bgColor   = 0x000000; ///< PULSE/FLASH background, and a GAUGE BAR's unlit part.
+        uint32_t bgColor   = 0x000000; ///< PULSE/FLASH/TWINKLE/BITSCROLL background, and a GAUGE BAR's unlit part.
         uint8_t  runLength = 5;        ///< PULSE run length.
-        uint8_t  speed     = 1;        ///< PULSE/FLOW/RAINBOW animation speed.
+        uint8_t  speed     = 1;        ///< PULSE/FLOW/RAINBOW/BITSCROLL animation speed.
         uint32_t onMs      = 250;      ///< FLASH lit duration (ms).
         uint32_t offMs     = 250;      ///< FLASH blank duration (ms).
         bool     seamless  = true;     ///< FLOW only. See @c flow().
+        /// Reverse direction: a BITSCROLL scrolls the other way, a GAUGE BAR
+        /// fills from the far end of the region.
+        bool     invert    = false;
+
+        // ---- TWINKLE only ----
+
+        /// Colors sparks are drawn from.  An empty palette leaves the region dark.
+        std::vector<uint32_t> palette;
+        uint8_t densityPct = 30;  ///< Share of the region lit at once (0-100).
+        uint8_t fadeStep   = 16;  ///< Brightness step per tick, so bigger is faster.
+
+        // ---- BITSCROLL only ----
+
+        uint8_t segmentWidth = 3;    ///< Pixels per lit run.
+        uint8_t spacing      = 5;    ///< Background pixels between runs.
+        bool    repeating    = true; ///< Tile the pattern across the region, or scroll one copy.
 
         // ---- GAUGE only, ignored by every other kind ----
 
@@ -167,7 +184,6 @@ public:
         double  fullAt  = 100.0;  ///< Reading at the top of it.
         bool    wrap    = false;  ///< Cycle past @c fullAt instead of pinning at it.
         uint8_t smoothing = 0;    ///< 0-99, as in levelSource().
-        bool    invert  = false;  ///< BAR only: fill from the far end of the region.
         GaugeStyle style = GaugeStyle::HEAT; ///< Whole-region color, or a bar.
         GaugeBlend blend = GaugeBlend::LERP; ///< Blend between stops, or hold each.
         /// The scale, in the reading's own units.  Empty falls back to
@@ -349,7 +365,7 @@ public:
      * @param bounce     Rock the pattern back and forth instead of wrapping.
      * @param spacing    Gap pixels inserted between segments (default 5).
      * @param repeating  Tile the pattern across the whole strip (@c true) or
-     *                   show a single copy of it (@c false).  Honoured for
+     *                   show a single copy of it (@c false). works for
      *                   both wrapping and @p bounce travel.
      */
     void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
@@ -446,10 +462,9 @@ public:
      * strand.levelSource([] { return arm.get_position(); }, 0.0, 360.0, true);
      * @endcode
      *
-     * Values outside the range clamp to empty or full, so a gauge parks at
-     * either end rather than wrapping around unexpectedly.  With @p wrap it
-     * cycles instead, which is what a continuously turning motor or a heading
-     * wants: 450° of a 0-360 range shows the bar a quarter full, not full.
+     * Values outside the range clamp to empty or full.  With @p wrap they
+     * cycle instead, for a continuously turning motor or a heading: 450° of a
+     * 0-360 range shows the bar a quarter full, not full.
      *
      * Putting @p fullAt below @p emptyAt is allowed and reverses the meter, so
      * a "distance remaining" bar that drains as a number climbs needs no
@@ -459,17 +474,16 @@ public:
      * what drives the fill, so call levelFill() first.  Any MusicTrack is
      * detached.
      *
-     * @param read       Value to follow.  @c nullptr just clears the source,
-     *                   which is what lets exported code name a hook that has
-     *                   not been assigned yet.
+     * @param read       Value to follow.  @c nullptr clears the source, so
+     *                   exported code can name a hook before it is assigned.
      * @param emptyAt    Reading that shows an empty strip.
      * @param fullAt     Reading that shows a full one.
      * @param wrap       Cycle back to empty past @p fullAt instead of clamping.
      * @param smoothing  0-99.  How much of the previous frame's fill to keep
      *                   each tick: 0 follows the value exactly, higher glides
-     *                   toward it, which is worth having on anything noisy
-     *                   (motor velocity, current draw).  The bar still reaches
-     *                   its target, it just takes a few ticks to get there.
+     *                   toward it, for noisy readings (motor velocity, current
+     *                   draw).  The bar still reaches its target, over a few
+     *                   ticks.
      */
     void levelSource(LevelFn read, double emptyAt, double fullAt, bool wrap = false,
                      uint8_t smoothing = 0);
@@ -585,9 +599,8 @@ public:
      *
      * A GAUGE region is the same idea pointed at a sensor instead of a clock:
      * it polls its own reader every tick and colors itself off its own scale,
-     * so one strip can carry six independent meters.  That is the whole point
-     * of it - the strand-wide levelFill() meter is one per strand, and a
-     * drivebase has six motors.
+     * so one strip can carry several independent meters.  The strand-wide
+     * levelFill() meter is limited to one per strand.
      *
      * @code{.cpp}
      * // Six motors, six segments of a 60-LED strip under the drivebase, each
@@ -683,6 +696,21 @@ public:
 
     /** @brief Scroll a rainbow in the overlay buffer. */
     void overlayRainbow(uint8_t speed);
+
+    /** @brief Sparkle random pixels of the overlay buffer (see twinkle()). */
+    void overlayTwinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
+                        uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+
+    /**
+     * @brief Scroll a repeating bit pattern in the overlay buffer (see bitscroll()).
+     *
+     * No @c bounce: the overlay is a single scrolling buffer, and bouncing
+     * needs a wider master pattern to slide a window over.  Use the base
+     * animation for that.
+     */
+    void overlayBitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+                          bool invert = false, uint32_t bgColor = 0x000000,
+                          uint8_t spacing = 5, bool repeating = true);
 
     /// @}
 
@@ -809,15 +837,25 @@ private:
     int8_t                bounceScrollDir = 1;
     uint8_t               bounceSpeed     = 1;
 
-    // Twinkle
-    std::vector<uint8_t>  twinkleLevel;
-    std::vector<uint8_t>  twinkleTarget;
-    std::vector<uint8_t>  twinkleColorIdx;
-    std::vector<uint8_t>  twinkleHoldTicks;
-    std::vector<uint32_t> twinklePalette;
-    uint8_t               twinkleDensityPct = 30;
-    uint8_t               twinkleFadeStep   = 16;
-    uint32_t              twinkleBgColor    = 0x000000;
+    // Twinkle - per-pixel fade state for one buffer. A struct rather than loose
+    // members because three different buffers animate this way: the base
+    // strand, the overlay, and any number of custom regions.
+    struct TwinkleState {
+        std::vector<uint8_t>  level;
+        std::vector<uint8_t>  target;
+        std::vector<uint8_t>  colorIdx;
+        std::vector<uint8_t>  holdTicks;
+        std::vector<uint32_t> palette;
+        uint8_t  densityPct = 30;
+        uint8_t  fadeStep   = 16;
+        uint32_t bgColor    = 0x000000;
+
+        void reset(uint8_t width, const std::vector<uint32_t>& colors, uint8_t density,
+                   uint8_t fade, uint32_t bg);
+    };
+    static void advanceTwinkleInto(TwinkleState& t, std::vector<uint32_t>& buf);
+
+    TwinkleState twinkleState;
 
     // Level meter - buffer holds the meter's colors across the whole strip and
     // levelValue picks how much of it is revealed, so changing the level costs
@@ -888,6 +926,10 @@ private:
         uint16_t flashOffTicks = 1;
         uint16_t flashCounter  = 0;
         bool     flashLit      = true;
+        // TWINKLE regions repaint their buffer every tick rather than shifting
+        // it, the same way the strand-wide twinkle does.
+        bool         twinkling = false;
+        TwinkleState twinkle;
     };
 
     bool              spliceActive      = false;
@@ -925,6 +967,9 @@ private:
     uint16_t overlayFlashCounter  = 0;
     bool     overlayFlashLit      = true;
 
+    // Overlay twinkle - mirrors the base twinkle state above.
+    TwinkleState overlayTwinkleState;
+
     // Brightness
     uint8_t brightnessPct = 100;
 
@@ -954,11 +999,28 @@ private:
     void overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
     void overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool seamless);
     void overlayRainbowNL(uint8_t speed);
+    void overlayTwinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
+                          uint8_t fadeStep, uint32_t bgColor);
+    void overlayBitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+                            bool invert, uint32_t bgColor, uint8_t spacing, bool repeating);
 
     void levelFillNL(uint32_t color, uint32_t color2, bool gradient, uint32_t bg, bool invert);
 
+    // One tile of a bitscroll pattern: the lit runs and the gaps between them.
+    // `contentLen` comes back as the size up to the last lit pixel, i.e.
+    // without the trailing gap, which only separates one tile from the next.
+    static std::vector<uint32_t> buildBitscrollUnit(const std::vector<BitScrollSegment>& segments,
+                                                    uint32_t bgColor, uint8_t spacing,
+                                                    size_t& contentLen);
+    // Lay one tile into `buf` across `width` pixels - tiled when `repeating`,
+    // a single copy on `bgColor` when not - and return the per-tick shift that
+    // scrolls it. Shared by the base, overlay, and per-region bitscrolls.
+    static uint8_t fillBitscrollBuffer(std::vector<uint32_t>& buf,
+                                       const std::vector<uint32_t>& unit, size_t contentLen,
+                                       uint8_t width, uint32_t bgColor, uint8_t speed,
+                                       bool invert, bool repeating);
+
     void advanceLevel();
-    void advanceTwinkle();
     void advanceFlash();
     void advanceOverlayFlash();
     void advancePulseBounce();

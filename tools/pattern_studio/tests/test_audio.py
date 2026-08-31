@@ -24,8 +24,8 @@ SAMPLE_RATE = 44100
 def _write_wav(path, seconds=2.0, *, bass=0.0, treble=0.0, channels=2, pulse_hz=0.0):
     """A WAV of pure tones at known frequencies, so each band has a known answer.
 
-    `pulse_hz` gates the whole thing on and off, which is what gives Beat mode
-    something to find.
+    `pulse_hz` gates the whole thing on and off, giving Beat mode onsets to
+    find.
     """
     frames = bytearray()
     total = int(SAMPLE_RATE * seconds)

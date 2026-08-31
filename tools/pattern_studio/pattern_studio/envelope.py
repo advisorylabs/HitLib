@@ -112,9 +112,9 @@ class TrackAnalysis:
     """Per-frame loudness per band, quantised to a byte over DB_FLOOR..0 dB.
 
     Source-independent: audio and MIDI both reduce to this, so everything
-    downstream (and every test of it) is written once. Quantising to a byte is
-    what makes it small enough to save inside a design, which is what lets the
-    bake settings stay live after the source file has gone.
+    downstream (and every test of it) is written once. Quantising to a byte
+    keeps it small enough to save inside a design, so the bake settings stay
+    live after the source file is gone.
     """
 
     #: band name -> one quantised dB value per ANALYSIS_FRAME_MS frame.
@@ -155,15 +155,15 @@ def power_to_db(power: float) -> float:
 
 
 def analysis_from_power(bands: dict[str, list[float]], **kwargs) -> TrackAnalysis:
-    """Build a TrackAnalysis from raw per-frame power, which is what both
-    analysers naturally produce.
+    """Build a TrackAnalysis from raw per-frame power, the common output of
+    both analysers.
 
     Power is scaled so the loudest frame of the loudest band sits at 0 dB. The
     two analysers otherwise work on incompatible scales - audio samples are
     bounded at 1.0, MIDI velocities square up into the thousands - and either
     would fall outside the quantisation window. Scaling jointly rather than per
-    band keeps the bands' relative loudness intact, which is what makes picking
-    a band a meaningful choice.
+    band keeps the bands' relative loudness intact, so the choice of band
+    changes what the strip does.
     """
     peak = max((max(values, default=0.0) for values in bands.values()), default=0.0)
     scale = 1.0 / peak if peak > 0 else 0.0

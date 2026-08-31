@@ -7,6 +7,8 @@ import pytest
 from pattern_studio import fill_sources
 from pattern_studio.codegen import (
     generate_cpp,
+    paste_block,
+    paste_block,
     generate_document_cpp,
     suggested_header_name,
     validate_document_for_export,
@@ -152,8 +154,8 @@ def test_generates_expected_structure():
 
 
 def test_hardware_settings_are_emitted_as_constants():
-    # The whole point: the LedStrand on the robot is built from the same
-    # numbers the preview ran against, rather than retyped from the GUI.
+    # The LedStrand on the robot is built from the same numbers the preview
+    # ran against, rather than retyped from the GUI.
     cfg = StrandConfig(name="Wired", adi_port=6, length=63, refresh_ms=25, brightness=40)
     out = generate_cpp(cfg)
     assert "constexpr uint8_t  adiPort    = 6;" in out
@@ -167,8 +169,8 @@ def test_expander_strand_emits_smart_port():
     cfg = StrandConfig(name="Expanded", smart_port=2, adi_port=1)
     out = generate_cpp(cfg)
     assert "constexpr uint8_t  smartPort  = 2;" in out
-    # The usage banner has to pick the 4-argument constructor to match.
-    assert "hitlib::LedStrand expandedStrand(expanded::smartPort, expanded::adiPort," in out
+    # The strand the export defines has to pick the 4-argument constructor.
+    assert "inline LedStrand strand{smartPort, adiPort, length, refreshMs};" in out
 
 
 def test_mode_index_constants_are_named_and_numbered():
@@ -195,8 +197,10 @@ def test_usage_banner_names_the_header_it_was_saved_as():
     out = generate_cpp(StrandConfig(name="My Robot"), "my_robot.hpp")
     assert '#include "my_robot.hpp"' in out
     assert "namespace myRobot = hitlib::profiles::myRobot;" in out
-    # The declared variable must not shadow the alias declared right above it.
-    assert "hitlib::LedStrand myRobotStrand(myRobot::adiPort" in out
+    # The paste is the include, the alias and one call - the strand and the
+    # group it runs on are the export's job now, not the reader's.
+    assert "hitlib::studio::begin();" in out
+    assert "hitlib::LedStrand myRobotStrand" not in out
 
 
 def test_suggested_header_name_is_snake_case():
@@ -359,13 +363,23 @@ def _find_toolchain_compiler() -> str | None:
     return str(candidates[0]) if candidates else None
 
 
-def _compile_or_fail(tmp_path: Path, header: str, main: str) -> None:
+def _compile_or_fail(
+    tmp_path: Path, header: str, main: str, defines: tuple[str, ...] = ()
+) -> None:
     """Compile `main` against `header` with the real PROS ARM toolchain and the
-    real hitlib headers. The only check that proves an export is valid C++."""
+    real hitlib headers. The only check that proves an export is valid C++.
+
+    @p defines are emitted ahead of the include, which is where the export's
+    opt-out macro has to sit to do anything.
+    """
     (tmp_path / "generated_profile.hpp").write_text(header, encoding="utf-8")
     source_path = tmp_path / "compile_check.cpp"
+    prologue = "".join("#define " + d + "\n" for d in defines)
     source_path.write_text(
-        '#include "hitlib/hitapi.hpp"\n#include "generated_profile.hpp"\n\n' + main,
+        '#include "hitlib/hitapi.hpp"\n'
+        + prologue
+        + '#include "generated_profile.hpp"\n\n'
+        + main,
         encoding="utf-8",
     )
 
@@ -414,13 +428,12 @@ def test_usage_banner_from_the_export_actually_compiles(tmp_path):
     cfg = _elaborate_config()
     header = generate_cpp(cfg, "generated_profile.hpp")
 
-    banner = [
-        line[len("//        ") :]
-        for line in header.splitlines()
-        if line.startswith("//        ")
-    ]
-    # Drop the two #include lines: _compile_or_fail() emits them itself.
-    body = "\n".join(line for line in banner if not line.startswith("#include"))
+    # paste_block() is the same reader the Deploy dialog shows the user, so
+    # what compiles here is exactly what they are handed.
+    body = "\n".join(
+        line for line in paste_block(header).splitlines()
+        if not line.startswith("#include")   # _compile_or_fail() emits those
+    )
     assert "void initialize() {" in body
 
     _compile_or_fail(tmp_path, header, body + "\n")
@@ -428,9 +441,8 @@ def test_usage_banner_from_the_export_actually_compiles(tmp_path):
 
 @pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
 def test_two_strands_sharing_mode_names_compile_in_one_document_export(tmp_path):
-    # Regression test: exported per-strand, two "Idle" modes both produced
-    # `inline void idle(LedStrand&)` in namespace hitlib::profiles and could
-    # not be included in the same translation unit.
+    # Two "Idle" modes would each emit `inline void idle(LedStrand&)`; the
+    # per-strand namespaces are what keep them from colliding.
     _compile_or_fail(
         tmp_path,
         generate_document_cpp(_two_strands_sharing_a_mode_name()),
@@ -449,9 +461,8 @@ def test_two_strands_sharing_mode_names_compile_in_one_document_export(tmp_path)
 
 @pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
 def test_non_profile_export_compiles_despite_default_mode_name(tmp_path):
-    # Regression test: _effective_modes() names the synthetic single-animation
-    # mode "Default", which used to sanitize to the bare identifier `default`,
-    # a reserved C++ keyword, and failed to compile.
+    # _effective_modes() names the synthetic single-animation mode "Default",
+    # which must not sanitize to the reserved C++ keyword `default`.
     cfg = StrandConfig(name="Solo", use_profile=False)
     cfg.animation.kind = AnimationKind.RAINBOW
 
@@ -675,8 +686,11 @@ def test_a_custom_source_leaves_a_hook_and_says_how_to_assign_it():
 
     assert "inline LedStrand::LevelFn overheat = nullptr;" in out
     assert "s.levelSource(source::overheat, 20.0, 70.0, false, 0);" in out
-    # The banner is the copy-paste instructions, so the assignment belongs there.
-    assert "//        arm::source::overheat = [] { return someValue(); };" in out
+    # The banner is the copy-paste instructions, and a custom source is the one
+    # thing the export cannot finish, so the assignment sits in the initialize()
+    # it hands over - right where it has to run, ahead of begin().
+    assert '//            arm::source::overheat = [] { return 0.0; };   // TODO: "Overheat"' in out
+    assert out.index("arm::source::overheat = []") < out.index("hitlib::studio::begin();")
 
 
 def test_a_manual_meter_is_a_levelfill_with_nothing_attached():
@@ -952,5 +966,235 @@ def test_the_drivebase_heat_export_compiles_against_real_hitlib_headers(tmp_path
         "    group.start();\n"
         "    driveHeat::apply(group);\n"
         "    group.activateMode(driveHeat::mode::defaultMode);\n"
+        "}\n",
+    )
+
+
+def _twinkle_and_bitscroll_overlays() -> StrandConfig:
+    """A Split mask whose bins twinkle, and a Custom mask with one twinkling
+    region and one scrolling one - the whole new overlay vocabulary at once."""
+    cfg = StrandConfig(name="Sparkle", length=30, use_profile=True)
+
+    split = ModeConfig(name="Split", priority=10)
+    split.animation.kind = AnimationKind.SOLID
+    split.splice.enabled = True
+    split.splice.mode = SpliceModeKind.SPLIT
+    split.splice.sections = 3
+    split.splice.use_overlay = True
+    split.splice.overlay.kind = OverlayAnimationKind.TWINKLE
+    split.splice.overlay.palette = [0xFF0000, 0x00FF00]
+    split.splice.overlay.density_pct = 40
+    split.splice.overlay.fade_step = 24
+
+    custom = ModeConfig(name="Custom", priority=20)
+    custom.animation.kind = AnimationKind.OFF
+    custom.splice.enabled = True
+    custom.splice.mode = SpliceModeKind.CUSTOM
+    sparkle = SpliceRegionConfig(start=0, width=10)
+    sparkle.animation = OverlayAnimationConfig(
+        kind=OverlayAnimationKind.TWINKLE, bg_color=0x000011, palette=[0xFFFFFF], density_pct=50
+    )
+    scroll = SpliceRegionConfig(start=15, width=12)
+    scroll.animation = OverlayAnimationConfig(
+        kind=OverlayAnimationKind.BITSCROLL, color=0x00FFAA, speed=2, segment_width=2,
+        spacing=3, repeating=True, invert=True,
+    )
+    custom.splice.regions = [sparkle, scroll]
+
+    cfg.profile_modes = [split, custom]
+    cfg.active_mode_indices = [0]
+    return cfg
+
+
+def test_twinkle_and_bitscroll_overlays_reach_the_export():
+    out = generate_cpp(_twinkle_and_bitscroll_overlays())
+
+    assert "s.overlayTwinkle({0xFF0000, 0x00FF00}, 40, 24, 0x000000);" in out
+    assert (
+        "{.start = 0, .width = 10, .kind = LedStrand::SpliceRegionAnimKind::TWINKLE, "
+        ".bgColor = 0x000011, .palette = {0xFFFFFF}, .densityPct = 50, .fadeStep = 16}"
+    ) in out
+    assert (
+        "{.start = 15, .width = 12, .kind = LedStrand::SpliceRegionAnimKind::BITSCROLL, "
+        ".color = 0x00FFAA, .bgColor = 0x000000, .speed = 2, .invert = true, "
+        ".segmentWidth = 2, .spacing = 3, .repeating = true}"
+    ) in out
+
+
+def test_an_overlay_twinkle_without_a_palette_is_caught():
+    cfg = _twinkle_and_bitscroll_overlays()
+    cfg.profile_modes[0].splice.overlay.palette = []
+    cfg.profile_modes[1].splice.regions[0].animation.palette = []
+
+    errors = validate_for_export(cfg)
+    assert sum("Twinkle needs at least one palette color" in e for e in errors) == 2
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_twinkle_and_bitscroll_overlays_compile_against_real_hitlib_headers(tmp_path):
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_twinkle_and_bitscroll_overlays()),
+        "namespace sparkle = hitlib::profiles::sparkle;\n\n"
+        "hitlib::LedStrand sparkleStrand(sparkle::adiPort, sparkle::length,\n"
+        "                                sparkle::refreshMs);\n\n"
+        "void useProfile() {\n"
+        "    sparkle::apply(sparkleStrand);\n"
+        "    sparkleStrand.activateMode(sparkle::mode::custom);\n"
+        "}\n",
+    )
+
+
+# ============================================================================
+# Autowiring - the export is the design, not a description of one
+# ============================================================================
+
+
+def test_the_export_defines_the_strand_and_the_group_it_runs_on():
+    # The point of the whole thing: nothing about the hardware has to be
+    # retyped on the robot, because the export already declares it.
+    out = generate_cpp(StrandConfig(name="My Robot", adi_port=6, length=63))
+
+    assert "inline LedStrand strand{adiPort, length, refreshMs};" in out
+    assert "namespace hitlib::studio {" in out
+    assert "groups[0].add(&profiles::myRobot::strand);" in out
+    assert "profiles::myRobot::apply(profiles::myRobot::strand);" in out
+
+
+def test_begin_brings_the_strand_up_in_its_first_mode():
+    out = generate_cpp(_elaborate_config())
+    assert (
+        "profiles::classicDemo::strand.activateMode(profiles::classicDemo::mode::idle);"
+    ) in out
+
+
+def test_begin_is_a_no_op_the_second_time():
+    # An autonomous routine that re-runs its own setup must not end up with the
+    # strand registered twice and a second refresh task ticking it.
+    out = generate_cpp(StrandConfig(name="Solo"))
+    body = out[out.index("inline void begin() {") : out.index("inline void begin(LedGroup&")]
+    assert "static bool started = false;" in body
+    assert "if (started) return;" in body
+
+
+def test_the_group_is_started_at_the_designs_own_refresh_interval():
+    # A strand converts flash durations to ticks with its own refreshMs, so
+    # the group must tick at that interval or flashes run at the wrong rate.
+    out = generate_cpp(StrandConfig(name="Slow", refresh_ms=25))
+    assert "constexpr uint32_t refreshMs  = 25;" in out
+    assert "groups[0].init(25);" in out
+    assert "groups[0].init();" not in out
+
+
+def test_strands_designed_at_different_intervals_get_a_group_each():
+    # One group ticks everything it owns at one rate, so two designs that were
+    # previewed at different rates cannot share it without one running wrong.
+    fast, slow = _two_strands_sharing_a_mode_name()
+    fast.refresh_ms, slow.refresh_ms = 10, 40
+    out = generate_document_cpp([fast, slow])
+
+    assert "inline LedGroup groups[2];" in out
+    assert "groups[0].add(&profiles::left::strand);" in out
+    assert "groups[0].init(10);" in out
+    assert "groups[1].add(&profiles::right::strand);" in out
+    assert "groups[1].init(40);" in out
+
+
+def test_strands_sharing_an_interval_share_one_group():
+    out = generate_document_cpp(_two_strands_sharing_a_mode_name())
+    assert "inline LedGroup groups[1];" in out
+    assert "groups[0].add(&profiles::left::strand);" in out
+    assert "groups[0].add(&profiles::right::strand);" in out
+
+
+def test_a_mode_named_strand_cannot_shadow_the_strand_object():
+    # Same hazard as the `length` mode: `mode::strand` would be fine, but the
+    # namer has to know `strand` is taken or the constant collides with it.
+    cfg = StrandConfig(use_profile=True)
+    mode = ModeConfig(name="Strand")
+    mode.animation.kind = AnimationKind.SOLID
+    cfg.profile_modes = [mode]
+    out = generate_cpp(cfg)
+
+    mode_block = out[out.index("namespace mode {") : out.index("}  // namespace mode")]
+    assert "constexpr uint8_t strand =" not in mode_block
+    assert "strand2" in mode_block
+
+
+def test_opting_out_takes_the_strand_and_the_group_with_it():
+    # Both halves have to sit behind the same guard - a strand with no group to
+    # tick it would be worse than neither.
+    out = generate_cpp(StrandConfig(name="Solo"))
+    assert out.count("#ifndef HITLIB_STUDIO_NO_AUTOWIRE") == 2
+    for marker in ("inline LedStrand strand{", "namespace hitlib::studio {"):
+        at = out.index(marker)
+        # rindex raises if there is no guard ahead of it at all, which is the
+        # failure this is really watching for.
+        assert out.rindex("#ifndef HITLIB_STUDIO_NO_AUTOWIRE", 0, at) < at
+        assert at < out.index("#endif", at)
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_the_whole_setup_is_the_include_and_one_call(tmp_path):
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_elaborate_config()),
+        "void initialize() {\n"
+        "    hitlib::studio::begin();\n"
+        "}\n",
+    )
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_begin_into_a_group_the_team_already_owns_compiles(tmp_path):
+    # The escape hatch for a codebase that runs LEDs of its own: it keeps
+    # init(), start() and the interval, and these strands join its group.
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_elaborate_config()),
+        "hitlib::LedStrand ourOwnStrand(3, 20);\n"
+        "hitlib::LedGroup  ourGroup;\n\n"
+        "void initialize() {\n"
+        "    ourGroup.add(&ourOwnStrand);\n"
+        "    hitlib::studio::begin(ourGroup);\n"
+        "    ourGroup.init(20);\n"
+        "    ourGroup.start();\n"
+        "}\n",
+    )
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_opting_out_still_compiles_as_a_plain_profile(tmp_path):
+    # With the macro defined the file is only the profile and the constants,
+    # so a team wiring strands by hand can still use it.
+    _compile_or_fail(
+        tmp_path,
+        generate_cpp(_elaborate_config()),
+        "namespace classicDemo = hitlib::profiles::classicDemo;\n\n"
+        "hitlib::LedStrand testStrand(classicDemo::adiPort, classicDemo::length,\n"
+        "                            classicDemo::refreshMs);\n"
+        "hitlib::LedGroup  group;\n\n"
+        "void initialize() {\n"
+        "    group.add(&testStrand);\n"
+        "    group.init(classicDemo::refreshMs);\n"
+        "    group.start();\n"
+        "    classicDemo::apply(group);\n"
+        "    testStrand.activateMode(classicDemo::mode::idle);\n"
+        "}\n",
+        defines=("HITLIB_STUDIO_NO_AUTOWIRE",),
+    )
+
+
+@pytest.mark.skipif(_find_toolchain_compiler() is None, reason="PROS ARM toolchain not installed")
+def test_a_multi_strand_document_autowires_and_compiles(tmp_path):
+    _compile_or_fail(
+        tmp_path,
+        generate_document_cpp(_two_strands_sharing_a_mode_name()),
+        "void initialize() {\n"
+        "    hitlib::studio::begin();\n"
+        "}\n\n"
+        "void opcontrol() {\n"
+        "    hitlib::profiles::left::strand.activateMode(hitlib::profiles::left::mode::idle);\n"
+        "    hitlib::profiles::right::strand.activateMode(hitlib::profiles::right::mode::idle);\n"
         "}\n",
     )

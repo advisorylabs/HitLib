@@ -1,9 +1,8 @@
-"""Owns one strand's engine instance + its own refresh-rate QTimer.
+"""Owns one strand's engine instance and its own refresh-rate QTimer.
 
-Each strand gets its own QTimer at its configured refresh_ms so animation
-speed in the preview matches what the same refresh_ms would look like on
-real hardware, a single shared timer would make strands with different
-refresh_ms values tick (and thus animate) at the wrong relative speed.
+Each strand gets its own QTimer at its configured refresh_ms, so preview speed
+matches hardware. A shared timer would tick strands with different refresh_ms
+values at the wrong relative speed.
 """
 
 from __future__ import annotations
@@ -53,6 +52,22 @@ class StrandSession(QObject):
             self.timer.start()
         self.ticked.emit()
 
+    def reset(self) -> None:
+        """Stop and go dark.
+
+        The engine strand is rebuilt so the next play starts from the
+        animation's first frame, but nothing is composited until then: Reset
+        means an unlit strip, not a jump to frame zero. Song position carries
+        over rather than rewinding - that belongs to the Song bar's transport.
+        """
+        position_ms = self.strand.music_position_ms()
+        paused = self.strand.music_paused
+        self.timer.stop()
+        self.strand = make_strand(self.config, self.music)
+        self.strand.music_pause(paused)
+        self.strand.music_seek(position_ms)
+        self.ticked.emit()
+
     def reapply_animation(self) -> None:
         """Only animation/splice params changed - no need to recreate the Strand."""
         apply_strand_config(self.strand, self.config, self.music)
@@ -60,7 +75,7 @@ class StrandSession(QObject):
 
     def set_music(self, music: MusicBinding | None) -> None:
         """Point this session at a (re)baked song and re-issue the animation,
-        which is what actually hands the new envelope to the engine strand."""
+        which hands the new envelope to the engine strand."""
         self.music = music
         self.reapply_animation()
 

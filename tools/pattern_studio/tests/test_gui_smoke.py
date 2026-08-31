@@ -88,6 +88,37 @@ def test_reset_all_and_reset_selected_do_not_raise(qapp):
     win._reset_all()
 
 
+def test_reset_blanks_the_strand_rather_than_rewinding_it(qapp):
+    win = MainWindow()
+    session = win.sessions[0]
+    session.config.animation.kind = AnimationKind.SOLID
+    session.config.animation.color = 0x00FF00
+    session.rebuild()
+    session.strand.tick()
+    assert any(session.strand.pixels)
+
+    win._reset_all()
+    assert session.strand.pixels == [0x000000] * session.config.length
+    assert not session.running
+    assert win._running is False
+
+    # ...and the animation is still there to start over from.
+    win._play_all()
+    session.strand.tick()
+    assert session.strand.pixels == [0x00FF00] * session.config.length
+
+
+def test_reset_selected_leaves_other_strands_running(qapp):
+    win = MainWindow()
+    win.add_strand()
+    win.strand_list.select(0)
+
+    win._reset_selected()
+    assert win.sessions[0].running is False
+    assert win.sessions[1].running is True
+    assert win._running is True  # only the "All" actions move the default
+
+
 def test_selected_transport_buttons_disabled_without_a_strand(qapp):
     win = MainWindow()
     win.remove_strand(0)

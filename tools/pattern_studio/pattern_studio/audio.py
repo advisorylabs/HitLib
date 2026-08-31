@@ -1,9 +1,9 @@
 """Decodes an audio file and measures its per-frame loudness, band by band.
 
-Uses Qt Multimedia's QAudioDecoder, which PySide6 already ships with an ffmpeg
-backend. That is what makes MP3, M4A/AAC, FLAC, OGG, WMA and WAV all work
-without adding a dependency or asking anyone to install a codec, and it means
-the formats a design can use are the same on every machine.
+Uses Qt Multimedia's QAudioDecoder, which PySide6 ships with an ffmpeg backend,
+so MP3, M4A/AAC, FLAC, OGG, WMA and WAV all decode with no added dependency and
+no codec to install. The formats a design can use are therefore the same on
+every machine.
 
 ### Why the arithmetic looks the way it does
 

@@ -183,8 +183,8 @@ def test_a_loaded_song_reaches_every_music_strand(qapp, tmp_path):
 
 
 def test_two_strands_can_follow_different_bands_of_one_song(qapp, tmp_path):
-    # The reason band is a per-strand choice: one strip pumping on the kick and
-    # another sparkling on the hats is the whole point of having bands.
+    # Band is a per-strand choice so one strip can pump on the kick while
+    # another sparkles on the hats.
     win = _window_with_song(tmp_path)
     win.add_strand()
     win.sessions[0].config.animation.kind = AnimationKind.MUSIC

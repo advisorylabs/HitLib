@@ -60,7 +60,7 @@ def test_split_mode_animation_content_reveals_overlay_in_masked_bins(win, qapp):
     strand = win.sessions[0].strand
     strand.tick()
     # First half is masked out and should show the overlay solid color;
-    # this only works now that the overlay display no longer requires
+    # Overlay display does not require a particular base animation, so:
     # CENTER_SPREAD to be the active base animation.
     assert strand.pixels[0] == 0x00FF00
     assert strand.pixels[1] == 0x00FF00
@@ -164,3 +164,38 @@ def test_remove_region_clears_editor_when_list_empties(win, qapp):
     assert splice.region_list.count() == 0
     assert not splice.region_editor.isEnabled()
     assert win.sessions[0].config.splice.regions == []
+
+
+def test_both_splice_modes_offer_the_whole_overlay_vocabulary(win, qapp):
+    """Twinkle and Bitscroll are pickable for Split's shared overlay and for a
+    Custom region alike - only Gauge is region-only."""
+    masks = win.inspector.masks_panel
+    splice = masks.splice_panel
+    _select_splice_mask(masks)
+
+    for panel in (splice.overlay_panel, splice.region_anim_panel):
+        for kind in (OverlayAnimationKind.TWINKLE, OverlayAnimationKind.BITSCROLL):
+            assert panel.kind_combo.findData(kind) >= 0
+
+
+def test_a_twinkling_custom_region_reaches_the_engine(win, qapp):
+    inspector = win.inspector
+    masks = inspector.masks_panel
+    splice = masks.splice_panel
+
+    _select_splice_mask(masks)
+    idx = splice.mode_combo.findData(SpliceModeKind.CUSTOM)
+    splice.mode_combo.setCurrentIndex(idx)
+    splice._add_region()
+    qapp.processEvents()
+
+    idx = splice.region_anim_panel.kind_combo.findData(OverlayAnimationKind.TWINKLE)
+    splice.region_anim_panel.kind_combo.setCurrentIndex(idx)
+    splice.region_anim_panel.density_spin.setValue(100)
+    splice.region_anim_panel.density_spin.valueChanged.emit(100)
+    qapp.processEvents()
+
+    region = win.sessions[0].config.splice.regions[0]
+    assert region.animation.kind == OverlayAnimationKind.TWINKLE
+    assert region.animation.density_pct == 100
+    assert win.sessions[0].strand.splice_regions[0].twinkling

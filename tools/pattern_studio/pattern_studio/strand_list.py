@@ -207,7 +207,7 @@ class StrandListPanel(QWidget):
 
         btn_row = QHBoxLayout()
         # "Add" rather than "Add Strand": with an icon in front, the longer
-        # label plus "Remove" no longer fits the sidebar's width, and the
+        # label plus "Remove" exceeds the sidebar width, and the
         # STRANDS heading directly above already says what's being added.
         self.add_btn = QPushButton(theme.icon("plus"), " Add")
         self.add_btn.setProperty("role", "primary")

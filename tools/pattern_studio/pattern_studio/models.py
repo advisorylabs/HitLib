@@ -110,6 +110,8 @@ class OverlayAnimationKind(str, Enum):
     FLASH = "flash"
     FLOW = "flow"
     RAINBOW = "rainbow"
+    TWINKLE = "twinkle"
+    BITSCROLL = "bitscroll"
     GAUGE = "gauge"
 
 
@@ -121,6 +123,8 @@ OVERLAY_ANIMATION_KIND_LABELS: dict[OverlayAnimationKind, str] = {
     OverlayAnimationKind.FLASH: "Flash",
     OverlayAnimationKind.FLOW: "Flow (Gradient)",
     OverlayAnimationKind.RAINBOW: "Rainbow",
+    OverlayAnimationKind.TWINKLE: "Twinkle",
+    OverlayAnimationKind.BITSCROLL: "Bitscroll",
     OverlayAnimationKind.GAUGE: "Gauge (Meter)",
 }
 
@@ -172,10 +176,15 @@ class OverlayAnimationConfig:
     animation (one buffer per region - see SpliceRegionConfig).
 
     GAUGE is the one kind that is only meaningful in the second of those: it
-    turns a region into an independent meter following its own reading, which
-    is what puts six motor-temperature gauges on one strip. The Split-mode
-    overlay is a single shared buffer, so a gauge there would be one meter
-    stretched over every masked bin - the panel hides the choice.
+    turns a region into an independent meter following its own reading, so one
+    strip can carry several. The Split-mode overlay is a single shared buffer,
+    where a gauge would be one meter stretched over every masked bin, so the
+    panel hides the choice there.
+
+    TWINKLE and BITSCROLL carry the same parameters as their AnimationConfig
+    counterparts, minus `bounce`: both an overlay and a region are a single
+    scrolling buffer, and bouncing needs a wider master pattern to slide a
+    window over.
     """
 
     kind: OverlayAnimationKind = OverlayAnimationKind.SOLID
@@ -189,6 +198,19 @@ class OverlayAnimationConfig:
     # FLOW only: loop the gradient back to `color` instead of cutting straight
     # from `color2` to `color` at the wrap.
     seamless: bool = True
+    # Reverse direction: a BITSCROLL scrolls the other way, a GAUGE bar fills
+    # from the far end of the region.
+    invert: bool = False
+
+    # TWINKLE.
+    density_pct: int = 30
+    fade_step: int = 16
+    palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
+
+    # BITSCROLL.
+    segment_width: int = 3
+    spacing: int = 5
+    repeating: bool = True
 
     # GAUGE. The source fields match AnimationConfig's Fill ones exactly - the
     # same catalog, the same meaning, the same codegen - because a gauge region
@@ -201,14 +223,12 @@ class OverlayAnimationConfig:
     source_full: int = 100
     source_wrap: bool = False
     smoothing: int = 0
-    invert: bool = False
     style: GaugeStyleKind = GaugeStyleKind.HEAT
     blend: GaugeBlendKind = GaugeBlendKind.LERP
     stops: list[GaugeStopConfig] = field(default_factory=list)
     # Preview only, never exported - see AnimationConfig's identically named
-    # fields. Each region sweeps from its own phase offset so six gauges in a
-    # row don't move in lockstep, which would hide exactly the difference
-    # between them that the design is for.
+    # fields. Each region sweeps from its own phase offset so a row of gauges
+    # does not move in lockstep.
     preview_level: int = 50
     preview_sweep: bool = True
 

@@ -120,8 +120,8 @@ def test_brand_rule_offset_wraps_within_a_tile(qapp):
 
 
 def test_brand_rule_actually_moves(qapp):
-    """A roll nobody can see is the bug this widget exists to avoid: pinned
-    to the window's width the sweep was so shallow it read as static."""
+    """The sweep must visibly travel: pinned to the window width the gradient
+    is shallow enough to read as static."""
     rule = BrandRule()
     rule.resize(400, rule.height())
     before = _render_on_black(rule)
@@ -210,7 +210,7 @@ def test_spill_stop_sits_under_the_pixel_casting_it(qapp):
 
 
 def test_lit_strip_throws_light_past_its_own_track(qapp):
-    """The whole point of the spill pass: color outside the bezel."""
+    """The spill pass puts color outside the bezel."""
     canvas = _canvas_with(AnimationKind.SOLID, color=0x00FF00)
     image = _render_on_black(canvas)
     unlit = _render_on_black(_canvas_with(AnimationKind.OFF))

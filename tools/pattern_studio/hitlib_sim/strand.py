@@ -70,10 +70,9 @@ class MusicTrack:
 class SpliceRegionAnimKind(Enum):
     """Mirrors LedStrand::SpliceRegionAnimKind.
 
-    OFF through RAINBOW share the overlay* animations' vocabulary, since each
-    region's buffer is built the same way. GAUGE is the exception: it animates
-    from a reading rather than from a clock, which is what makes one region an
-    independent meter.
+    OFF through BITSCROLL share the overlay* animations' vocabulary, since each
+    region's buffer is built the same way. GAUGE animates from a reading rather
+    than from a clock, making the region an independent meter.
     """
 
     OFF = auto()
@@ -82,6 +81,8 @@ class SpliceRegionAnimKind(Enum):
     FLASH = auto()
     FLOW = auto()
     RAINBOW = auto()
+    TWINKLE = auto()
+    BITSCROLL = auto()
     GAUGE = auto()
 
 
@@ -140,6 +141,17 @@ class SpliceRegion:
     on_ms: int = 250
     off_ms: int = 250
     seamless: bool = True  # FLOW only.
+    # Reverse direction: a BITSCROLL scrolls the other way, a GAUGE BAR fills
+    # from the far end of the region.
+    invert: bool = False
+    # TWINKLE only.
+    palette: tuple[int, ...] = ()
+    density_pct: int = 30
+    fade_step: int = 16
+    # BITSCROLL only.
+    segment_width: int = 3
+    spacing: int = 5
+    repeating: bool = True
     # GAUGE only, ignored by every other kind. `read` of None leaves the
     # region hand-driven through set_region_level().
     read: Optional[Callable[[], float]] = None
@@ -147,12 +159,124 @@ class SpliceRegion:
     full_at: float = 100.0
     wrap: bool = False
     smoothing: int = 0
-    invert: bool = False
     style: GaugeStyle = GaugeStyle.HEAT
     blend: GaugeBlend = GaugeBlend.LERP
     #: The scale, in the reading's own units. Empty falls back to `color` at
     #: `empty_at` blending to `color2` at `full_at`.
     stops: tuple[GaugeStop, ...] = ()
+
+
+@dataclass
+class _TwinkleState:
+    """Per-pixel twinkle runtime for one buffer - port of
+    LedStrand::TwinkleState.
+
+    Held as its own object rather than as loose strand fields because three
+    different buffers animate this way: the base strand, the overlay, and any
+    number of custom regions.
+    """
+
+    palette: list[int] = field(default_factory=list)
+    level: list[int] = field(default_factory=list)
+    target: list[int] = field(default_factory=list)
+    color_idx: list[int] = field(default_factory=list)
+    hold_ticks: list[int] = field(default_factory=list)
+    density_pct: int = 30
+    fade_step: int = 16
+    bg_color: int = 0x000000
+
+    def reset(self, width: int, colors: Sequence[int], density_pct: int, fade_step: int,
+              bg_color: int) -> None:
+        self.palette = list(colors)
+        self.level = [0] * width
+        self.target = [0] * width
+        self.color_idx = [0] * width
+        self.hold_ticks = [0] * width
+        self.density_pct = min(density_pct, 100)
+        self.fade_step = max(fade_step, 1)
+        self.bg_color = bg_color
+
+
+def _advance_twinkle_into(t: _TwinkleState, buf: list[int], rng: random.Random) -> None:
+    """Repaint `buf` from `t`, one tick's worth - mirrors
+    LedStrand::advanceTwinkleInto(). The buffer is passed in rather than read
+    off the strand so the base strand, the overlay and each custom region can
+    all sparkle at once, each over its own pixels."""
+    width = min(len(t.level), len(buf))
+    if width == 0:
+        return
+
+    active_count = sum(1 for i in range(width) if t.level[i] > 0 or t.hold_ticks[i] > 0)
+    target_count = (width * t.density_pct + 50) // 100
+
+    if active_count < target_count and t.palette:
+        # Reservoir-sample one idle pixel to spawn, at most one per tick.
+        chosen = -1
+        idle_seen = 0
+        for i in range(width):
+            if t.level[i] == 0 and t.hold_ticks[i] == 0:
+                idle_seen += 1
+                if rng.randrange(idle_seen) == 0:
+                    chosen = i
+        if chosen >= 0:
+            t.color_idx[chosen] = rng.randrange(len(t.palette))
+            t.target[chosen] = 255
+
+    for i in range(width):
+        if t.hold_ticks[i] > 0:
+            t.hold_ticks[i] -= 1
+            if t.hold_ticks[i] == 0:
+                t.target[i] = 0
+        elif t.level[i] < t.target[i]:
+            t.level[i] = min(t.level[i] + t.fade_step, 255)
+            if t.level[i] >= t.target[i]:
+                t.hold_ticks[i] = _TWINKLE_HOLD_TICKS
+        elif t.level[i] > t.target[i]:
+            t.level[i] = max(t.level[i] - t.fade_step, 0)
+
+        fg = t.palette[t.color_idx[i]] if t.palette else 0
+        buf[i] = lerp_color(t.bg_color, fg, t.level[i])
+
+
+def _build_bitscroll_unit(segments: Sequence[BitScrollSegment], bg_color: int,
+                          spacing: int) -> tuple[list[int], int]:
+    """One tile of a bitscroll pattern, plus its content length - the size up
+    to the last lit pixel, i.e. without the trailing gap, which only separates
+    one tile from the next. Mirrors LedStrand::buildBitscrollUnit().
+
+    Capped at MAX_LEDS: a pattern wider than the whole strip can't usefully
+    tile, and the cap keeps the downstream size math in range.
+    """
+    unit: list[int] = []
+    content_len = 0
+    for seg in segments:
+        unit.extend([seg.color] * min(seg.width, MAX_LEDS - len(unit)))
+        content_len = len(unit)
+        if len(unit) >= MAX_LEDS:
+            break
+        unit.extend([bg_color] * min(spacing, MAX_LEDS - len(unit)))
+        if len(unit) >= MAX_LEDS:
+            break
+    if not unit:
+        unit.append(bg_color)
+        content_len = len(unit)
+    return unit, content_len
+
+
+def _fill_bitscroll_buffer(unit: list[int], content_len: int, width: int, bg_color: int,
+                           speed: int, invert: bool, repeating: bool) -> tuple[list[int], int]:
+    """Lay one tile across `width` pixels - tiled when `repeating`, a single
+    copy on `bg_color` when not - and return that buffer with the per-tick
+    shift that scrolls it. Mirrors LedStrand::fillBitscrollBuffer()."""
+    if repeating:
+        reps = (width // len(unit)) + 2
+        buf = unit * reps
+    else:
+        buf = [bg_color] * width
+        n = min(content_len, width)
+        buf[:n] = unit[:n]
+    sp = speed % len(buf)
+    return buf, ((len(buf) - sp) % len(buf)) if invert else sp
 
 
 @dataclass
@@ -166,10 +290,14 @@ class _SpliceRegionState:
     buffer: list[int]
     shift_step: int = 0
     shift_speed: int = 0
-    # Index in the sequence passed to splice_mask_custom(), which is what
+    # Index in the sequence passed to splice_mask_custom(), which
     # set_region_level() addresses. Not the index in splice_regions: SOLID and
     # OFF regions never get a state, so the two disagree.
     user_idx: int = 0
+    # TWINKLE regions repaint their buffer every tick rather than shifting it,
+    # the same way the strand-wide twinkle does.
+    twinkling: bool = False
+    twinkle: _TwinkleState = field(default_factory=_TwinkleState)
     # FLASH regions blink their whole buffer on a tick timer instead of
     # shifting it, mirroring the strand-wide flash state.
     flashing: bool = False
@@ -246,6 +374,9 @@ class Strand:
         self.flash_counter = 0
         self.flash_lit = True
 
+        # Overlay twinkle - mirrors the base twinkle state above.
+        self.overlay_twinkle_state = _TwinkleState()
+
         # Overlay flash - mirrors the base flash state above.
         self.overlay_flash_color = 0
         self.overlay_flash_bg_color = 0
@@ -261,14 +392,7 @@ class Strand:
         self.bounce_speed = 1
 
         # Twinkle
-        self.twinkle_level: list[int] = [0] * self.length
-        self.twinkle_target: list[int] = [0] * self.length
-        self.twinkle_color_idx: list[int] = [0] * self.length
-        self.twinkle_hold_ticks: list[int] = [0] * self.length
-        self.twinkle_palette: list[int] = []
-        self.twinkle_density_pct = 30
-        self.twinkle_fade_step = 16
-        self.twinkle_bg_color = 0
+        self.twinkle_state = _TwinkleState()
         self._rng = random.Random()
 
         # Level meter - buffer holds the meter's colors across the whole
@@ -291,7 +415,7 @@ class Strand:
 
         # Music sync - playback is a clock anchor rather than a tick counter,
         # mirroring the firmware. now_ms stands in for pros::millis() here,
-        # which is what lets Pattern Studio scrub by seeking.
+        # so Pattern Studio can scrub by seeking.
         self.music_track: Optional[MusicTrack] = None
         self.music_anchor_ms = 0  # now_ms that corresponds to position 0
         self.music_paused_at = 0  # position held while paused
@@ -337,7 +461,7 @@ class Strand:
         elif self.bitscroll_master:
             self._advance_bitscroll_bounce()
         elif self.anim_mode == AnimMode.TWINKLE:
-            self._advance_twinkle()
+            _advance_twinkle_into(self.twinkle_state, self.buffer, self._rng)
         elif self.anim_mode == AnimMode.FLASH:
             self._advance_flash()
         elif self.anim_mode == AnimMode.LEVEL:
@@ -349,6 +473,8 @@ class Strand:
             self._shift_overlay_buffer()
         elif self.overlay_anim_mode == AnimMode.FLASH:
             self._advance_overlay_flash()
+        elif self.overlay_anim_mode == AnimMode.TWINKLE:
+            _advance_twinkle_into(self.overlay_twinkle_state, self.overlay_buffer, self._rng)
 
         self._advance_splice_alternating(now)
         self._advance_splice_regions()
@@ -473,96 +599,24 @@ class Strand:
                 bg_color: int = 0) -> None:
         self.pulse_run_len = 0
         self.bitscroll_master = []
-        self.twinkle_palette = list(colors)
-        self.twinkle_level = [0] * self.length
-        self.twinkle_target = [0] * self.length
-        self.twinkle_color_idx = [0] * self.length
-        self.twinkle_hold_ticks = [0] * self.length
-        self.twinkle_density_pct = min(density_pct, 100)
-        self.twinkle_fade_step = max(fade_step, 1)
-        self.twinkle_bg_color = bg_color
+        self.twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color)
         if len(self.buffer) != self.length:
             self.buffer = [bg_color] * self.length
         self.anim_mode = AnimMode.TWINKLE
-
-    def _advance_twinkle(self) -> None:
-        active_count = sum(
-            1 for i in range(self.length)
-            if self.twinkle_level[i] > 0 or self.twinkle_hold_ticks[i] > 0
-        )
-        target_count = (self.length * self.twinkle_density_pct + 50) // 100
-
-        if active_count < target_count and self.twinkle_palette:
-            # Reservoir-sample one idle pixel to spawn, at most one per tick.
-            chosen = -1
-            idle_seen = 0
-            for i in range(self.length):
-                if self.twinkle_level[i] == 0 and self.twinkle_hold_ticks[i] == 0:
-                    idle_seen += 1
-                    if self._rng.randrange(idle_seen) == 0:
-                        chosen = i
-            if chosen >= 0:
-                self.twinkle_color_idx[chosen] = self._rng.randrange(len(self.twinkle_palette))
-                self.twinkle_target[chosen] = 255
-
-        for i in range(self.length):
-            if self.twinkle_hold_ticks[i] > 0:
-                self.twinkle_hold_ticks[i] -= 1
-                if self.twinkle_hold_ticks[i] == 0:
-                    self.twinkle_target[i] = 0
-            elif self.twinkle_level[i] < self.twinkle_target[i]:
-                nl = self.twinkle_level[i] + self.twinkle_fade_step
-                self.twinkle_level[i] = min(nl, 255)
-                if self.twinkle_level[i] >= self.twinkle_target[i]:
-                    self.twinkle_hold_ticks[i] = _TWINKLE_HOLD_TICKS
-            elif self.twinkle_level[i] > self.twinkle_target[i]:
-                nl = self.twinkle_level[i] - self.twinkle_fade_step
-                self.twinkle_level[i] = max(nl, 0)
-
-            fg = self.twinkle_palette[self.twinkle_color_idx[i]] if self.twinkle_palette else 0
-            self.buffer[i] = lerp_color(self.twinkle_bg_color, fg, self.twinkle_level[i])
 
     def bitscroll(self, segments: Sequence[BitScrollSegment], speed: int, invert: bool = False,
                   bg_color: int = 0, bounce: bool = False, spacing: int = 5,
                   repeating: bool = True) -> None:
         self.pulse_run_len = 0
 
-        unit: list[int] = []
-        # Size of `unit` up to the last segment pixel, i.e. excluding the
-        # trailing run of `spacing`, which only exists to separate one tile
-        # from the next. A single non-tiled copy shouldn't carry it.
-        content_len = 0
-        for seg in segments:
-            for _ in range(seg.width):
-                if len(unit) >= MAX_LEDS:
-                    break
-                unit.append(seg.color)
-            content_len = len(unit)
-            if len(unit) >= MAX_LEDS:
-                break
-            for _ in range(spacing):
-                if len(unit) >= MAX_LEDS:
-                    break
-                unit.append(bg_color)
-            if len(unit) >= MAX_LEDS:
-                break
-        if not unit:
-            unit.append(bg_color)
-            content_len = len(unit)
+        unit, content_len = _build_bitscroll_unit(segments, bg_color, spacing)
 
         if not bounce:
             self.bitscroll_master = []
-            if repeating:
-                reps = (self.length // len(unit)) + 2
-                self.buffer = unit * reps
-            else:
-                self.buffer = [bg_color] * self.length
-                n = min(len(unit), self.length)
-                self.buffer[:n] = unit[:n]
             self.shift_step = 0
-            buf_size = len(self.buffer)
-            sp = speed % buf_size
-            self.shift_variant = ((buf_size - sp) % buf_size) if invert else sp
+            self.buffer, self.shift_variant = _fill_bitscroll_buffer(
+                unit, content_len, self.length, bg_color, speed, invert, repeating
+            )
             self.anim_mode = AnimMode.SHIFT
         else:
             self.bitscroll_master = []
@@ -796,9 +850,8 @@ class Strand:
 
     def _level_pixel(self, i: int, full: int, frac: int) -> int:
         """The color one meter pixel shows, given this frame's fill cutoff:
-        `full` whole lit pixels and `frac` of the way into the next one. The
-        partial pixel is what keeps a 30-pixel strand from showing only 30
-        distinguishable levels."""
+        `full` whole lit pixels and `frac` into the next one. The partial pixel
+        gives a 30-pixel strand more than 30 distinguishable levels."""
         # Index along the direction of the fill, so the gradient always begins
         # where the fill begins.
         f = (self.length - 1 - i) if self.level_invert else i
@@ -870,6 +923,24 @@ class Strand:
                 elif r.kind == SpliceRegionAnimKind.RAINBOW:
                     state.buffer = gen_rainbow(region_width)
                     state.shift_speed = r.speed
+                elif r.kind == SpliceRegionAnimKind.TWINKLE:
+                    # Repaints its own pixels every tick, like the strand-wide
+                    # twinkle, so it never scrolls.
+                    state.buffer = [r.bg_color] * region_width
+                    state.shift_speed = 0
+                    state.twinkling = True
+                    state.twinkle.reset(region_width, r.palette, r.density_pct, r.fade_step,
+                                        r.bg_color)
+                elif r.kind == SpliceRegionAnimKind.BITSCROLL:
+                    # No bounce: a region's buffer scrolls, and bouncing needs a
+                    # wider master pattern to slide a window over.
+                    unit, content_len = _build_bitscroll_unit(
+                        [BitScrollSegment(color=r.color, width=r.segment_width)],
+                        r.bg_color, r.spacing,
+                    )
+                    state.buffer, state.shift_speed = _fill_bitscroll_buffer(
+                        unit, content_len, region_width, r.bg_color, r.speed, r.invert, r.repeating
+                    )
                 elif r.kind == SpliceRegionAnimKind.GAUGE:
                     state.buffer = [r.bg_color] * region_width
                     state.shift_speed = 0  # a gauge repaints, it never scrolls
@@ -886,7 +957,7 @@ class Strand:
                     state.gauge_bg = r.bg_color
                     # Resolve the scale onto the same 0-255 axis level_value
                     # lives on, once, so a tick only has to bracket a byte. An
-                    # empty scale becomes the two-color fallback, which is what
+                    # empty scale becomes the two-color fallback, so there is always
                     # guarantees there is always something to bracket between.
                     scale = r.stops or (GaugeStop(r.empty_at, r.color), GaugeStop(r.full_at, r.color2))
                     state.gauge_stops = sorted(
@@ -977,6 +1048,9 @@ class Strand:
                     fill = state.flash_color if state.flash_lit else state.flash_bg_color
                     state.buffer = [fill] * buf_size
                 state.flash_counter += 1
+                continue
+            if state.twinkling:
+                _advance_twinkle_into(state.twinkle, state.buffer, self._rng)
                 continue
             if state.shift_speed == 0:
                 continue
@@ -1130,6 +1204,26 @@ class Strand:
         self.overlay_buffer = gen_rainbow(self.length)
         self.overlay_shift_step = 0
         self.overlay_shift_speed = speed
+        self.overlay_anim_mode = AnimMode.SHIFT
+
+    def overlay_twinkle(self, colors: Sequence[int], density_pct: int = 30, fade_step: int = 16,
+                        bg_color: int = 0) -> None:
+        self.overlay_twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color)
+        self.overlay_buffer = [bg_color] * self.length
+        self.overlay_shift_step = 0
+        self.overlay_shift_speed = 0
+        self.overlay_anim_mode = AnimMode.TWINKLE
+
+    def overlay_bitscroll(self, segments: Sequence[BitScrollSegment], speed: int,
+                          invert: bool = False, bg_color: int = 0, spacing: int = 5,
+                          repeating: bool = True) -> None:
+        # No bounce: the overlay is a single scrolling buffer, and bouncing
+        # needs a wider master pattern to slide a window over.
+        unit, content_len = _build_bitscroll_unit(segments, bg_color, spacing)
+        self.overlay_shift_step = 0
+        self.overlay_buffer, self.overlay_shift_speed = _fill_bitscroll_buffer(
+            unit, content_len, self.length, bg_color, speed, invert, repeating
+        )
         self.overlay_anim_mode = AnimMode.SHIFT
 
     def _shift_overlay_buffer(self) -> None:

@@ -134,9 +134,9 @@ def test_beat_mode_punches_on_rises_and_ignores_a_steady_level():
 
 
 def test_beat_mode_survives_sparse_onsets():
-    # Regression: normalising flux against a percentile over *every* frame gives
-    # zero whenever onsets are sparse - true of any MIDI - and flattened the
-    # envelope to nothing exactly where the onsets mattered most.
+    # Normalising flux against a percentile over every frame gives zero when
+    # onsets are sparse, as in any MIDI, flattening the envelope where the
+    # onsets matter most.
     sparse = [0.001] * 2000
     for i in range(0, 2000, 400):
         # A few frames wide, like anything that has actually been struck: a

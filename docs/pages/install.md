@@ -90,16 +90,31 @@ pattern-studio
 
 ### Getting a design onto the robot
 
-1. **Export > Export Current Strand as C++...** (or **Export All Strands as
-   C++...** for a whole document) and save the header into your PROS project's
-   `include/` directory.
-2. `#include` it after `hitlib/hitapi.hpp`.
-3. Copy the usage snippet from the top of the generated file into `main.cpp`.
+1. Point Pattern Studio at your PROS project - drag the project folder onto the
+   window, or **Export > Choose PROS Project...**. It looks for `project.pros`,
+   and remembers the project between runs.
+2. **Export > Deploy**. The header lands in the project's `include/` as
+   `hitlib_studio.hpp`.
+3. Paste the two lines it shows you into `main.cpp`, once:
 
-The exported header carries the design's port, length, refresh interval and
-brightness as `constexpr` values, and its modes as named index constants, so
-nothing has to be retyped from the GUI. See
-[Profiles & Modes](#profiles_page) for the full shape of the generated file.
+```cpp
+#include "hitlib_studio.hpp"
+
+void initialize() { hitlib::studio::begin(); }
+```
+
+Deploying again overwrites that header and `main.cpp` does not change:
+`begin()` builds every strand from the design's port, length, refresh interval
+and brightness, attaches each profile and activates its first mode.
+
+To own the wiring yourself, `hitlib::studio::begin(yourGroup)` puts the
+design's strands into your group,
+and `#define HITLIB_STUDIO_NO_AUTOWIRE` before the include leaves only the
+profile and the `constexpr` constants to build your own `LedStrand` from.
+**Export > Export Current Strand as C++...** (or **Export All Strands as
+C++...**) still saves through a normal file dialog for a project the app cannot
+see. See [Profiles & Modes](#profiles_page) for the full shape of the generated
+file.
 
 ---
 

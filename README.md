@@ -89,25 +89,32 @@ Prebuilt Windows binaries are on the
 [Releases page](https://github.com/advisorylabs/HitLib/releases)
 (`HitLibPatternStudio-*-windows.zip`).
 
-Exports carry the design's port, length, refresh interval and brightness as
-`constexpr` values, plus named mode index constants, so nothing has to be
-retyped from the GUI:
+Show it your PROS project once - drag the project folder onto the window, or
+**Export > Choose PROS Project...** - and **Deploy** writes the header straight
+into the project's `include/`. Everything the design knows comes with it: ports,
+lengths, refresh intervals, brightness, named mode constants, and the strands
+themselves. Wiring it up is two lines, written once:
 
 ```cpp
-#include "my_robot.hpp"
+#include "hitlib_studio.hpp"
 
 namespace myRobot = hitlib::profiles::myRobot;
 
-hitlib::LedStrand myRobotStrand(myRobot::adiPort, myRobot::length, myRobot::refreshMs);
-
 void initialize() {
-    group.add(&myRobotStrand);
-    group.init();
-    group.start();
-    myRobot::apply(group);                    // brightness + attachProfile
-    group.activateMode(myRobot::mode::idle);
+    hitlib::studio::begin();   // registers, starts and activates every strand
+}
+
+void opcontrol() {
+    myRobot::strand.activateMode(myRobot::mode::scoring);
 }
 ```
+
+Re-deploying overwrites that file, so changing a port or adding a mode is a
+click and a rebuild; `main.cpp` does not change again.
+
+To wire the strands up yourself: `hitlib::studio::begin(yourGroup)` adds them
+to a group you own, and `#define HITLIB_STUDIO_NO_AUTOWIRE` before the include
+drops the strands and group entirely, leaving the profile and constants.
 
 ## Requirements
 

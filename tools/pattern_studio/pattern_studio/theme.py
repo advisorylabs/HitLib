@@ -200,7 +200,7 @@ class HoverBloom(QObject):
         widget.installEventFilter(self)
 
     def set_color(self, color: str | QColor) -> None:
-        """Re-tint the halo - for swatches, whose color is the whole point."""
+        """Re-tint the halo, for swatches that carry a user-chosen color."""
         self._color = QColor(color)
         if self._effect is not None:
             tint = QColor(self._color)

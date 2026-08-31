@@ -17,9 +17,9 @@ _APP_USER_MODEL_ID = "AdvisoryLabs.HitLib.PatternStudio"
 
 
 def _icon_path() -> Path:
-    # theme.resource_dir() handles the frozen-vs-source split (PyInstaller
-    # extracts `datas` under sys._MEIPASS, where __file__ no longer sits next
-    # to a real resources/ directory).
+    # theme.resource_dir() handles the frozen-vs-source split: PyInstaller
+    # extracts `datas` under sys._MEIPASS, where __file__ does not sit beside
+    # a real resources/ directory.
     return theme.resource_dir() / "hitliblogo.ico"
 
 

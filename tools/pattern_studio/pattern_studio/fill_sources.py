@@ -65,9 +65,8 @@ class FillSource:
     #: One line shown under the dropdown - what this bar ends up showing.
     hint: str = ""
     #: Default color scale for a Gauge region on this source, in its own units.
-    #: Empty means a gauge starts as a plain two-color ramp across the range,
-    #: which is all most readings warrant - a scale is worth having when the
-    #: numbers themselves have meanings, as a motor's temperatures do.
+    #: Empty means a gauge starts as a plain two-color ramp across the range.
+    #: A scale is for readings whose numbers carry meaning, like temperatures.
     stops: tuple[tuple[float, int], ...] = field(default_factory=tuple)
 
 
@@ -213,9 +212,8 @@ ORDER: list[str] = [s.id for s in _SOURCES]
 def get(source_id: str) -> FillSource:
     """The source `source_id` names, falling back to Manual.
 
-    Falling back rather than raising keeps a file written by a newer version of
-    Pattern Studio (or hand-edited) loadable: the strand comes back as a
-    hand-driven meter instead of failing the whole load.
+    Falling back rather than raising keeps a file from a newer version (or a
+    hand-edited one) loadable: the strand comes back as a hand-driven meter.
     """
     return SOURCES.get(source_id, SOURCES[MANUAL])
 

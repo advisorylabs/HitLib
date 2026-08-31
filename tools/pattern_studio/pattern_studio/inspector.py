@@ -228,7 +228,7 @@ class AnimationPanel(QGroupBox):
         self.gradient_combo = QComboBox()
         self.gradient_combo.addItem("Solid Color", False)
         self.gradient_combo.addItem("2-Color Gradient", True)
-        # Fill. The source is the whole point of the animation, so it leads,
+        # Fill. The source leads the panel,
         # and the fields under it re-range and re-label themselves to whatever
         # it reads - see _sync_source_fields().
         self.source_combo = QComboBox()
@@ -560,6 +560,10 @@ _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
     OverlayAnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
     OverlayAnimationKind.FLOW: {"color", "color2", "speed", "seamless"},
     OverlayAnimationKind.RAINBOW: {"speed"},
+    OverlayAnimationKind.TWINKLE: {"bg_color", "density_pct", "fade_step", "palette"},
+    OverlayAnimationKind.BITSCROLL: {
+        "color", "bg_color", "speed", "invert", "segment_width", "spacing", "repeating",
+    },
     OverlayAnimationKind.GAUGE: {
         "fill_hint", "source", "source_port", "source_empty", "source_full", "source_wrap",
         "smoothing", "style", "blend", "stops", "invert", "bg_color",
@@ -572,10 +576,9 @@ class GaugeStopsEditor(QWidget):
     """The color scale of one Gauge region: a row per stop, all visible at once.
 
     Deliberately not a list-plus-editor like the region and mode lists. A scale
-    is read as a whole - "green until 45, then it starts warning" - and hiding
-    five of six stops behind a selection would make the one thing worth seeing
-    the one thing you cannot. Six rows fit; a scale with enough stops to not fit
-    is a scale nobody can read off a robot anyway.
+    is read as a whole - "green until 45, then it starts warning" - so hiding
+    five of six stops behind a selection would hide the shape of it. Six rows
+    fit, which is more stops than a strip can show distinctly.
     """
 
     changed = Signal()
@@ -729,6 +732,21 @@ class OverlayAnimationPanel(QGroupBox):
             "Loop the gradient back to Color instead of cutting straight from "
             "Color 2 to Color at the wrap."
         )
+        # Twinkle / Bitscroll. Same fields as their whole-strand counterparts,
+        # minus Bounce: an overlay and a region are each a single scrolling
+        # buffer, and bouncing needs a wider master pattern to slide over.
+        self.density_spin = QSpinBox()
+        self.density_spin.setRange(0, 100)
+        self.density_spin.setSuffix(" %")
+        self.fade_spin = QSpinBox()
+        self.fade_spin.setRange(1, 255)
+        self.palette_edit = QLineEdit()
+        self.palette_edit.setToolTip("Comma-separated hex colors, e.g. FF0000, 00FF00, 0000FF")
+        self.segment_width_spin = QSpinBox()
+        self.segment_width_spin.setRange(1, 64)
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(0, 64)
+        self.repeating_check = QCheckBox()
         # Gauge. Same source fields as the Fill animation, under the same names
         # and with the same meanings - a gauge region is a Fill meter scoped to
         # a few pixels, so anything learned on one applies to the other.
@@ -752,9 +770,9 @@ class OverlayAnimationPanel(QGroupBox):
         self.smoothing_spin.setRange(0, 99)
         self.smoothing_spin.setSuffix(" %")
         self.smoothing_spin.setToolTip(
-            "How much of the previous frame's level to keep each tick. Worth "
-            "having on a motor's temperature: the V5 reports it in coarse steps, "
-            "and smoothing is what turns those steps into a creep."
+            "How much of the previous frame's level to keep each tick. The V5 "
+            "reports motor temperature in coarse steps; smoothing turns those "
+            "steps into a creep."
         )
         self.style_combo = QComboBox()
         for style in GaugeStyleKind:
@@ -784,7 +802,10 @@ class OverlayAnimationPanel(QGroupBox):
             "Preview only: hold the reading this far through the range. Never exported."
         )
         self.invert_check = QCheckBox()
-        self.invert_check.setToolTip("Fill the bar from the far end of the segment.")
+        self.invert_check.setToolTip(
+            "Reverse the direction: a bitscroll scrolls the other way, a gauge "
+            "bar fills from the far end of the segment."
+        )
         self.fill_hint = QLabel()
         self.fill_hint.setWordWrap(True)
         self.fill_hint.setProperty("role", "hint")
@@ -803,6 +824,12 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("on_ms", "On Time", self.on_ms_spin)
         add_row("off_ms", "Off Time", self.off_ms_spin)
         add_row("seamless", "Seamless", self.seamless_check)
+        add_row("density_pct", "Density", self.density_spin)
+        add_row("fade_step", "Fade Step", self.fade_spin)
+        add_row("palette", "Palette", self.palette_edit)
+        add_row("segment_width", "Seg. Width", self.segment_width_spin)
+        add_row("spacing", "Spacing", self.spacing_spin)
+        add_row("repeating", "Repeating", self.repeating_check)
         add_row("source", "Follows", self.source_combo)
         add_row("source_port", "Port", self.source_port_spin)
         add_row("source_empty", "Empty At", self.source_empty_spin)
@@ -827,6 +854,12 @@ class OverlayAnimationPanel(QGroupBox):
             (self.speed_spin, "valueChanged"),
             (self.on_ms_spin, "valueChanged"),
             (self.off_ms_spin, "valueChanged"),
+            (self.density_spin, "valueChanged"),
+            (self.fade_spin, "valueChanged"),
+            (self.palette_edit, "textChanged"),
+            (self.segment_width_spin, "valueChanged"),
+            (self.spacing_spin, "valueChanged"),
+            (self.repeating_check, "toggled"),
             (self.source_empty_spin, "valueChanged"),
             (self.source_full_spin, "valueChanged"),
             (self.smoothing_spin, "valueChanged"),
@@ -979,6 +1012,12 @@ class OverlayAnimationPanel(QGroupBox):
         self.run_length_spin.setValue(o.run_length)
         self.speed_spin.setValue(o.speed)
         self.seamless_check.setChecked(o.seamless)
+        self.density_spin.setValue(o.density_pct)
+        self.fade_spin.setValue(o.fade_step)
+        self.palette_edit.setText(format_palette(o.palette))
+        self.segment_width_spin.setValue(o.segment_width)
+        self.spacing_spin.setValue(o.spacing)
+        self.repeating_check.setChecked(o.repeating)
         # Before the values below it: picking the source is what re-ranges the
         # port field and re-labels the units the bounds and stops land in.
         source_idx = self.source_combo.findData(o.source)
@@ -1015,6 +1054,14 @@ class OverlayAnimationPanel(QGroupBox):
         o.on_ms = self.on_ms_spin.value()
         o.off_ms = self.off_ms_spin.value()
         o.seamless = self.seamless_check.isChecked()
+        o.density_pct = self.density_spin.value()
+        o.fade_step = self.fade_spin.value()
+        parsed = parse_palette(self.palette_edit.text())
+        if parsed:
+            o.palette = parsed
+        o.segment_width = self.segment_width_spin.value()
+        o.spacing = self.spacing_spin.value()
+        o.repeating = self.repeating_check.isChecked()
         o.source = self.source_combo.currentData()
         o.source_port = self.source_port_spin.value()
         o.source_empty = self.source_empty_spin.value()

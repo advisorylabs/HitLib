@@ -53,7 +53,7 @@ def _drive_heat(temps: list[float], *, width: int = 9, pitch: int = 10) -> Stran
 
 
 def test_each_segment_follows_its_own_motor():
-    """The whole point: six readings, six different colors, one strip."""
+    """Six readings, six different colors, one strip."""
     temps = [25.0, 40.0, 50.0, 57.0, 63.0, 72.0]
     s = _drive_heat(temps)
     _settle(s)
@@ -133,8 +133,8 @@ def test_bar_style_fills_the_segment_in_proportion():
     _settle(s)
 
     lit = [p for p in s.pixels[:10] if p != 0x000000]
-    # Half the range, so about half the segment - the partial edge pixel means
-    # "about", which is the point of it.
+    # Half the range, so about half the segment - the partial edge pixel
+    # makes the count approximate rather than exact.
     assert 4 <= len(lit) <= 6
 
 
@@ -198,8 +198,8 @@ def test_replacing_the_mask_swaps_every_gauge_at_once():
     s.splice_mask_custom([Strand.motor_heat_gauge(0, 9, lambda: 20.0)])
     _settle(s)
     assert s.pixels[0] == HEAT[20.0]
-    # The second segment's pixels belong to nobody now, so it stops overriding
-    # them and the base animation shows through again.
+    # The second segment's pixels belong to no region now, so it stops
+    # overriding them and the base animation shows through again.
     assert s.pixels[10] == 0x000000
 
 

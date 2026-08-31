@@ -1,8 +1,8 @@
 """Color helpers ported from src/led_strand.cpp (namespace-local functions + genGradient/genRainbow).
 
-Integer math is kept intentionally C-like (truncating division, explicit byte
-packing) rather than "pythonic", since the whole point of this module is to
-reproduce the firmware's pixel output bit-for-bit.
+Integer math is kept C-like (truncating division, explicit byte packing)
+rather than "pythonic": this module has to reproduce the firmware's pixel
+output bit-for-bit.
 """
 
 from __future__ import annotations

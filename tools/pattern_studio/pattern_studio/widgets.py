@@ -14,10 +14,8 @@ class ColorButton(QPushButton):
 
     color_changed = Signal(int)
 
-    #: Halo radius at rest and under the pointer. The resting glow is what
-    #: makes a swatch read as a light source rather than a paint chip; the
-    #: hover value is only about twice that, so pointing at one is a nudge
-    #: rather than an event.
+    #: Halo radius at rest and under the pointer. The resting glow renders the
+    #: swatch as a light source; hover is about twice that.
     BLOOM_REST = 7
     BLOOM_HOVER = 15
     BLOOM_ALPHA = 150
@@ -52,9 +50,8 @@ class ColorButton(QPushButton):
         self._refresh_style()
 
     def _refresh_style(self) -> None:
-        # Inline rather than themed: the swatch's whole job is to show an
-        # arbitrary user-chosen color, so only its chrome (border, radius,
-        # hover) comes from the theme.
+        # Inline rather than themed: the swatch shows an arbitrary user-chosen
+        # color, so only its chrome (border, radius, hover) is themed.
         r, g, b = (self._color >> 16) & 0xFF, (self._color >> 8) & 0xFF, self._color & 0xFF
         self.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r},{g},{b});"
@@ -73,7 +70,7 @@ class ColorButton(QPushButton):
 
 
 #: One tile of the drifting rule. theme.BRAND_SWEEP ends on the color it
-#: starts with, which is what lets the tile repeat without a visible seam.
+#: starts with, so the tile repeats without a visible seam.
 _RULE_STOPS = theme.BRAND_SWEEP
 
 

@@ -48,7 +48,12 @@ from .models import (
 # color scale of its own. Same story as 4 in both directions: older files load
 # with the gauge fields defaulted, and a schema-4 reader hits an unknown
 # overlay kind on a design that uses one.
-SCHEMA_VERSION = 5
+#
+# 6 added Twinkle and Bitscroll as overlay/region animations, so a masked bin
+# or a custom region can run either. Same story again: older files default the
+# new fields, and an older reader hits an unknown overlay kind on a design
+# that picks one of them.
+SCHEMA_VERSION = 6
 
 
 def _animation_to_dict(a: AnimationConfig) -> dict:
@@ -138,6 +143,12 @@ def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
         "on_ms": o.on_ms,
         "off_ms": o.off_ms,
         "seamless": o.seamless,
+        "density_pct": o.density_pct,
+        "fade_step": o.fade_step,
+        "palette": list(o.palette),
+        "segment_width": o.segment_width,
+        "spacing": o.spacing,
+        "repeating": o.repeating,
         "source": o.source,
         "source_port": o.source_port,
         "source_empty": o.source_empty,
@@ -165,6 +176,12 @@ def _overlay_from_dict(d: dict) -> OverlayAnimationConfig:
         on_ms=d.get("on_ms", default.on_ms),
         off_ms=d.get("off_ms", default.off_ms),
         seamless=d.get("seamless", default.seamless),
+        density_pct=d.get("density_pct", default.density_pct),
+        fade_step=d.get("fade_step", default.fade_step),
+        palette=list(d.get("palette", default.palette)),
+        segment_width=d.get("segment_width", default.segment_width),
+        spacing=d.get("spacing", default.spacing),
+        repeating=d.get("repeating", default.repeating),
         source=d.get("source", default.source),
         source_port=d.get("source_port", default.source_port),
         source_empty=d.get("source_empty", default.source_empty),

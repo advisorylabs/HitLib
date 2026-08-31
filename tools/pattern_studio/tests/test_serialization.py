@@ -184,7 +184,7 @@ def test_save_and_load_file_round_trip(tmp_path):
     save_document(path, doc)
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
-    assert on_disk["schema_version"] == 5
+    assert on_disk["schema_version"] == 6
 
     restored = load_document(path)
     assert restored == doc

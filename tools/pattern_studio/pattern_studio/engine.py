@@ -35,9 +35,9 @@ from .models import (
     StrandConfig,
 )
 
-# OverlayAnimationConfig.kind (Pattern Studio's serializable model) -> the
-# sim/C++ SpliceRegionAnimKind used to build a custom region's own buffer.
-# Both enumerate the same overlay* vocabulary, just as separate types.
+# OverlayAnimationConfig.kind (the serializable model) -> the sim/C++
+# SpliceRegionAnimKind that builds a custom region's buffer. Both enumerate the
+# same overlay* vocabulary as separate types.
 _REGION_ANIM_KIND = {
     OverlayAnimationKind.OFF: SpliceRegionAnimKind.OFF,
     OverlayAnimationKind.SOLID: SpliceRegionAnimKind.SOLID,
@@ -45,6 +45,8 @@ _REGION_ANIM_KIND = {
     OverlayAnimationKind.FLASH: SpliceRegionAnimKind.FLASH,
     OverlayAnimationKind.FLOW: SpliceRegionAnimKind.FLOW,
     OverlayAnimationKind.RAINBOW: SpliceRegionAnimKind.RAINBOW,
+    OverlayAnimationKind.TWINKLE: SpliceRegionAnimKind.TWINKLE,
+    OverlayAnimationKind.BITSCROLL: SpliceRegionAnimKind.BITSCROLL,
     OverlayAnimationKind.GAUGE: SpliceRegionAnimKind.GAUGE,
 }
 
@@ -182,10 +184,9 @@ def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | N
         strand.bitscroll(segments, a.speed, a.invert, a.bg_color, a.bounce, a.spacing, a.repeating)
     elif a.kind == AnimationKind.FILL:
         strand.level_fill(a.color, a.color2, a.gradient, a.bg_color, a.invert)
-        # Every source previews the same way, including Manual: the desktop has
-        # nothing real to read, so a stand-in value drives the meter through
-        # the same mapping the firmware uses. What the source actually changes
-        # is what the *export* polls - see codegen's fill statements.
+        # Every source previews the same way, Manual included: with no device
+        # to read, a stand-in value drives the meter through the firmware's own
+        # mapping. The source only changes what the export polls - see codegen.
         strand.level_source(_preview_reader(strand, a), a.source_empty, a.source_full,
                             a.source_wrap, a.smoothing)
     elif a.kind == AnimationKind.MUSIC:
@@ -210,26 +211,21 @@ _SWEEP_WRAPS = 3
 
 
 def _preview_reader(strand: Strand, a, phase_offset: float = 0.0):
-    """A stand-in for the value a Fill meter or a Gauge region will follow on
-    the robot.
+    """A stand-in for the value a Fill meter or Gauge region follows on the
+    robot.
 
-    The desktop has no motor to read, so the preview feeds the meter a made-up
-    reading in the animation's own units and lets it map that the same way the
-    firmware would. Everything downstream of the reader - the range, wrap,
-    smoothing, the color scale, the partial edge pixel - is therefore the real
-    code path, and only the number itself is invented.
+    With no device to read, the preview feeds the meter an invented reading in
+    the animation's own units. Everything downstream - range, wrap, smoothing,
+    the color scale, the partial edge pixel - is the real code path; only the
+    number is invented.
 
-    Sweeping shows a wrapping meter as a sawtooth that rolls over repeatedly
-    and a clamping one as a triangle that fills and drains, which is the
-    difference the Wrap checkbox actually makes.
+    Wrap shows as a sawtooth sweep; clamping shows as a triangle.
 
-    `a` is an AnimationConfig or an OverlayAnimationConfig - a gauge region
-    carries the same source fields under the same names, because it is a Fill
-    meter scoped to a few pixels.
+    `a` is an AnimationConfig or an OverlayAnimationConfig: a gauge region
+    carries the same source fields under the same names.
 
-    `phase_offset` shifts the sweep, in whole sweeps. Six gauges in a row all
-    reading the same invented number would move in lockstep and hide the one
-    thing the design exists to show: that the segments differ.
+    `phase_offset` shifts the sweep, in whole sweeps, so a row of gauges does
+    not move in lockstep.
     """
 
     def read() -> float:
@@ -260,6 +256,11 @@ def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
         strand.overlay_flow(o.color, o.color2, o.speed, o.seamless)
     elif o.kind == OverlayAnimationKind.RAINBOW:
         strand.overlay_rainbow(o.speed)
+    elif o.kind == OverlayAnimationKind.TWINKLE:
+        strand.overlay_twinkle(o.palette, o.density_pct, o.fade_step, o.bg_color)
+    elif o.kind == OverlayAnimationKind.BITSCROLL:
+        segments = [BitScrollSegment(color=o.color, width=o.segment_width)]
+        strand.overlay_bitscroll(segments, o.speed, o.invert, o.bg_color, o.spacing, o.repeating)
 
 
 def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
@@ -274,10 +275,8 @@ def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
             color=a.color,
             color2=a.color2,
             bg_color=a.bg_color,
-            # Every source previews the same way, Manual included: the desktop
-            # has nothing real to read, so a stand-in value drives the gauge
-            # through the same mapping the firmware uses. What the source
-            # actually changes is what the *export* polls - see codegen.
+            # As in _apply_fill above: the source only changes what the export
+            # polls, not how the preview drives the gauge.
             read=_preview_reader(strand, a, phase_offset),
             empty_at=a.source_empty,
             full_at=a.source_full,
@@ -300,6 +299,13 @@ def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
         on_ms=a.on_ms,
         off_ms=a.off_ms,
         seamless=a.seamless,
+        invert=a.invert,
+        palette=tuple(a.palette),
+        density_pct=a.density_pct,
+        fade_step=a.fade_step,
+        segment_width=a.segment_width,
+        spacing=a.spacing,
+        repeating=a.repeating,
     )
 
 
@@ -313,8 +319,8 @@ def _apply_splice(strand: Strand, s: SpliceMaskConfig) -> None:
             _apply_overlay(strand, s.overlay)
         strand.splice_mask(s.sections, s.invert, s.alternating, s.alt_period_ms, s.bg_color, s.use_overlay)
     else:
-        # Spread the preview sweeps across the whole triangle, so a row of
-        # gauges reads as several independent meters rather than one wide one.
+        # Spread the preview sweeps across the triangle so a row of gauges
+        # shows as several independent meters, not one wide one.
         count = max(len(s.regions), 1)
         strand.splice_mask_custom([
             _make_sim_region(strand, r, 2.0 * i / count) for i, r in enumerate(s.regions)

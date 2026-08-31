@@ -71,7 +71,7 @@ class SplashScreen(QWidget):
 
         # Qt.SplashScreen keeps it out of the taskbar, so the app doesn't
         # briefly show two entries. FramelessWindowHint plus a translucent
-        # background is what lets the backdrop be a circle rather than a
+        # background lets the backdrop be a circle rather than a
         # square with rounded art painted on it.
         self.setWindowFlags(
             Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint

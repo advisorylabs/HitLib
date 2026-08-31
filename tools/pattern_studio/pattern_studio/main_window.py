@@ -6,7 +6,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSettings, QSize, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -22,15 +22,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, theme
+from . import __version__, deploy, theme
 from .canvas import StripCanvas
 from .codegen import (
     generate_cpp,
     generate_document_cpp,
+    paste_block,
     suggested_header_name,
     validate_document_for_export,
     validate_for_export,
 )
+from .deploy_dialog import DeployDialog
 from .engine import make_music_binding
 from .envelope import BAND_BASS
 from .group_edit import apply_changes, diff_config
@@ -46,6 +48,23 @@ from . import window_chrome
 _FILE_FILTER = "HitLib Pattern Studio Profile (*.hlprofile);;JSON (*.json);;All Files (*)"
 _DEFAULT_SUFFIX = ".hlprofile"
 _CPP_FILE_FILTER = "C++ Header (*.hpp);;All Files (*)"
+#: Default filename offered by the Export All save dialog.
+_DOCUMENT_HEADER_NAME = "led_profiles.hpp"
+
+#: What Deploy always writes, whatever the design is called.
+#:
+#: Fixed, not derived from the design name: renaming a strand would otherwise
+#: deploy under a new name and leave the previous header in place, still
+#: included by main.cpp. The file also defines hitlib::studio, so a project can
+#: only carry one.
+_STUDIO_HEADER_NAME = "hitlib_studio.hpp"
+
+#: Where the remembered deploy target lives. Named explicitly rather than left
+#: to QApplication, so a MainWindow built outside app.main() reads the same
+#: store the app does.
+_SETTINGS_ORG = "AdvisoryLabs"
+_SETTINGS_APP = "HitLib Pattern Studio"
+_SETTINGS_PROJECT_KEY = "deploy/project_root"
 
 
 def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
@@ -53,9 +72,8 @@ def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
     button.setProperty("role", "transport")
     button.setIconSize(QSize(13, 13))
     button.setToolTip(tooltip)
-    # Cyan rather than the violet accent: transport acts on what's *running*,
-    # and cyan is already the app's "this is live" color (selected rows, the
-    # group outline on the canvas).
+    # Cyan, not the violet accent: cyan is the app's "this is live" color
+    # (selected rows, the group outline on the canvas).
     theme.HoverBloom(button, theme.FOCUS, radius=14, alpha=105)
     return button
 
@@ -71,8 +89,7 @@ def _music_band(config: StrandConfig) -> str:
     """The band this strand's Music Sync animation follows.
 
     A profile strand has one animation per mode, so the first Music Sync among
-    them stands in for the strand - the Song bar shows one waveform, and any
-    music band it follows is a better answer than a fixed default.
+    them stands in for the strand: the Song bar shows a single waveform.
     """
     if config.use_profile:
         for mode in config.profile_modes:
@@ -105,6 +122,12 @@ class MainWindow(QMainWindow):
         self._baseline_index = -1
         self._running = True
         self._current_file_path: Path | None = None
+        # The PROS project Deploy writes into, remembered across runs.
+        # _deploy_action is held so its label can name that destination.
+        self._deploy_action = None
+        self._deploy_dialog: DeployDialog | None = None
+        self._project = self._remembered_project()
+        self.setAcceptDrops(True)
         # The document's one song. Held here rather than on any strand: see
         # models.MusicConfig and the Song bar under the preview.
         self.music = MusicConfig()
@@ -121,17 +144,17 @@ class MainWindow(QMainWindow):
         self.inspector = InspectorPanel()
         self.inspector.setEnabled(False)
 
-        # Same six actions, same order as before, but the scope now lives in
-        # a heading over each triad instead of inside every label. "Play Sel"
-        # read to newcomers as a fourth verb rather than as a scope, and the
-        # abbreviation only existed to keep the row narrow.
+        # Scope lives in a heading over each triad rather than in every label,
+        # so the labels stay verbs.
         self.play_all_btn = _transport_button("Play", "play", "Play every strand")
         self.pause_all_btn = _transport_button("Pause", "pause", "Pause every strand")
-        self.reset_all_btn = _transport_button("Reset", "reset", "Restart every strand's animation")
+        self.reset_all_btn = _transport_button(
+            "Reset", "reset", "Blank every strand - playing again starts from its first frame"
+        )
         self.play_selected_btn = _transport_button("Play", "play", "Play the selected strands")
         self.pause_selected_btn = _transport_button("Pause", "pause", "Pause the selected strands")
         self.reset_selected_btn = _transport_button(
-            "Reset", "reset", "Restart the selected strands' animations"
+            "Reset", "reset", "Blank the selected strands - playing again starts from their first frame"
         )
         self.play_selected_btn.setEnabled(False)
         self.pause_selected_btn.setEnabled(False)
@@ -160,14 +183,10 @@ class MainWindow(QMainWindow):
         toolbar_row.addWidget(self.reset_selected_btn)
         toolbar_row.addStretch(1)
 
-        # Transport row + strand-settings strip both have a real minimum
-        # width (6 buttons; 6 fields) that can exceed a narrowed center
-        # column once the splitter is dragged, or even at default size on
-        # a modest window. Wrapping both together in one slim scroll area
-        # means THIS strip gets a small horizontal scrollbar in that squeeze
-        # instead of either clipping its contents or forcing the whole
-        # center column to refuse to shrink. They scroll together as one
-        # unit since they're logically one "controls header" block.
+        # Both rows have a minimum width (6 buttons; 6 fields) that can exceed
+        # a narrowed center column. Wrapping them in one scroll area confines
+        # the horizontal scrollbar to this strip, instead of clipping the
+        # contents or stopping the center column from shrinking.
         controls = QWidget()
         controls_layout = QVBoxLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -178,9 +197,8 @@ class MainWindow(QMainWindow):
         controls_scroll.setWidget(controls)
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # Reserve room for the horizontal scrollbar even when it isn't shown.
-        # The height is fixed, so a bar appearing on a narrow window would
-        # otherwise eat it out of the strip's own height and clip the fields.
+        # Reserve room for the horizontal scrollbar even when hidden: the
+        # height is fixed, so a bar appearing would clip the fields.
         controls_scroll.setFixedHeight(
             controls.sizeHint().height() + 4 + controls_scroll.horizontalScrollBar().sizeHint().height()
         )
@@ -200,9 +218,8 @@ class MainWindow(QMainWindow):
         right.setWidgetResizable(True)
         right.setMinimumWidth(260)
 
-        # QSplitter lets every column be resized by dragging its edge,
-        # replaces the old fixed-width side panels, which could force a
-        # horizontal scrollbar in the right column with no way to widen it.
+        # Resizable columns: fixed-width side panels can force a horizontal
+        # scrollbar in the right column with no way to widen it.
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(left)
@@ -213,10 +230,8 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([210, 880, 400])
 
-        # The wordmark gradient as a hairline under the menu bar, the same
-        # accent the docs site runs across its header, and the one piece of
-        # brand color that's always on screen. It drifts and casts a short
-        # falloff onto the window; see widgets.BrandRule.
+        # The wordmark gradient as a hairline under the menu bar. It drifts
+        # and casts a short falloff onto the window; see widgets.BrandRule.
         brand_rule = BrandRule()
 
         root = QWidget()
@@ -276,6 +291,11 @@ class MainWindow(QMainWindow):
         export_menu.addAction("Export &All Strands as C++...", self._export_all_save)
         export_menu.addSeparator()
         export_menu.addAction("Copy Current Strand C++ to Clipboard", self._export_clipboard)
+        export_menu.addSeparator()
+        # Label is filled in by _refresh_deploy_action(), which names the project.
+        self._deploy_action = export_menu.addAction("", self._deploy)
+        export_menu.addAction("Choose PROS Project...", self._choose_project)
+        self._refresh_deploy_action()
 
     def _file_new(self) -> None:
         self._clear_sessions()
@@ -455,7 +475,7 @@ class MainWindow(QMainWindow):
         self._write_export(
             lambda name: generate_document_cpp(configs, name, self.music),
             "Export All Strands as C++",
-            "led_profiles.hpp",
+            _DOCUMENT_HEADER_NAME,
         )
 
     def _export_clipboard(self) -> None:
@@ -463,6 +483,137 @@ class MainWindow(QMainWindow):
         if code is None:
             return
         QGuiApplication.clipboard().setText(code)
+
+    # ------------------------------------------------------------------
+    # Deploying into a PROS project
+    # ------------------------------------------------------------------
+
+    def _settings(self) -> QSettings:
+        return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+
+    def _remembered_project(self) -> deploy.Project | None:
+        """The project this machine last deployed to.
+
+        Machine-local rather than saved in the document: a design gets shared
+        with teammates, and the path to someone else's checkout is the one
+        thing about it that cannot travel.
+        """
+        stored = self._settings().value(_SETTINGS_PROJECT_KEY, "", type=str)
+        if not stored or not Path(stored).is_dir():
+            return None
+        return deploy.open_project(Path(stored))
+
+    def _set_project(self, project: deploy.Project) -> None:
+        self._project = project
+        self._settings().setValue(_SETTINGS_PROJECT_KEY, str(project.root))
+        self._refresh_deploy_action()
+
+    def _refresh_deploy_action(self) -> None:
+        """Name the destination in the menu item.
+
+        A one-click action that writes into a directory should say which one
+        before it is clicked, not after.
+        """
+        if self._deploy_action is None:
+            return
+        if self._project is None:
+            self._deploy_action.setText("&Deploy to PROS Project...")
+            self._deploy_action.setToolTip("Pick a project, then write the export into it")
+        else:
+            self._deploy_action.setText(f'&Deploy to "{self._project.root.name}"')
+            self._deploy_action.setToolTip(str(self._project.include_dir))
+
+    def _choose_project(self) -> deploy.Project | None:
+        start = str(self._project.root) if self._project else ""
+        path = QFileDialog.getExistingDirectory(self, "Choose PROS Project Folder", start)
+        if not path:
+            return None
+        project = deploy.open_project(Path(path))
+        if project is None:
+            QMessageBox.warning(
+                self,
+                "Not a PROS Project",
+                f"No {deploy.MANIFEST} in {path}, or in the folders above it.\n\n"
+                "Pick the folder that holds your project.pros.",
+            )
+            return None
+        self._set_project(project)
+        return project
+
+    def _deploy(self) -> None:
+        """Write the whole document into the project's include/ directory.
+
+        Always the whole document, never just the selected strand: begin() wires
+        up every strand in the file, and half a document deployed over a whole
+        one would silently drop the strands it left out.
+        """
+        configs = self._all_configs_or_warn()
+        if configs is None:
+            return
+        project = self._project or self._choose_project()
+        if project is None:
+            return
+
+        # Asked before the write, since afterwards every deploy looks like a
+        # repeat one.
+        first_time = not project.header_path(_STUDIO_HEADER_NAME).exists()
+        code = generate_document_cpp(configs, _STUDIO_HEADER_NAME, self.music)
+        try:
+            written = project.deploy(_STUDIO_HEADER_NAME, code)
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "Deploy Failed", f"Couldn't write into {project.include_dir}:\n{exc}"
+            )
+            return
+
+        if first_time:
+            # open() rather than exec(): the dialog is something to read and
+            # copy from, and freezing the design behind it while that happens
+            # is what would make it feel like an error box.
+            self._deploy_dialog = DeployDialog(
+                written,
+                paste_block(code),
+                () if project.has_hitlib else deploy.INSTALL_HINT_LINES,
+                self,
+            )
+            self._deploy_dialog.open()
+        else:
+            QMessageBox.information(
+                self, "Deployed", f"Updated {written.name} in {written.parent}."
+            )
+
+    # ------------------------------------------------------------------
+    # Drag and drop - a project dropped on the window becomes the target
+    # ------------------------------------------------------------------
+
+    def _dropped_project(self, mime) -> deploy.Project | None:
+        if not mime.hasUrls():
+            return None
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            project = deploy.open_project(Path(url.toLocalFile()))
+            if project is not None:
+                return project
+        return None
+
+    def dragEnterEvent(self, event) -> None:
+        # Refusing anything that is not a project is the feedback: the cursor
+        # says no before the drop, rather than a dialog saying so after it.
+        if self._dropped_project(event.mimeData()) is not None:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        project = self._dropped_project(event.mimeData())
+        if project is None:
+            return
+        self._set_project(project)
+        event.acceptProposedAction()
+        QMessageBox.information(
+            self,
+            "Project Set",
+            f'Deploy now writes into "{project.root.name}".\n\n{project.include_dir}',
+        )
 
     # ------------------------------------------------------------------
     # Strand list management
@@ -704,9 +855,11 @@ class MainWindow(QMainWindow):
             session.stop()
 
     def _reset_all(self) -> None:
+        # Leaves every strand stopped, and clears the new-strand default so a
+        # strand added afterwards does not light up alone.
+        self._running = False
         for session in self.sessions:
-            session.rebuild()
-        self._sync_music(self.sessions)
+            session.reset()
 
     def _play_selected(self) -> None:
         for session in self._group_sessions():
@@ -717,7 +870,5 @@ class MainWindow(QMainWindow):
             session.stop()
 
     def _reset_selected(self) -> None:
-        sessions = self._group_sessions()
-        for session in sessions:
-            session.rebuild()
-        self._sync_music(sessions)
+        for session in self._group_sessions():
+            session.reset()

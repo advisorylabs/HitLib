@@ -14,9 +14,8 @@ def test_rainbow_scrolls_by_shift_step():
 
 
 def test_flash_blinks_whole_strip_on_and_off():
-    # Regression test: flash used to advance the buffer one pixel per tick, so
-    # the lit block scrolled across the strip and read as a long pulse. Every
-    # LED must light together, then go dark together.
+    # Every LED must light together, then go dark together. Advancing the
+    # buffer per tick would scroll the lit block and render as a pulse.
     s = Strand(adi_port=1, length=4, refresh_ms=20)
     s.flash(color=0xFF0000, on_ms=40, off_ms=40)
 
@@ -27,8 +26,8 @@ def test_flash_blinks_whole_strip_on_and_off():
 
 
 def test_flash_on_and_off_times_are_independent():
-    # The whole point of on_ms/off_ms: duty cycle and rate are set separately,
-    # unlike the old `speed` which changed both at once.
+    # on_ms and off_ms set duty cycle and rate separately: changing one must
+    # not move the other.
     s = Strand(adi_port=1, length=1, refresh_ms=25)
     s.flash(color=0xFF0000, on_ms=100, off_ms=200)
     assert (s.flash_on_ticks, s.flash_off_ticks) == (4, 8)
@@ -106,9 +105,8 @@ def test_splice_mask_bin_distribution():
 
 
 def test_overlay_rainbow_animates_across_ticks():
-    # Regression test: overlay_shift_step used to be advanced every tick by
-    # _shift_overlay_buffer() but never actually read back in _flush_buffer(),
-    # so overlay animations rendered as a single frozen frame.
+    # _flush_buffer() must read overlay_shift_step back, or every overlay
+    # animation renders as a single frozen frame.
     s = Strand(adi_port=1, length=4, refresh_ms=20)
     s.overlay_rainbow(speed=1)
     expected_overlay = gen_rainbow(4)
@@ -127,9 +125,9 @@ def test_overlay_rainbow_animates_across_ticks():
 
 
 def test_splice_mask_overlay_does_not_require_center_spread():
-    # Overlay display in masked bins used to be gated on CENTER_SPREAD being
-    # the active base animation; it's now driven purely by useOverlay, so a
-    # plain rainbow + splice(useOverlay=True) should reveal the overlay too.
+    # Overlay display in masked bins is driven purely by useOverlay, not by
+    # which base animation is active, so a plain rainbow plus
+    # splice(useOverlay=True) reveals the overlay.
     s = Strand(adi_port=1, length=4, refresh_ms=20)
     s.rainbow(speed=1)
     s.overlay_set_color(0x00FF00)
@@ -156,8 +154,8 @@ def test_splice_mask_custom_regions_override_arbitrary_spans():
 
 
 def test_splice_mask_custom_regions_animate_independently_and_simultaneously():
-    # The whole point of custom regions over the shared overlay: two regions
-    # can run different animations, at different speeds, at the same time.
+    # Custom regions, unlike the shared overlay, can run different animations
+    # at different speeds at the same time.
     s = Strand(adi_port=1, length=8, refresh_ms=20)
     s.set_color(0x000000)
     s.splice_mask_custom([
@@ -197,9 +195,8 @@ def test_bitscroll_default_spacing_is_five():
 
 
 def test_bitscroll_bounce_honours_repeating_false():
-    # Regression test: the bounce branch tiled the pattern across the master
-    # buffer regardless of `repeating`, so bounce always looked like a
-    # repeating pattern. A single copy must travel the strip and rock back.
+    # With `repeating` off, a single copy must travel the strip and rock back
+    # rather than being tiled across the master buffer.
     s = Strand(adi_port=1, length=6, refresh_ms=20)
     s.bitscroll(
         segments=[BitScrollSegment(color=0xFF0000, width=2)],
@@ -277,3 +274,61 @@ def test_brightness_scales_linearly_without_touching_buffer():
     s.tick()
     assert s.pixels == [0x7F4020]
     assert s.buffer == [0xFF8040]  # buffer itself is untouched
+
+
+def test_overlay_twinkle_sparkles_only_in_the_masked_bins():
+    s = Strand(adi_port=1, length=8, refresh_ms=20)
+    s.set_color(0x00FF00)
+    s.overlay_twinkle(colors=[0xFF0000], density_pct=100, fade_step=255)
+    s.splice_mask(sections=1, use_overlay=True)  # halves: pixels 0-3 masked
+
+    for _ in range(8):
+        s.tick()
+
+    assert any(p for p in s.pixels[:4]), "the masked half should have sparks in it"
+    assert s.pixels[4:] == [0x00FF00] * 4, "the unmasked half still shows the base animation"
+
+
+def test_overlay_bitscroll_scrolls_its_own_buffer():
+    s = Strand(adi_port=1, length=4, refresh_ms=20)
+    s.overlay_bitscroll(
+        segments=[BitScrollSegment(color=0xFF0000, width=1)], speed=1, bg_color=0x000000, spacing=1
+    )
+    expected = list(s.overlay_buffer)
+    s.splice_mask(sections=1, use_overlay=True)  # halves: pixels 0,1 masked
+
+    s.tick()
+    assert s.overlay_shift_step == 1
+    assert s.pixels[0] == expected[1 % len(expected)]
+    assert s.pixels[1] == expected[2 % len(expected)]
+
+
+def test_a_twinkle_region_sparkles_over_only_its_own_pixels():
+    s = Strand(adi_port=1, length=8, refresh_ms=20)
+    s.set_color(0x0000FF)
+    s.splice_mask_custom([
+        SpliceRegion(start=0, width=4, kind=SpliceRegionAnimKind.TWINKLE,
+                     palette=(0xFF0000,), density_pct=100, fade_step=255),
+    ])
+
+    for _ in range(8):
+        s.tick()
+
+    assert any(p for p in s.pixels[:4]), "the region should have sparks in it"
+    assert s.pixels[4:] == [0x0000FF] * 4
+
+
+def test_a_bitscroll_region_scrolls_over_only_its_own_pixels():
+    s = Strand(adi_port=1, length=8, refresh_ms=20)
+    s.set_color(0x0000FF)
+    s.splice_mask_custom([
+        SpliceRegion(start=0, width=4, kind=SpliceRegionAnimKind.BITSCROLL,
+                     color=0xFF0000, speed=1, segment_width=1, spacing=1),
+    ])
+    # Region buffers are built over the region's width, not the whole strip.
+    region = s.splice_regions[0].buffer
+    assert set(region) == {0xFF0000, 0x000000}
+
+    s.tick()
+    assert s.pixels[:4] == [region[(i + 1) % len(region)] for i in range(4)]
+    assert s.pixels[4:] == [0x0000FF] * 4

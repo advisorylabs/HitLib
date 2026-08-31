@@ -2,27 +2,23 @@
 
 Each strand becomes its own namespace under hitlib::profiles, holding:
 
-  * constexpr hardware values (port, length, refresh, brightness) so the
-    LedStrand on the robot is constructed from the same numbers the preview
-    ran against, instead of being retyped by hand;
-  * a mode:: namespace of named index constants, since activateMode() takes
-    an index and counting array rows by hand is where mode mixups come from;
+  * constexpr hardware values (port, length, refresh, brightness), so the
+    LedStrand is built from the numbers the preview ran against;
+  * a mode:: namespace of named index constants for activateMode();
   * the setup functions (in detail::), the ProfileMode table, the Profile,
-    and an apply() that sets brightness and attaches the profile in one call.
+    and an apply() that sets brightness and attaches the profile.
 
-The per-strand namespace is also what makes multi-strand exports safe: two
-strands that each define an "Idle" mode would otherwise emit two identical
-`inline void idle(LedStrand&)` definitions and fail to compile.
+The per-strand namespace also keeps multi-strand exports compiling: two strands
+that each define an "Idle" mode would otherwise emit two identical
+`inline void idle(LedStrand&)` definitions.
 
-A design with a Music Sync animation also emits a `music::` namespace holding
-the song's baked envelopes as `uint8_t` tables - one per frequency band any
-strand actually uses, so a design that only pumps on the bass doesn't carry a
-treble table it never reads. That namespace sits outside the strand namespaces
-because the song belongs to the document, not to any one strand.
+A Music Sync design also emits a `music::` namespace of baked `uint8_t`
+envelope tables, one per band any strand uses. It sits outside the strand
+namespaces because the song belongs to the document, not to one strand.
 
-validate_for_export() (or validate_document_for_export()) should be called
-first and its errors shown to the user, the generators assume a config that
-already passed validation and do not re-check ranges themselves.
+Call validate_for_export() (or validate_document_for_export()) first and show
+its errors: the generators assume a validated config and do not re-check
+ranges.
 """
 
 from __future__ import annotations
@@ -110,10 +106,9 @@ def validate_document_for_export(
 ) -> list[str]:
     """Validate every strand for a whole-document export.
 
-    Beyond each strand's own checks, strand names have to be distinct: they
-    become the namespace names in the generated header, and two strands called
-    "Strand" would produce `strand` and `strand2` with nothing to say which is
-    which. Renaming is a one-word fix and keeps the output readable.
+    Beyond each strand's own checks, names must be distinct: they become the
+    namespace names, and two strands called "Strand" would produce `strand`
+    and `strand2` with nothing to distinguish them.
     """
     if not configs:
         return ["Nothing to export, add at least one strand."]
@@ -194,6 +189,8 @@ def _validate_splice(mode_name: str, phase_name: str | None, s: SpliceMaskConfig
     if s.mode == SpliceModeKind.SPLIT:
         if not (0 <= s.sections <= 255):
             errors.append(f"{where}: splice sections must be 0-255 (got {s.sections}).")
+        if s.needs_overlay():
+            errors.extend(_validate_overlay(f"{where}: overlay", s.overlay))
     else:
         if not s.regions:
             errors.append(f"{where}: Custom splice mask needs at least one region.")
@@ -202,7 +199,19 @@ def _validate_splice(mode_name: str, phase_name: str | None, s: SpliceMaskConfig
                 errors.append(f"{where}: splice region {i + 1} width must be >= 1 (got {r.width}).")
             if not (0 <= r.start <= 255):
                 errors.append(f"{where}: splice region {i + 1} start must be 0-255 (got {r.start}).")
-            errors.extend(_validate_gauge(f"{where}: splice region {i + 1}", r.animation))
+            errors.extend(_validate_overlay(f"{where}: splice region {i + 1}", r.animation))
+    return errors
+
+
+def _validate_overlay(where: str, o: OverlayAnimationConfig) -> list[str]:
+    """The per-kind checks an overlay animation gets, whether it is Split
+    mode's shared buffer or one Custom region's own."""
+    errors = []
+    if o.kind == OverlayAnimationKind.TWINKLE and not o.palette:
+        errors.append(f"{where}: Twinkle needs at least one palette color.")
+    if o.kind == OverlayAnimationKind.BITSCROLL and o.segment_width < 1:
+        errors.append(f"{where}: Bitscroll segment width must be >= 1.")
+    errors.extend(_validate_gauge(where, o))
     return errors
 
 
@@ -312,11 +321,10 @@ def _bool(b: bool) -> str:
 
 
 def _double(value: float) -> str:
-    """A number as an unmistakable C++ double literal.
+    """A number as an unambiguous C++ double literal.
 
-    levelSource() takes doubles, and `20` next to `0.5` in the same argument
-    list reads like two different things when only one of them is written with
-    a point.
+    levelSource() takes doubles; writing `20` beside `0.5` in one argument list
+    obscures that both are the same type.
     """
     text = f"{value:g}"
     return text if ("." in text or "e" in text) else f"{text}.0"
@@ -355,10 +363,9 @@ class _FillSourceSet:
     """The readers one strand's Fill animations need, collected as its modes
     are generated and emitted together as its `source::` namespace.
 
-    Readers are shared: two meters following the same motor on the same port
-    are the same reading, and one function holding one device object says that
-    better than two identical copies would. Custom hooks are the exception -
-    each one is a separate thing for the user to assign, so each gets its own.
+    Readers are shared: two meters on the same motor and port are the same
+    reading, so they share one function and one device object. Custom hooks are
+    the exception - each is assigned separately, so each gets its own.
     """
 
     namer: _UniqueNamer = field(default_factory=_UniqueNamer)
@@ -378,13 +385,11 @@ class _FillSourceSet:
         """The expression naming `a`'s reader, emitting it if it is new.
 
         Takes either config shape: a Gauge region carries the same source
-        fields under the same names as a Fill meter, and wants the identical
-        reader - two gauges pointed at the same motor share one, the same way
-        two Fill meters would.
+        fields under the same names as a Fill meter, and shares its readers.
 
-        None when the animation has no reader at all (a Manual meter), in which
-        case the export is a levelFill() with nothing attached and the robot's
-        own code calls setLevel() - or, for a gauge, setRegionLevel().
+        None for a Manual meter, which has no reader: the export is a
+        levelFill() with nothing attached, driven by setLevel() (or
+        setRegionLevel() for a gauge).
         """
         source = fill_sources.get(a.source)
         if not fill_sources.polls_a_device(source.id):
@@ -511,6 +516,17 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
         return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed}, {_bool(o.seamless)});"
     if o.kind == OverlayAnimationKind.RAINBOW:
         return f"s.overlayRainbow({o.speed});"
+    if o.kind == OverlayAnimationKind.TWINKLE:
+        return (
+            f"s.overlayTwinkle({_palette_literal(o.palette)}, {o.density_pct}, {o.fade_step}, "
+            f"{_hex(o.bg_color)});"
+        )
+    if o.kind == OverlayAnimationKind.BITSCROLL:
+        segment = f"LedStrand::BitScrollSegment{{{_hex(o.color)}, {o.segment_width}}}"
+        return (
+            f"s.overlayBitscroll({{{segment}}}, {o.speed}, {_bool(o.invert)}, "
+            f"{_hex(o.bg_color)}, {o.spacing}, {_bool(o.repeating)});"
+        )
     if o.kind == OverlayAnimationKind.GAUGE:
         # The panel does not offer a gauge here (Split's overlay is one shared
         # buffer, so a gauge would be one meter smeared across every masked
@@ -537,19 +553,33 @@ def _region_literal(r: SpliceRegionConfig, reader: str | None = None) -> str:
         if not a.stops:
             # Only meaningful as the fallback scale; with stops they are noise.
             parts.append(f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}")
-        parts.append(f".bgColor = {_hex(a.bg_color)}")
+        parts.append(f".bgColor = {_hex(a.bg_color)}, .invert = {_bool(a.invert)}")
         if reader is not None:
             parts.append(f".read = {reader}")
         parts.append(
             f".emptyAt = {_double(a.source_empty)}, .fullAt = {_double(a.source_full)}, "
             f".wrap = {_bool(a.source_wrap)}, .smoothing = {a.smoothing}, "
-            f".invert = {_bool(a.invert)}, "
             f".style = LedStrand::GaugeStyle::{a.style.value.upper()}, "
             f".blend = LedStrand::GaugeBlend::{a.blend.value.upper()}"
         )
         if a.stops:
             parts.append(f".stops = {_stops_literal(a.stops)}")
         return "{" + ", ".join(parts) + "}"
+
+    if a.kind == OverlayAnimationKind.TWINKLE:
+        return (
+            f"{{{head}, .bgColor = {_hex(a.bg_color)}, "
+            f".palette = {_palette_literal(a.palette)}, "
+            f".densityPct = {a.density_pct}, .fadeStep = {a.fade_step}}}"
+        )
+
+    if a.kind == OverlayAnimationKind.BITSCROLL:
+        return (
+            f"{{{head}, .color = {_hex(a.color)}, .bgColor = {_hex(a.bg_color)}, "
+            f".speed = {a.speed}, .invert = {_bool(a.invert)}, "
+            f".segmentWidth = {a.segment_width}, .spacing = {a.spacing}, "
+            f".repeating = {_bool(a.repeating)}}}"
+        )
 
     return (
         f"{{{head}, "
@@ -624,87 +654,122 @@ class _StrandRender:
 _RESERVED_MEMBERS = {
     "adiPort", "smartPort", "length", "refreshMs", "brightness",
     "mode", "source", "detail", "modeTable", "profile", "apply",
+    "strand",
 }
 
 
-def _constructor_args(config: StrandConfig, ns: str) -> str:
-    parts = [f"{ns}::smartPort"] if config.smart_port else []
-    parts += [f"{ns}::adiPort", f"{ns}::length", f"{ns}::refreshMs"]
+def _constructor_args(config: StrandConfig) -> str:
+    """The LedStrand constructor arguments for @p config, named rather than
+    numeric so the strand is built from the same constants the rest of its
+    namespace exports - change the port in the GUI and there is one place it
+    lands. An ADI expander needs the four-argument constructor.
+    """
+    parts = ["smartPort"] if config.smart_port else []
+    parts += ["adiPort", "length", "refreshMs"]
     return ", ".join(parts)
+
+
+#: The banner marks its copy-paste block with this exact indent; prose asides
+#: use a shallower one, so harvesting on it yields code and only code.
+_PASTE_PREFIX = "//        "
+
+
+def paste_block(code: str) -> str:
+    """The pasteable lines of @p code's usage banner, comment marker stripped.
+
+    The single reader of that convention: the Deploy dialog shows this and the
+    tests compile it, so a banner that stops being valid stops compiling.
+    """
+    return "\n".join(
+        line[len(_PASTE_PREFIX) :]
+        for line in code.splitlines()
+        if line.startswith(_PASTE_PREFIX)
+    )
 
 
 def _usage_banner(
     entries: list[_StrandRender], header_name: str, music: _MusicRef | None = None
 ) -> list[str]:
-    """The comment block at the top of every export: exactly what to paste into
-    main.cpp, spelled out with this design's real identifiers, ports and mode
-    names, so nothing has to be transcribed by hand from the GUI.
+    """The comment block at the top of every export: what to paste into
+    main.cpp, with this design's real identifiers and mode names.
+
+    Two indents. `PASTE` lines form one contiguous compilable block, which
+    paste_block() harvests and the tests compile. `NOTE` lines are asides (the
+    escape hatches, the macro) that would not compile if pasted.
     """
-    single = len(entries) == 1
+    PASTE = _PASTE_PREFIX
+    NOTE = "//    "
+
+    hooks = [(e, name, label) for e in entries for name, label in e.sources.hooks]
+    manual = [e for e in entries if e.sources.has_manual]
+
     lines = [
         "// Generated by HitLib Pattern Studio - edit the source design, not this file.",
         "//",
         "// 1. Drop this file into your PROS project's include/ directory.",
-        "// 2. Include it after hitlib, then wire it up:",
+        "// 2. Paste this into main.cpp. Ports, lengths, refresh intervals,",
+        "//    brightness and modes all come from the design.",
         "//",
-        '//        #include "hitlib/hitapi.hpp"',
-        f'//        #include "{header_name}"',
-        "//",
+        f'{PASTE}#include "{header_name}"',
+        PASTE.rstrip(),
     ]
+    width = max(len(e.ns) for e in entries)
     for e in entries:
-        lines.append(f"//        namespace {e.ns} = hitlib::profiles::{e.ns};")
+        lines.append(f"{PASTE}namespace {e.ns:<{width}} = hitlib::profiles::{e.ns};")
+    lines.append(PASTE.rstrip())
+    lines.append(f"{PASTE}void initialize() {{")
+    # A custom Fill source can only be supplied by the robot's own code, so the
+    # paste block leaves an assignment to fill in. Placed before begin(), which
+    # is when the modes that read them start running.
+    for e, name, label in hooks:
+        lines.append(
+            f"{PASTE}    {e.ns}::source::{name} = [] {{ return 0.0; }};"
+            f'   // TODO: "{label}"'
+        )
+    lines.append(f"{PASTE}    hitlib::studio::begin();")
+    lines.append(f"{PASTE}}}")
     lines.append("//")
-    for e in entries:
-        lines.append(f"//        hitlib::LedStrand {e.var}({_constructor_args(e.config, e.ns)});")
-    lines.append("//        hitlib::LedGroup  group;")
+    lines.append("// begin() registers every strand below, starts its refresh task, attaches")
+    lines.append("// its profile and activates its first mode. Calling it twice does nothing,")
+    lines.append("// so a re-init path is safe.")
     lines.append("//")
-    lines.append("//        void initialize() {")
+    lines.append("// Switch modes from anywhere - these are ordinary LedStrand objects:")
+    lines.append("//")
+    lines.append(f"{PASTE}void opcontrol() {{")
     for e in entries:
-        lines.append(f"//            group.add(&{e.var});")
-    lines.append("//            group.init();")
-    lines.append("//            group.start();")
-    if single:
-        # One profile, one group, so apply it to every strand at once.
-        lines.append(f"//            {entries[0].ns}::apply(group);   // brightness + attachProfile")
-        lines.append(f"//            group.activateMode({entries[0].ns}::mode::{entries[0].mode_names[0]});")
-    else:
-        # Each strand carries its own profile, so they're attached (and driven)
-        # per strand rather than through the group.
-        for e in entries:
-            lines.append(f"//            {e.ns}::apply({e.var});   // brightness + attachProfile")
-        for e in entries:
-            lines.append(f"//            {e.var}.activateMode({e.ns}::mode::{e.mode_names[0]});")
-    lines.append("//        }")
+        lines.append(
+            f"{PASTE}    {e.ns}::strand.activateMode({e.ns}::mode::{e.mode_names[0]});"
+        )
+        # A timed activation only reads as an example when there is a second
+        # mode for it to expire back to.
+        if len(e.mode_names) > 1:
+            lines.append(
+                f"{PASTE}    {e.ns}::strand.activateModeTimed({e.ns}::mode::{e.mode_names[1]}, 1500);"
+            )
+    for e in manual:
+        lines.append(f"{PASTE}    {e.ns}::strand.setLevel(128);   // a Manual Fill meter, 0-255")
+    lines.append(f"{PASTE}}}")
     lines.append("//")
     for e in entries:
         listed = ", ".join(f"{name} = {i}" for i, name in enumerate(e.mode_names))
         lines.append(f"// Modes - {e.ns}::mode::{{{listed}}}")
 
-    # Custom Fill sources are the one thing an export cannot finish by itself:
-    # only the robot's own code knows what the meter is supposed to follow. So
-    # the banner writes out the assignment, with the mode it belongs to.
-    hooks = [(e, name, label) for e in entries for name, label in e.sources.hooks]
-    if hooks:
-        lines.append("//")
-        lines.append("// Fill sources - assign each of these before its mode runs, in")
-        lines.append("// initialize(), with anything that returns a double:")
-        for e, name, label in hooks:
-            lines.append(
-                f"//        {e.ns}::source::{name} = [] {{ return someValue(); }};"
-                f'   // "{label}"'
-            )
-    manual = [e for e in entries if e.sources.has_manual]
-    if manual:
-        lines.append("//")
-        lines.append("// A Fill meter set to Manual moves only when you move it:")
-        for e in manual:
-            lines.append(f"//        {e.var}.setLevel(128);   // 0 = empty, 255 = full")
-
     if music is not None:
         lines.append("//")
-        lines.append("// This design syncs to a song: the mode that plays it starts the song's")
-        lines.append("// clock the moment it activates, so activate it when the music starts.")
-        lines.append("// Retune the fill with setSensitivity() or reposition it with musicSeek().")
+        lines.append("// The mode that plays the song starts its clock on activation, so")
+        lines.append("// activate it when the music starts. setSensitivity() retunes the fill;")
+        lines.append("// musicSeek() repositions it.")
+
+    # The two opt-outs, for a codebase that owns its own LED setup.
+    lines.append("//")
+    lines.append("// To wire these strands up yourself:")
+    lines.append("//")
+    lines.append(f"{NOTE}hitlib::studio::begin(yourGroup);")
+    lines.append("// adds them to a group you own; you keep init(), start() and the interval.")
+    lines.append("//")
+    lines.append(f"{NOTE}#define HITLIB_STUDIO_NO_AUTOWIRE")
+    lines.append("// before the #include defines no strands and no group, leaving only the")
+    lines.append("// profile and the constants above to build your own LedStrand from.")
     return lines
 
 
@@ -778,6 +843,13 @@ def _render_strand(
     lines.append("inline void apply(LedStrand& s) { s.setBrightness(brightness); s.attachProfile(&profile); }")
     lines.append("inline void apply(LedGroup& g) { g.setBrightness(brightness); g.attachProfile(&profile); }")
     lines.append("")
+    lines.append("#ifndef HITLIB_STUDIO_NO_AUTOWIRE")
+    lines.append("/// The strand itself, built from the hardware constants above. An")
+    lines.append("/// ordinary LedStrand: hitlib::studio::begin() starts it, and every API")
+    lines.append("/// call works on it directly.")
+    lines.append(f"inline LedStrand strand{{{_constructor_args(config)}}};")
+    lines.append("#endif")
+    lines.append("")
     lines.append(f"}}  // namespace {ns}")
 
     return _StrandRender(
@@ -788,6 +860,92 @@ def _render_strand(
         lines=lines,
         sources=sources,
     )
+
+
+def _render_studio(entries: list[_StrandRender]) -> list[str]:
+    """The `hitlib::studio` namespace: the groups this design runs on and the
+    begin() that starts them.
+
+    Every value begin() needs - port, length, interval, brightness, first mode
+    - is already in the namespaces above, so the robot only includes the file
+    and calls begin().
+
+    Strands are bucketed by refresh interval. A group ticks everything it owns
+    at one rate, and a strand converts flash durations to ticks with its own
+    interval, so strands at different rates cannot share a group.
+    """
+    buckets: dict[int, list[_StrandRender]] = {}
+    for e in entries:
+        buckets.setdefault(e.config.refresh_ms, []).append(e)
+    intervals = list(buckets)
+    split = len(intervals) > 1
+
+    def qualified(e: _StrandRender) -> str:
+        return f"profiles::{e.ns}::strand"
+
+    def wire(e: _StrandRender) -> list[str]:
+        """Attach one strand's profile and bring it up in its first mode."""
+        return [
+            f"    profiles::{e.ns}::apply({qualified(e)});",
+            f"    {qualified(e)}.activateMode(profiles::{e.ns}::mode::{e.mode_names[0]});",
+        ]
+
+    lines = [
+        "#ifndef HITLIB_STUDIO_NO_AUTOWIRE",
+        "",
+        "/// This design, ready to run - see the banner at the top of this file.",
+        "namespace hitlib::studio {",
+        "",
+    ]
+    if split:
+        lines.append("// One refresh task per interval in the design: a group ticks every strand")
+        lines.append("// it owns at a single rate, and these strands were designed at different")
+        lines.append("// ones. They are still one begin() call.")
+    else:
+        lines.append(f"// The refresh task this design's strands run on, at {intervals[0]} ms.")
+    lines.append(f"inline LedGroup groups[{len(intervals)}];")
+    lines.append("")
+    lines.append("/// The first group, and the only one when every strand in the design")
+    lines.append("/// shares a refresh interval.")
+    lines.append("inline LedGroup& group = groups[0];")
+    lines.append("")
+    lines.append("/// Registers every strand in this design, initializes and starts it,")
+    lines.append("/// attaches its profile and activates its first mode. Call once from")
+    lines.append("/// initialize(); a second call does nothing, so a re-init path is safe.")
+    lines.append("inline void begin() {")
+    lines.append("    static bool started = false;")
+    lines.append("    if (started) return;")
+    lines.append("    started = true;")
+    lines.append("")
+    for i, ms in enumerate(intervals):
+        for e in buckets[ms]:
+            lines.append(f"    groups[{i}].add(&{qualified(e)});")
+        lines.append(f"    groups[{i}].init({ms});")
+        lines.append(f"    groups[{i}].start();")
+    lines.append("")
+    for e in entries:
+        lines.extend(wire(e))
+    lines.append("}")
+    lines.append("")
+    lines.append("/// Adds this design's strands to a group your own code owns and attaches")
+    lines.append("/// their profiles, leaving init(), start() and the refresh interval to")
+    lines.append("/// you. Call it before or after your own init(); order does not matter.")
+    if split:
+        lines.append("/// Note: these strands were designed at different refresh intervals, and")
+        lines.append("/// one group runs one. Pick the interval the flash timings matter at, or")
+        lines.append("/// use the no-argument begin() instead.")
+    lines.append("inline void begin(LedGroup& existing) {")
+    for e in entries:
+        lines.append(f"    existing.add(&{qualified(e)});")
+    lines.append("")
+    for e in entries:
+        lines.extend(wire(e))
+    lines.append("}")
+    lines.append("")
+    lines.append("}  // namespace hitlib::studio")
+    lines.append("")
+    lines.append("#endif  // HITLIB_STUDIO_NO_AUTOWIRE")
+    return lines
 
 
 #: Sample table line width. Twelve three-digit values plus separators sit just
@@ -896,6 +1054,8 @@ def _render_file(
         lines.append("")
     lines.append("}  // namespace hitlib::profiles")
     lines.append("")
+    lines.extend(_render_studio(entries))
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -924,9 +1084,9 @@ def generate_document_cpp(
     """Render every strand in the document into a single header, each in its
     own namespace.
 
-    Sharing one file (and therefore one namespace namer) is what keeps two
-    strands that both have, say, an "Idle" mode from generating colliding
-    identifiers; separately exported files could not see each other.
+    One file means one namespace namer, so two strands that both have an
+    "Idle" mode cannot generate colliding identifiers. Separately exported
+    files have no such shared namer.
     """
     if not configs:
         raise ValueError("no strands to export")

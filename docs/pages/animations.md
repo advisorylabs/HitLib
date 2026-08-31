@@ -126,7 +126,13 @@ strand.overlayPulse(0x0000FF, 5, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1, /*seamless*/ false);
 strand.overlayFlash(0xFFFFFF, 100, 100);
+strand.overlayTwinkle({0xFFFFFF, 0x88CCFF}, 30, 16);
+strand.overlayBitscroll({{0x00FFAA, 3}}, 1);
 ```
+
+The overlay carries the same vocabulary as the base animations, minus `bounce`:
+it is a single scrolling buffer, and bouncing needs a wider master pattern to
+slide a window over. Use the base animation when you want that.
 
 ---
 
@@ -148,8 +154,8 @@ strand.setLevel(intakeVelocity * 255 / maxVelocity);
 
 With `gradient`, the two colors are laid out across the **whole strip**, not
 across the lit part, so a given pixel is always the same color no matter how
-full the meter is. That is what makes a VU-style scale work; a gradient
-stretched over the fill would recolor every pixel on every update.
+full the meter is, as a VU-style scale needs; a gradient stretched over the
+fill would recolor every pixel on every update.
 
 Three things can move a meter, and they are mutually exclusive - whichever was
 set up last owns it, so a strip handed to a song never has a stale sensor
@@ -200,7 +206,7 @@ back by hand.
 A few details worth knowing:
 
 - **Outside the range** the bar clamps to empty or full, so a gauge parks at
-  either end. `wrap` cycles instead, which is what a continuously turning
+  either end. `wrap` cycles instead, for a continuously turning
   motor or a heading wants: 450° of a 0-360 range shows a quarter full, not
   full.
 - **`smoothing`** (0-99) is how much of the previous frame's fill to keep each
@@ -315,6 +321,8 @@ strand.spliceMaskCustom({
     {.start = 0,  .width = 5, .kind = Kind::SOLID,   .color = 0xFF0000},              // solid red
     {.start = 10, .width = 8, .kind = Kind::RAINBOW, .speed = 1},                      // its own rainbow
     {.start = 20, .width = 6, .kind = Kind::PULSE,   .color = 0x00FF00, .runLength = 3, .speed = 2},
+    {.start = 30, .width = 6, .kind = Kind::TWINKLE, .palette = {0xFFFFFF}, .densityPct = 40},
+    {.start = 40, .width = 8, .kind = Kind::BITSCROLL, .color = 0x00FFAA, .speed = 1},
 });
 
 // Clear (either kind)

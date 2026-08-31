@@ -36,7 +36,7 @@ using ModeFn = void (*)(LedStrand& strand);
  * @see LedStrand::attachProfile
  */
 struct ProfileMode {
-    const char* name;           ///< Human-readable label shown in debug output.
+    const char* name;           ///< Label shown in debug output.
     uint8_t     priority;       ///< Higher value beats lower. Range: 0–255.
     ModeFn      onActivate;     ///< Called once when this mode becomes the winner.
     ModeFn      onTick;         ///< Called every tick while active. May be @c nullptr.

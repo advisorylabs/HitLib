@@ -2,9 +2,8 @@
 widgets rather than by mutating config directly.
 
 The design these are about - a strip under a drivebase split into one gauge per
-motor - is only worth having in the GUI if it can be built there without
-arithmetic, so what these check is mostly that: pick a source, press Divide,
-change six ports.
+motor - has to be buildable without arithmetic, so these mostly check that:
+pick a source, press Divide, change six ports.
 """
 
 import pytest
@@ -135,7 +134,7 @@ def test_a_hand_driven_gauge_keeps_its_range_but_drops_the_reader_fields(win, qa
 
 
 def test_divide_lays_out_one_segment_per_motor(win, qapp):
-    """The arithmetic nobody should have to do: 60 pixels, six motors."""
+    """Divide splits the strip evenly: 60 pixels, six motors."""
     win.inspector.strand_panel.length_spin.setValue(60)
     qapp.processEvents()
     panel = _custom_splice(win)
