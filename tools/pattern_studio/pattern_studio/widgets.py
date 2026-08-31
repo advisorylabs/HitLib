@@ -116,7 +116,13 @@ class BrandRule(QWidget):
 
     def hideEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().hideEvent(event)
-        self._timer.stop()
+        # Qt hides a widget on its way out, and by then PySide6 has already
+        # cleared the Python instance - so _timer can be gone when this runs
+        # during teardown. The timer is parented to the widget and dies with
+        # it either way; stopping it here is only to spare the repaints.
+        timer = getattr(self, "_timer", None)
+        if timer is not None:
+            timer.stop()
 
     def _advance(self) -> None:
         travel = self.SPEED_PX_PER_SEC * self.FRAME_MS / 1000
