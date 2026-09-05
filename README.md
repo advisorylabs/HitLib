@@ -85,9 +85,16 @@ pip install -e .
 pattern-studio
 ```
 
-Prebuilt Windows binaries are on the
-[Releases page](https://github.com/advisorylabs/HitLib/releases)
-(`HitLibPatternStudio-*-windows.zip`).
+Prebuilt binaries for Windows and macOS (Apple Silicon and Intel) are on the
+[Releases page](https://github.com/advisorylabs/HitLib/releases).
+
+The Mac builds are not signed with an Apple developer certificate, so macOS
+quarantines them on download and reports the app as damaged. Clear that once,
+after dragging it to `/Applications`:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/HitLibPatternStudio.app
+```
 
 Show it your PROS project once - drag the project folder onto the window, or
 **Export > Choose PROS Project...** - and **Deploy** writes the header straight

@@ -4,15 +4,25 @@ A frameless window gives up things the OS was doing for free, like moving,
 resizing and the maximize/restore distinction. So what these tests pin is that
 each of them is actually wired back up, and that the menus really did move
 into the chrome row rather than leaving a second strip behind.
+
+None of it applies on macOS, which keeps its system frame -- see
+test_window_chrome_native.py for that path, which is exercised on every
+platform rather than only where it ships.
 """
 
+import sys
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 from pattern_studio import __version__, window_chrome
 from pattern_studio.main_window import MainWindow
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "darwin", reason="macOS uses the system frame, not this chrome"
+)
 
 
 def test_window_is_frameless(qapp):

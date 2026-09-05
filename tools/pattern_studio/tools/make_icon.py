@@ -83,10 +83,14 @@ def frame(art: QImage, size: int) -> QImage:
 
 
 def as_png(image: QImage) -> bytes:
-    buffer = QBuffer(QByteArray())
+    # The QByteArray is held in a local rather than passed inline: QBuffer
+    # writes through a raw pointer to it, and a temporary is freed the moment
+    # the constructor returns. Passing one crashes the interpreter mid-save.
+    data = QByteArray()
+    buffer = QBuffer(data)
     buffer.open(QIODevice.WriteOnly)
     image.save(buffer, "PNG")
-    return bytes(buffer.data())
+    return bytes(data)
 
 
 def as_dib(image: QImage) -> bytes:

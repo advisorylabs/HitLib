@@ -353,14 +353,19 @@ def _find_toolchain_compiler() -> str | None:
     found = shutil.which("arm-none-eabi-g++")
     if found:
         return found
-    # PROS installs its bundled toolchain outside PATH on Windows.
-    candidates = list(
-        Path.home().glob(
-            "AppData/Roaming/Code/User/globalStorage/sigbots.pros/install/"
-            "pros-toolchain-windows/usr/bin/arm-none-eabi-g++.exe"
-        )
-    )
-    return str(candidates[0]) if candidates else None
+    # PROS installs its bundled toolchain outside PATH, under the VS Code
+    # extension's own storage. Both the storage root and the toolchain's name
+    # differ per host, and only one of these can match on any given machine.
+    for pattern in (
+        "AppData/Roaming/Code/User/globalStorage/sigbots.pros/install/"
+        "pros-toolchain-windows/usr/bin/arm-none-eabi-g++.exe",
+        "Library/Application Support/Code/User/globalStorage/sigbots.pros/install/"
+        "pros-toolchain-darwin/usr/bin/arm-none-eabi-g++",
+    ):
+        candidates = list(Path.home().glob(pattern))
+        if candidates:
+            return str(candidates[0])
+    return None
 
 
 def _compile_or_fail(

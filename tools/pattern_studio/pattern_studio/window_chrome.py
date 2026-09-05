@@ -1,5 +1,9 @@
 """Built-in window chrome: the app's own title bar, caption buttons and
 resize edges, for a frameless main window. See caption_message().
+
+Windows and Linux get that. macOS keeps its system frame instead and takes
+NativeTitleBar, a stand-in with the same surface and nothing in it -- see
+install() for why redrawing a Mac caption is the wrong trade.
 """
 
 from __future__ import annotations
@@ -439,8 +443,55 @@ def round_corners(window: QWidget) -> None:
         pass
 
 
-def install(window: QWidget) -> TitleBar:
-    """Make `window` frameless and return the title bar to put at its top."""
+class _NoGrips:
+    """Stand-in for ResizeGrips where the system frame does the resizing."""
+
+    def reposition(self) -> None:
+        pass
+
+
+class NativeTitleBar(QWidget):
+    """The title bar for platforms that already draw a good one.
+
+    Offers the same surface the window drives -- `menu_bar`, `set_title()`,
+    `sync_window_state()`, `resize_grips` -- while putting nothing in the
+    window: the system caption carries the title, the window buttons and the
+    resize edges itself. Zero-height and hidden, so the layout slot it sits
+    in collapses to nothing.
+    """
+
+    def __init__(self, window: QWidget, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self.setFixedHeight(0)
+        self.hide()
+        # Parented to the window, not to this widget: the platform hoists a
+        # menu bar into the screen's menu bar by finding the window it belongs
+        # to, and this widget is never shown.
+        self.menu_bar = QMenuBar(window)
+        self.menu_bar.setNativeMenuBar(True)
+        self.resize_grips = _NoGrips()
+
+    def set_title(self, name: str, version: str, file_name: str | None = None) -> None:
+        """Nothing to write: the window's own setWindowTitle() feeds the
+        system caption, which is the only title on screen here."""
+
+    def sync_window_state(self) -> None:
+        pass
+
+
+def install(window: QWidget) -> TitleBar | NativeTitleBar:
+    """Make `window` frameless and return the title bar to put at its top.
+
+    Except on macOS, where the system caption is what users reach for:
+    traffic lights at the *left*, menus in the screen's menu bar rather than
+    the window's, and the green button doing native fullscreen. Redrawing
+    that inside the window would be a worse copy of something already there,
+    so the app keeps the system frame and NativeTitleBar stands in.
+    """
+    if sys.platform == "darwin":
+        return NativeTitleBar(window)
+
     window.setWindowFlag(Qt.FramelessWindowHint, True)
     title_bar = TitleBar(window)
     # Parked on the title bar rather than dropped: a QObject that only the C++

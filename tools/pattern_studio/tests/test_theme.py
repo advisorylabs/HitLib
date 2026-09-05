@@ -6,6 +6,7 @@ loses its arrow/checkmark. These tests fail loudly instead.
 """
 
 import re
+import struct
 
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 
@@ -72,6 +73,39 @@ def test_taskbar_icon_is_not_squished(qapp):
     assert abs(icon_aspect - source_aspect) < 0.05 * source_aspect, (
         f"icon art is {icon_aspect:.3f} wide-to-tall, art is {source_aspect:.3f}"
     )
+
+
+#: The 8-byte PNG signature, spelled in hex so the non-printing bytes it
+#: starts and ends with stay readable.
+_PNG_MAGIC = bytes.fromhex("89504e470d0a1a0a")
+
+
+def test_bundle_icon_has_the_frames_macos_asks_for(qapp):
+    """The .app's icon comes from the .icns, and the Dock reads the 1024px
+    frame -- four times past anything an .ico can hold, which is why there are
+    two icons rather than one. Rebuild it with tools/make_icns.py.
+
+    Parsed by hand rather than through QImageReader: Qt has no .icns plugin on
+    Windows, so a test that loaded it would pass by skipping everywhere the
+    icon is actually built.
+    """
+    blob = (theme.resource_dir() / "hitliblogo.icns").read_bytes()
+    assert blob[:4] == b"icns"
+    assert struct.unpack(">I", blob[4:8])[0] == len(blob), "length header disagrees"
+
+    types, offset = [], 8
+    while offset < len(blob):
+        ostype = blob[offset : offset + 4]
+        size = struct.unpack(">I", blob[offset + 4 : offset + 8])[0]
+        assert size >= 8, f"{ostype!r} chunk claims {size} bytes"
+        assert blob[offset + 8 : offset + 16] == _PNG_MAGIC, (
+            f"{ostype!r} is not a PNG frame"
+        )
+        types.append(ostype)
+        offset += size
+    assert offset == len(blob), "chunk lengths do not tile the file"
+    # ic10 is the 512@2x Dock icon; icp4 the 16px one Finder lists it by.
+    assert b"ic10" in types and b"icp4" in types
 
 
 def test_stylesheet_has_no_unsubstituted_placeholders():

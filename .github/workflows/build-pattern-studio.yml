@@ -18,7 +18,22 @@ defaults:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      # One platform's build failing should still leave the others' binaries
+      # attached to the release rather than cancelling them mid-run.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+          # macOS runners are single-architecture and PyInstaller freezes for
+          # whichever one it runs on, so Apple Silicon and Intel are two
+          # builds. macos-13 is the last Intel image GitHub offers.
+          - os: macos-14
+            label: macos-arm64
+          - os: macos-13
+            label: macos-x86_64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,15 +52,29 @@ jobs:
       - name: Build executable
         run: pyinstaller --noconfirm HitLibPatternStudio.spec
 
-      - name: Package artifact
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = (Select-String -Path pattern_studio/__init__.py -Pattern '__version__ = "(.*)"').Matches.Groups[1].Value
-          Compress-Archive -Path dist/HitLibPatternStudio.exe -DestinationPath "HitLibPatternStudio-$version-windows.zip"
+          Compress-Archive -Path dist/HitLibPatternStudio.exe -DestinationPath "HitLibPatternStudio-$version-${{ matrix.label }}.zip"
+
+      - name: Package artifact (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' pattern_studio/__init__.py)
+          # ditto, not zip: a .app is full of symlinks (every Qt framework has
+          # a Versions/Current pointing at its real one), and an archiver that
+          # follows them instead of storing them produces a bundle that both
+          # bloats and refuses to launch.
+          ditto -c -k --keepParent \
+            dist/HitLibPatternStudio.app \
+            "HitLibPatternStudio-$version-${{ matrix.label }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hitlib-pattern-studio-windows
+          name: hitlib-pattern-studio-${{ matrix.label }}
           path: tools/pattern_studio/HitLibPatternStudio-*.zip
 
       - name: Attach to GitHub Release

@@ -92,13 +92,21 @@ CANVAS_EMPTY_TEXT = TEXT_DIM
 #: font rather than Qt's default.
 FONT_STACK = [
     "Inter",
+    # macOS's system face under the name Qt can always resolve, then the
+    # shipped name for anyone on a release where the alias is missing.
+    ".AppleSystemUIFont",
+    "SF Pro Text",
     "Segoe UI Variable Text",
     "Segoe UI",
     "Roboto",
     "Helvetica Neue",
     "sans-serif",
 ]
-FONT_POINT_SIZE = 9
+#: A point is not the same size on both platforms: Qt reports 96 logical DPI
+#: on Windows and 72 on macOS, so the same number renders a third smaller
+#: there. 12pt on macOS is 9pt on Windows measured in pixels, which is what
+#: keeps a layout tuned against one from turning cramped on the other.
+FONT_POINT_SIZE = 12 if sys.platform == "darwin" else 9
 
 # ----------------------------------------------------------------------
 # Resources

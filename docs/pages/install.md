@@ -77,9 +77,17 @@ void opcontrol() {
 is a desktop GUI for designing and live-previewing LED profiles without flashing a
 brain, then exporting them as ready-to-include HitLib C++.
 
-Download the prebuilt Windows build from the
-[Releases page](https://github.com/advisorylabs/hitlib/releases)
-(`HitLibPatternStudio-*-windows.zip`), or run it from source on any platform:
+Download a prebuilt build from the
+[Releases page](https://github.com/advisorylabs/hitlib/releases) - pick the zip
+matching your machine:
+
+| File | For |
+|---|---|
+| `HitLibPatternStudio-*-windows.zip` | Windows 10/11 |
+| `HitLibPatternStudio-*-macos-arm64.zip` | Macs with Apple Silicon (M1 and later) |
+| `HitLibPatternStudio-*-macos-x86_64.zip` | Intel Macs |
+
+Or run it from source on any platform:
 
 ```bash
 git clone https://github.com/advisorylabs/hitlib.git
@@ -87,6 +95,20 @@ cd hitlib/tools/pattern_studio
 pip install -e .
 pattern-studio
 ```
+
+### Opening the Mac build the first time
+
+The Mac builds are unsigned - paying into Apple's developer program is not
+something this project does yet - so macOS quarantines the app on download and
+reports it as damaged rather than as unrecognised. It is not damaged. Drag it
+to `/Applications`, then clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/HitLibPatternStudio.app
+```
+
+Or open it once from **System Settings > Privacy & Security**, where the
+blocked app appears with an **Open Anyway** button.
 
 ### Getting a design onto the robot
 
