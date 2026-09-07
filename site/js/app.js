@@ -340,6 +340,10 @@
   }
 
   function renderBuySummary() {
+    var orderForm = document.getElementById('buy-order-form');
+    var confirm = document.getElementById('buy-confirm');
+    if (orderForm) orderForm.hidden = false;
+    if (confirm) confirm.hidden = true;
     var container = document.getElementById('buy-cart-summary');
     if (!container) return null;
     var cart = readCart();
@@ -613,13 +617,14 @@
             throw err;
           }
         }
-        statusEl.textContent = isCard
-          ? 'Order details saved. The team will send you a payment link.'
-          : 'Order placed. The team will reach out to arrange payment.';
+        statusEl.textContent = '';
         writeCart([]);
         updateCartBadges();
         form.reset();
-        renderBuySummary();
+        var orderForm = document.getElementById('buy-order-form');
+        var confirm = document.getElementById('buy-confirm');
+        if (orderForm) orderForm.hidden = true;
+        if (confirm) confirm.hidden = false;
       } catch (err) {
         var code = err && err.code;
         if (code === 'quota_exceeded') {
