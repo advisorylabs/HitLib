@@ -542,20 +542,19 @@
       db = null;
     }
 
-    if (!db) {
-      countEl.textContent = "Ordering isn't available in this view yet.";
-      submitBtn.disabled = true;
-      return;
+    var col = db ? db.collection('orders') : null;
+
+    if (col) {
+      col.orderBy('ts', 'desc').limit(50).onSnapshot(function (snap) {
+        countEl.innerHTML = '<b>' + snap.size + '</b> ' + (snap.size === 1 ? 'order placed so far' : 'orders placed so far');
+        renderTicker(snap);
+      }, function (err) {
+        countEl.textContent = 'Order count is unavailable right now.';
+      });
+    } else {
+      countEl.hidden = true;
+      tickerEl.hidden = true;
     }
-
-    var col = db.collection('orders');
-
-    col.orderBy('ts', 'desc').limit(50).onSnapshot(function (snap) {
-      countEl.innerHTML = '<b>' + snap.size + '</b> ' + (snap.size === 1 ? 'order placed so far' : 'orders placed so far');
-      renderTicker(snap);
-    }, function (err) {
-      countEl.textContent = 'Order count is unavailable right now.';
-    });
 
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
@@ -600,7 +599,20 @@
       statusEl.textContent = isCard ? 'Saving order…' : 'Placing order…';
 
       try {
-        await col.add(payload);
+        if (col) {
+          await col.add(payload);
+        } else {
+          var resp = await fetch('/api/order', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!resp.ok) {
+            var err = new Error('order endpoint failed');
+            err.code = resp.status === 429 ? 'resource_exhausted' : resp.status === 400 ? 'invalid_argument' : 'unavailable';
+            throw err;
+          }
+        }
         statusEl.textContent = isCard
           ? 'Order details saved. The team will send you a payment link.'
           : 'Order placed. The team will reach out to arrange payment.';
@@ -612,10 +624,12 @@
         var code = err && err.code;
         if (code === 'quota_exceeded') {
           statusEl.textContent = 'Orders are full right now. Try again later.';
-        } else if (code === 'resource_exhausted' || code === 'unavailable') {
+        } else if (code === 'resource_exhausted') {
           statusEl.textContent = 'Too many requests. Wait a moment and try again.';
         } else if (code === 'invalid_argument') {
           statusEl.textContent = 'That entry was rejected. Try a shorter name or note.';
+        } else if (code === 'unavailable') {
+          statusEl.textContent = 'Could not reach the order desk. Try again in a bit, or reach out on Discord.';
         } else {
           statusEl.textContent = 'Something went wrong. Try again.';
         }

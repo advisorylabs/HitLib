@@ -34,23 +34,26 @@ then open `http://localhost:8000`.
 It's a single-page app using hash routing, all client-side, no server needed:
 
 - `#/` — dashboard
-- `#/order` — pick a kit (Single / Standard / Extended)
+- `#/order` — pick a kit (Single / Regular / Extended)
 - `#/kit/<id>` — configure that kit's per-strand density, add to cart
 - `#/cart` — review cart, adjust quantities
 - `#/buy` — checkout (contact info or full order details; no card fields, see below)
 
-## Known limitation: the order form
+## Order notifications
 
-The "place order" flow on `#/buy` and the live order count/ticker are wired to
-Claude's artifact `db` capability (`window.claude.use('db')`), which only exists
-when this page is rendered inside a Claude artifact viewer. Outside of that (this
-repo, Vercel, GitHub Pages, anywhere else), `claude` is undefined, the code catches
-that and shows "ordering isn't available in this view yet" — browsing kits, the
-cart, the carousel, and the video all still work fully, only the final submit step
-degrades.
+The "place order" flow on `#/buy` tries Claude's artifact `db` capability first
+(`window.claude.use('db')`), which only exists inside a Claude artifact viewer and
+also drives the live order count/ticker there. Everywhere else (this repo, Vercel,
+GitHub Pages), `claude` is undefined, so the form instead POSTs to `/api/order`, a
+Vercel serverless function (`api/order.js`) that forwards the order as a Discord
+embed via a webhook, so whoever runs the server knows who to DM about payment.
 
-If you want orders to actually persist when hosted outside Claude, that call needs
-replacing with a real backend (a form endpoint, a serverless function, etc.).
+That function needs a `DISCORD_WEBHOOK_URL` environment variable set in the Vercel
+project (Project Settings -> Environment Variables, or `vercel env add
+DISCORD_WEBHOOK_URL`). Create the webhook from Discord: channel settings -> Integrations
+-> Webhooks -> New Webhook, ideally in a channel only the team can see, since anyone
+holding that URL can post to it. Without the env var set, `/api/order` returns a
+500 and the form shows a generic error; ordering is otherwise unaffected.
 
 ## Deploying
 
