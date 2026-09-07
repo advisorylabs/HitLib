@@ -97,9 +97,9 @@
   ];
 
   var KITS = [
-    { id: 'single', name: 'Single', strands: 1, price: 25, blurb: 'One strand. Pick any density.' },
-    { id: 'standard', name: 'Standard', strands: 2, price: 40, blurb: 'Two strands. Mix and match densities.' },
-    { id: 'extended', name: 'Extended', strands: 4, price: 70, blurb: 'Four strands. Mix and match densities.' }
+    { id: 'single', name: 'Single', strands: 1, price: 20, origPrice: 25, blurb: 'One strand. Pick any density.' },
+    { id: 'standard', name: 'Regular', strands: 2, price: 35, origPrice: 40, blurb: 'Two strands. Mix and match densities.' },
+    { id: 'extended', name: 'Extended', strands: 4, price: 65, origPrice: 70, blurb: 'Four strands. Mix and match densities.' }
   ];
 
   var STRAND_COLORS = ['var(--blue)', 'var(--purple)', 'var(--pink)', 'var(--cyan)'];
@@ -170,6 +170,13 @@
   }
   function money(n) { return '$' + n.toFixed(2); }
 
+  function kitPriceHtml(kit, extraStyle) {
+    return '<div class="kit-price"' + (extraStyle ? ' style="' + extraStyle + '"' : '') + '>' +
+      '<span class="price-was">' + money(kit.origPrice) + '</span>' +
+      '<span class="price-now">' + money(kit.price) + '</span>' +
+    '</div>';
+  }
+
   function updateCartBadges() {
     var n = cartCount(readCart());
     document.querySelectorAll('.cart-badge').forEach(function (b) {
@@ -200,7 +207,7 @@
           '<div class="kit-name">' + kit.name + '</div>' +
           '<div class="kit-spec">' + kit.strands + ' strand' + (kit.strands > 1 ? 's' : '') + '</div>' +
           '<div class="kit-blurb">' + kit.blurb + '</div>' +
-          '<div class="kit-price">' + money(kit.price) + '</div>' +
+          kitPriceHtml(kit) +
           '<a class="kit-detail-link" href="#/kit/' + kit.id + '">Configure &amp; buy &rarr;</a>' +
         '</div>' +
       '</div>';
@@ -243,7 +250,7 @@
         '<h2>' + kit.name + '</h2>' +
         '<div class="kit-spec" style="margin-top:6px;">' + kit.strands + ' strand' + (kit.strands > 1 ? 's' : '') + '</div>' +
         '<p style="margin-top:14px; color:var(--text-muted);">' + kit.blurb + ' Pick a density for each strand below, mix and match freely.</p>' +
-        '<div class="kit-price" style="font-size:22px; margin-top:16px;">' + money(kit.price) + '</div>' +
+        kitPriceHtml(kit, 'font-size:22px; margin-top:16px;') +
         '<div class="strand-picker-list">' + pickers + '</div>' +
         '<div class="kit-add-row" style="margin-top:20px; max-width:320px;">' +
           '<div class="qty-stepper">' +
@@ -370,7 +377,7 @@
                 '<div class="kit-name">' + kit.name + '</div>' +
                 '<div class="kit-spec">' + kit.strands + ' strand' + (kit.strands > 1 ? 's' : '') + '</div>' +
                 '<div class="kit-blurb">' + kit.blurb + '</div>' +
-                '<div class="kit-price">' + money(kit.price) + '</div>' +
+                kitPriceHtml(kit) +
               '</div>' +
             '</button>';
         }).join('') +
@@ -414,7 +421,7 @@
   function resetLedStrip() {
     document.querySelectorAll('.led-strip .led').forEach(function (led) {
       led.style.animation = 'none';
-      void led.offsetWidth;
+      void led.getBoundingClientRect();
       led.style.animation = '';
     });
   }

@@ -196,7 +196,7 @@
   @media (prefers-reduced-motion: no-preference) {
     .led { animation: chase 3.4s ease-in-out infinite; animation-delay: calc(var(--i) * 0.14s); }
     @keyframes chase {
-      0%, 82%, 100% { background: var(--line-strong); box-shadow: none; }
+      0%, 30%, 82%, 100% { background: var(--line-strong); box-shadow: none; }
       8% { background: var(--blue); box-shadow: 0 0 9px 1px var(--blue); }
       16% { background: var(--purple); box-shadow: 0 0 9px 1px var(--purple); }
       24% { background: var(--pink); box-shadow: 0 0 9px 1px var(--pink); }
@@ -530,6 +530,33 @@
     font-size: 19px;
     color: var(--text);
     font-variant-numeric: tabular-nums;
+  }
+
+  .sale-banner {
+    margin-top: 22px;
+    padding: 14px 18px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--pink);
+    border-radius: 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .sale-banner .label {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--pink);
+  }
+
+  .sale-banner .value {
+    font-size: 15px;
+    color: var(--text);
   }
 
   /* ---------- app window (editor screenshots + photos) ---------- */
@@ -987,7 +1014,17 @@
     font-weight: 700;
     font-size: 16px;
     font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
   }
+  .price-was {
+    font-weight: 400;
+    font-size: 0.78em;
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+  .price-now { color: var(--pink); }
 
   .kit-detail-link {
     font-size: 12.5px;
