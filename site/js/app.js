@@ -179,7 +179,7 @@
   }
 
   var KIT_IMAGES = {
-    single: 'assets/kit-single.png',
+    single: 'assets/kit-single.webp',
     standard: 'assets/kit-standard.webp',
     extended: 'assets/kit-extended.webp'
   };
