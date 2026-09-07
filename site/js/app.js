@@ -126,7 +126,8 @@
   function readCart() {
     try {
       var raw = window.localStorage.getItem('hitlib_cart_v4');
-      return raw ? JSON.parse(raw) : [];
+      var parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch (e) { return []; }
   }
   function writeCart(cart) {
