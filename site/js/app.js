@@ -178,18 +178,18 @@
     });
   }
 
+  var KIT_IMAGES = {
+    single: 'assets/kit-single.png',
+    standard: 'assets/kit-standard.webp',
+    extended: 'assets/kit-extended.webp'
+  };
+
   function kitIconHtml(kit) {
-    var dots = '';
-    for (var s = 0; s < kit.strands; s++) {
-      var color = STRAND_COLORS[s % STRAND_COLORS.length];
-      dots += '<span class="strand">' +
-        '<span style="background:' + color + '"></span>' +
-        '<span style="background:' + color + '"></span>' +
-        '<span style="background:' + color + '"></span>' +
-        '<span style="background:' + color + '"></span>' +
-        '</span>';
+    var src = KIT_IMAGES[kit.id];
+    if (src) {
+      return '<div class="kit-visual"><img src="' + src + '" alt="' + kit.name + ' kit, ' + kit.strands + ' strand' + (kit.strands > 1 ? 's' : '') + '" /></div>';
     }
-    return '<div class="kit-visual">' + dots + '</div>';
+    return '<div class="kit-visual"></div>';
   }
 
   function kitCardHtml(kit) {
