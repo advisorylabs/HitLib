@@ -616,7 +616,7 @@
         statusEl.textContent = isCard
           ? 'Order details saved. The team will send you a payment link.'
           : 'Order placed. The team will reach out to arrange payment.';
-        writeCart({});
+        writeCart([]);
         updateCartBadges();
         form.reset();
         renderBuySummary();
