@@ -1,4 +1,4 @@
-# HitLib Pattern Studio — release page
+# HitLib — release page
 
 Single-file static site announcing HitLib v1.3.0 / Pattern Studio 1.0.0. Everything
 (styles, scripts, images, video, GSAP) is inlined into `index.html`, so the page has
