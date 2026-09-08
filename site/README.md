@@ -89,11 +89,26 @@ everything else on the site keeps working.
 
 ## Deploying
 
-Was deployed ad hoc via `vercel deploy --temporary` (anonymous, expires in 60
-minutes unless claimed). For a permanent, auto-deploying setup, link this repo to
-Vercel:
+This folder lives inside the main `advisorylabs/HitLib` repository, alongside the
+C++ library and the Doxygen docs. Only this subdirectory is deployed.
 
-```bash
-vercel link --repo
-git push
-```
+Import the repo into Vercel once, and in **Project Settings -> Build & Deployment**
+set **Root Directory** to `site`. Everything else stays on Vercel's zero-config
+defaults: no build command (the page is plain HTML/CSS/JS), the folder itself is
+the output directory, `npm install` picks up `stripe` from the `package.json`
+here, and each file in `api/` becomes a Node serverless function at `/api/<name>`.
+After that every push to `main` that touches `site/` redeploys automatically.
+
+Set these environment variables in the Vercel project (all three described above):
+
+| Variable | Used by | Without it |
+| --- | --- | --- |
+| `DISCORD_WEBHOOK_URL` | `api/order.js`, `api/stripe-webhook.js` | `/api/order` 500s; the form shows a generic error |
+| `STRIPE_SECRET_KEY` | `api/create-checkout-session.js`, `api/verify-session.js` | card payment 500s; buyers fall back to "Contact me later" |
+| `STRIPE_WEBHOOK_SECRET` | `api/stripe-webhook.js` | paid orders never reach Discord |
+
+Point the Stripe webhook endpoint at `https://<your-domain>/api/stripe-webhook`.
+
+The library's GitHub Pages site (the Doxygen API reference at
+<https://advisorylabs.github.io/HitLib/>) is a separate deployment and is not
+affected by anything in this folder.

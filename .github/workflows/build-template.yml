@@ -3,6 +3,9 @@ name: Build PROS Template
 on:
   push:
     branches: [main]
+    # The storefront in site/ shares this repo but not this build.
+    paths-ignore:
+      - 'site/**'
   release:
     types: [created]
 
