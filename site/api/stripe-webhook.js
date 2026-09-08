@@ -13,12 +13,37 @@ async function buffer(readable) {
   return Buffer.concat(chunks);
 }
 
-async function notifyDiscord(session) {
+// What was actually charged, straight from Stripe. A Checkout Session does not
+// carry its line items in the webhook payload - they are a separate,
+// paginated resource - so they have to be fetched to report them.
+async function orderedItems(stripe, sessionId) {
+  try {
+    var items = await stripe.checkout.sessions.listLineItems(sessionId, { limit: 20 });
+    return items.data.map(function (li) {
+      var unitCents = li.price && li.price.unit_amount != null
+        ? li.price.unit_amount
+        : Math.round(li.amount_total / (li.quantity || 1));
+      return '- ' + li.description + ' x' + (li.quantity || 1) +
+        ' ($' + (unitCents / 100).toFixed(2) + ' each)';
+    }).join('\n');
+  } catch (e) {
+    // The order is already paid; a failed lookup must not cost us the whole
+    // notification, so the embed goes out without its item list.
+    return '';
+  }
+}
+
+async function notifyDiscord(stripe, session) {
   var webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) return;
 
   var meta = session.metadata || {};
-  var shipping = session.shipping_details || session.shipping || null;
+  // Newer API versions moved the collected address under
+  // collected_information; older ones put it at the top level.
+  var shipping = session.shipping_details
+    || (session.collected_information && session.collected_information.shipping_details)
+    || session.shipping
+    || null;
   var address = shipping && shipping.address
     ? [shipping.address.line1, shipping.address.line2, shipping.address.city, shipping.address.state, shipping.address.postal_code].filter(Boolean).join(', ')
     : 'n/a';
@@ -31,7 +56,8 @@ async function notifyDiscord(session) {
       { name: 'Total', value: '$' + (session.amount_total / 100).toFixed(2), inline: true },
       { name: 'Team', value: clean(meta.team || 'n/a', 20), inline: true },
       { name: 'Email', value: clean((session.customer_details && session.customer_details.email) || 'n/a', 80) },
-      { name: 'Shipping address', value: clean(address, 200) }
+      { name: 'Shipping address', value: clean(address, 200) },
+      { name: 'Items', value: clean(await orderedItems(stripe, session.id), 1000) || 'none' }
     ],
     timestamp: new Date().toISOString()
   };
@@ -72,7 +98,7 @@ async function handler(req, res) {
   if (event.type === 'checkout.session.completed') {
     var session = event.data.object;
     if (session.payment_status === 'paid') {
-      await notifyDiscord(session);
+      await notifyDiscord(stripe, session);
     }
   }
 
