@@ -340,6 +340,54 @@
     });
   }
 
+  function showBuyConfirm(title, subtitle) {
+    var orderForm = document.getElementById('buy-order-form');
+    var confirm = document.getElementById('buy-confirm');
+    var titleEl = document.getElementById('buy-confirm-title');
+    var subtitleEl = document.getElementById('buy-confirm-subtitle');
+    var backEl = document.getElementById('buy-confirm-back');
+    if (orderForm) orderForm.hidden = true;
+    if (confirm) confirm.hidden = false;
+    if (titleEl) titleEl.textContent = title || 'Order placed';
+    if (subtitleEl) subtitleEl.textContent = subtitle || 'A team member will be with you shortly.';
+    if (backEl) backEl.hidden = false;
+  }
+
+  function checkStripeReturn() {
+    var params = new URLSearchParams(location.search);
+    var sessionId = params.get('session_id');
+    if (!sessionId) return;
+
+    var orderForm = document.getElementById('buy-order-form');
+    var confirm = document.getElementById('buy-confirm');
+    var backEl = document.getElementById('buy-confirm-back');
+    if (orderForm) orderForm.hidden = true;
+    if (confirm) confirm.hidden = false;
+    if (backEl) backEl.hidden = true;
+    var titleEl = document.getElementById('buy-confirm-title');
+    var subtitleEl = document.getElementById('buy-confirm-subtitle');
+    if (titleEl) titleEl.textContent = 'Confirming your payment…';
+    if (subtitleEl) subtitleEl.textContent = 'One moment.';
+
+    fetch('/api/verify-session?session_id=' + encodeURIComponent(sessionId))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.paid) {
+          writeCart([]);
+          updateCartBadges();
+          showBuyConfirm('Order placed', 'A team member will be with you shortly.');
+        } else {
+          showBuyConfirm("Couldn't confirm payment", "If you were charged, reach out on Discord and we'll sort it out.");
+        }
+      })
+      .catch(function () {
+        showBuyConfirm("Couldn't confirm payment", "If you were charged, reach out on Discord and we'll sort it out.");
+      })
+      .finally(function () {
+        history.replaceState(null, '', location.pathname + location.hash);
+      });
+  }
+
   function renderBuySummary() {
     var orderForm = document.getElementById('buy-order-form');
     var confirm = document.getElementById('buy-confirm');
@@ -447,6 +495,7 @@
   }
 
   showPage(parseRoute());
+  checkStripeReturn();
 
   window.addEventListener('hashchange', function () {
     showPage(parseRoute());
@@ -492,7 +541,6 @@
   var contactInput = document.getElementById('reserve-contact');
   var emailInput = document.getElementById('reserve-email');
   var teamInput = document.getElementById('reserve-team');
-  var addressInput = document.getElementById('reserve-address');
   var noteInput = document.getElementById('reserve-note');
   var submitBtn = form.querySelector('button');
   var statusEl = document.getElementById('reserve-status');
@@ -516,7 +564,7 @@
       cardFields.forEach(function (f) { f.hidden = !isCard; });
       if (contactNote) contactNote.hidden = isCard;
       if (cardNote) cardNote.hidden = !isCard;
-      submitBtn.textContent = isCard ? 'Submit order details' : 'Reserve my spot';
+      submitBtn.textContent = isCard ? 'Continue to payment' : 'Reserve my spot';
       statusEl.textContent = '';
     });
   });
@@ -587,21 +635,44 @@
       if (isCard) {
         payload.email = emailInput.value.trim();
         payload.team = teamInput.value.trim();
-        payload.address = addressInput.value.trim();
-        if (!name || !payload.email || !payload.team || !payload.address) {
-          statusEl.textContent = 'Fill in your name, email, team number, and address.';
+        if (!name || !payload.email || !payload.team) {
+          statusEl.textContent = 'Fill in your name, email, and team number.';
           return;
         }
-      } else {
-        payload.contact = contactInput.value.trim();
-        if (!name || !payload.contact) {
-          statusEl.textContent = 'Fill in your name and a Discord handle or email.';
-          return;
+
+        submitBtn.disabled = true;
+        statusEl.textContent = 'Taking you to checkout…';
+
+        try {
+          var checkoutResp = await fetch('/api/create-checkout-session', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          var checkoutData = await checkoutResp.json().catch(function () { return {}; });
+          if (!checkoutResp.ok || !checkoutData.url) {
+            statusEl.textContent = checkoutResp.status === 500
+              ? "Card payments aren't set up yet. Try \"Contact me later\" instead."
+              : 'Could not start checkout. Try again, or use "Contact me later".';
+            submitBtn.disabled = false;
+            return;
+          }
+          window.location.href = checkoutData.url;
+        } catch (err) {
+          statusEl.textContent = 'Could not reach the payment desk. Try again in a bit.';
+          submitBtn.disabled = false;
         }
+        return;
+      }
+
+      payload.contact = contactInput.value.trim();
+      if (!name || !payload.contact) {
+        statusEl.textContent = 'Fill in your name and a Discord handle or email.';
+        return;
       }
 
       submitBtn.disabled = true;
-      statusEl.textContent = isCard ? 'Saving order…' : 'Placing order…';
+      statusEl.textContent = 'Placing order…';
 
       try {
         if (col) {
@@ -622,10 +693,7 @@
         writeCart([]);
         updateCartBadges();
         form.reset();
-        var orderForm = document.getElementById('buy-order-form');
-        var confirm = document.getElementById('buy-confirm');
-        if (orderForm) orderForm.hidden = true;
-        if (confirm) confirm.hidden = false;
+        showBuyConfirm();
       } catch (err) {
         var code = err && err.code;
         if (code === 'quota_exceeded') {

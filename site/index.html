@@ -314,7 +314,7 @@
 
     <div class="pay-method-toggle" role="tablist" aria-label="How you'd like to proceed" id="buy-pay-toggle">
       <button type="button" class="pay-method-btn active" data-method="contact">Contact me later</button>
-      <button type="button" class="pay-method-btn" data-method="card">Full order details</button>
+      <button type="button" class="pay-method-btn" data-method="card">Pay with card</button>
     </div>
 
     <form class="reserve-form" id="reserve-form">
@@ -330,15 +330,11 @@
 
       <div class="field method-card-field" hidden>
         <label for="reserve-email">Email <span class="required-mark">*</span></label>
-        <input id="reserve-email" name="email" type="email" maxlength="80" placeholder="for the payment link" autocomplete="off" />
+        <input id="reserve-email" name="email" type="email" maxlength="80" placeholder="for your receipt" autocomplete="off" />
       </div>
       <div class="field method-card-field" hidden>
         <label for="reserve-team">Team number <span class="required-mark">*</span></label>
         <input id="reserve-team" name="team" type="text" maxlength="20" placeholder="e.g. 96671H" autocomplete="off" />
-      </div>
-      <div class="field method-card-field" style="flex-basis: 100%;" hidden>
-        <label for="reserve-address">Shipping address <span class="required-mark">*</span></label>
-        <input id="reserve-address" name="address" type="text" maxlength="120" placeholder="street, city, state, zip" autocomplete="off" />
       </div>
 
       <div class="field">
@@ -352,13 +348,12 @@
       reach out and arrange payment once kits are ready to ship.
     </p>
     <p class="buy-note" id="method-card-note" hidden>
-      We still don't collect card numbers here, nothing is charged. Submitting saves
-      your full order (team number, address) so the team can send you a secure
-      payment link when kits ship.
+      You'll be taken to Stripe's secure checkout to enter your card and shipping
+      address. We never see or store your card details, Stripe handles that entirely.
     </p>
 
     <ul style="margin-top:18px;">
-      <li>We currently accept Zelle and Venmo. The team reaches out to arrange payment after you submit. Stripe support is planned for a future update, to accept more payment methods.</li>
+      <li>Pay by card instantly through Stripe's secure checkout, or pick "Contact me later" for Zelle or Venmo, the team reaches out to arrange that after you submit.</li>
       <li>Due to limited resources, warranties only cover damage that happens in shipping. Damage caused after you receive the kit is not covered.</li>
       <li>Check <code>#resources</code> on Discord for care, use, and installation instructions.</li>
     </ul>
@@ -374,9 +369,9 @@
 
     <div class="buy-confirm" id="buy-confirm" hidden>
       <svg class="buy-confirm-check" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 12.5l2.5 2.5L16 9"></path></svg>
-      <h3>Order placed</h3>
-      <p>A team member will be with you shortly.</p>
-      <a class="btn primary" href="#/">Back to the dashboard</a>
+      <h3 id="buy-confirm-title">Order placed</h3>
+      <p id="buy-confirm-subtitle">A team member will be with you shortly.</p>
+      <a class="btn primary" id="buy-confirm-back" href="#/">Back to the dashboard</a>
     </div>
   </div>
 
