@@ -548,7 +548,7 @@
   var tickerEl = document.getElementById('reserve-ticker');
   var tickerTrack = document.getElementById('reserve-ticker-track');
 
-  var payMethod = 'contact';
+  var payMethod = 'card';
   var methodBtns = document.querySelectorAll('.pay-method-btn');
   var contactFields = document.querySelectorAll('.method-contact-field');
   var cardFields = document.querySelectorAll('.method-card-field');

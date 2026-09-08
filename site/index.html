@@ -313,8 +313,8 @@
     <div id="buy-cart-summary"></div>
 
     <div class="pay-method-toggle" role="tablist" aria-label="How you'd like to proceed" id="buy-pay-toggle">
-      <button type="button" class="pay-method-btn active" data-method="contact">Contact me later</button>
-      <button type="button" class="pay-method-btn" data-method="card">Pay with card</button>
+      <button type="button" class="pay-method-btn active" data-method="card">Pay with card</button>
+      <button type="button" class="pay-method-btn" data-method="contact">Contact me later</button>
     </div>
 
     <form class="reserve-form" id="reserve-form">
@@ -323,16 +323,16 @@
         <input id="reserve-name" name="name" type="text" maxlength="40" autocomplete="off" />
       </div>
 
-      <div class="field method-contact-field">
+      <div class="field method-contact-field" hidden>
         <label for="reserve-contact">Discord or email <span class="required-mark">*</span></label>
         <input id="reserve-contact" name="contact" type="text" maxlength="80" placeholder="so we can reach you" autocomplete="off" />
       </div>
 
-      <div class="field method-card-field" hidden>
+      <div class="field method-card-field">
         <label for="reserve-email">Email <span class="required-mark">*</span></label>
         <input id="reserve-email" name="email" type="email" maxlength="80" placeholder="for your receipt" autocomplete="off" />
       </div>
-      <div class="field method-card-field" hidden>
+      <div class="field method-card-field">
         <label for="reserve-team">Team number <span class="required-mark">*</span></label>
         <input id="reserve-team" name="team" type="text" maxlength="20" placeholder="e.g. 96671H" autocomplete="off" />
       </div>
@@ -341,13 +341,13 @@
         <label for="reserve-note">Notes (optional)</label>
         <input id="reserve-note" name="note" type="text" maxlength="80" placeholder="e.g. team name" autocomplete="off" />
       </div>
-      <button class="btn primary" type="submit">Reserve my spot</button>
+      <button class="btn primary" type="submit">Continue to payment</button>
     </form>
-    <p class="buy-note" id="method-contact-note">
+    <p class="buy-note" id="method-contact-note" hidden>
       No charge happens now. Submitting just gives the team your handle so they can
       reach out and arrange payment once kits are ready to ship.
     </p>
-    <p class="buy-note" id="method-card-note" hidden>
+    <p class="buy-note" id="method-card-note">
       You'll be taken to Stripe's secure checkout to enter your card and shipping
       address. We never see or store your card details, Stripe handles that entirely.
     </p>
