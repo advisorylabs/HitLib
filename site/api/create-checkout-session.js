@@ -9,6 +9,10 @@ var KIT_NAMES = {
   standard: 'Regular',
   extended: 'Extended'
 };
+// Densities still sold, mirroring DENSITIES in js/app.js. Checked here too:
+// a browser holding an older copy of the page can still post a withdrawn one,
+// and the order would go to Stripe for a strip we no longer stock.
+var SELLABLE_DENSITIES = ['d30', 'd60', 'd74'];
 
 function clean(v, max) {
   return String(v == null ? '' : v).slice(0, max || 200);
@@ -48,7 +52,14 @@ module.exports = async function handler(req, res) {
       return;
     }
     var qty = Math.max(1, Math.min(20, parseInt(it.qty, 10) || 1));
-    var densities = Array.isArray(it.densities) ? it.densities.join(', ') : '';
+    var densityIds = Array.isArray(it.densities) ? it.densities : [];
+    for (var d = 0; d < densityIds.length; d++) {
+      if (SELLABLE_DENSITIES.indexOf(String(densityIds[d])) === -1) {
+        res.status(400).json({ error: 'That strip density is no longer available. Reload the page and rebuild your cart.' });
+        return;
+      }
+    }
+    var densities = densityIds.join(', ');
     line_items.push({
       price_data: {
         currency: 'usd',

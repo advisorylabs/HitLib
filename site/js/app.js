@@ -83,17 +83,13 @@
   var DENSITY_IMAGES = {
     d30: 'assets/density-30-leds-per-m.png',
     d60: 'assets/density-60-leds-per-m.png',
-    d74: 'assets/density-74-leds-per-m.png',
-    d96: 'assets/density-96-leds-per-m.png',
-    d144: 'assets/density-144-leds-per-m.png'
+    d74: 'assets/density-74-leds-per-m.png'
   };
 
   var DENSITIES = [
     { id: 'd30', length: '26.2"', ledsPerM: 30 },
     { id: 'd60', length: '13.1"', ledsPerM: 60 },
-    { id: 'd74', length: '10.6"', ledsPerM: 74 },
-    { id: 'd96', length: '8.2"', ledsPerM: 96 },
-    { id: 'd144', length: '5.5"', ledsPerM: 144 }
+    { id: 'd74', length: '10.6"', ledsPerM: 74 }
   ];
 
   var KITS = [
@@ -160,11 +156,15 @@
     }
     writeCart(cart);
   }
-  function cartCount(cart) { return cart.reduce(function (n, l) { return n + l.qty; }, 0); }
+  function cartCount(cart) { return cartLines(cart).reduce(function (n, l) { return n + l.qty; }, 0); }
+  function sellableDensities(densities) {
+    return Array.isArray(densities) && densities.length > 0
+      && densities.every(function (id) { return !!getDensity(id); });
+  }
   function cartLines(cart) {
     return cart
       .map(function (l) { return { kit: getKit(l.kitId), densities: l.densities, qty: l.qty, key: lineKey(l.kitId, l.densities) }; })
-      .filter(function (l) { return l.kit && l.qty > 0; });
+      .filter(function (l) { return l.kit && l.qty > 0 && sellableDensities(l.densities); });
   }
   function cartTotal(cart) {
     return cartLines(cart).reduce(function (sum, l) { return sum + l.kit.price * l.qty; }, 0);
@@ -240,7 +240,7 @@
     var container = document.getElementById('kit-page-content');
     if (!container) return;
     if (!kit) {
-      container.innerHTML = '<p style="margin-top:24px;">That kit does not exist. <a href="#/">Back to the dashboard</a>.</p>';
+      container.innerHTML = '<p style="margin-top:24px;">That kit does not exist. <a href="#/">Back home</a>.</p>';
       return;
     }
     var defaults = defaultDensities(kit);

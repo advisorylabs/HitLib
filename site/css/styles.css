@@ -17,6 +17,8 @@
     --heat-mid: #ffa726;
     --heat-hot: #ff2020;
     --grad: linear-gradient(135deg, var(--blue) 0%, var(--purple) 55%, var(--pink) 100%);
+    /* Starts and ends on the same blue, so a 200% tile scrolls seamlessly. */
+    --grad-roll: linear-gradient(90deg, var(--blue), var(--purple), var(--pink), var(--cyan), var(--green), var(--blue));
   }
 
   * { box-sizing: border-box; }
@@ -63,6 +65,38 @@
     color: transparent;
   }
 
+  /* ---------- rolling gradient ---------- */
+
+  /* One tile of --grad-roll is 200% of the element, and its first and last
+     stop are the same color, so travelling exactly one tile loops with no
+     visible seam. Two sets because a gradient *border* carries a second
+     (solid, unmoving) layer for the element's own fill. */
+  @keyframes gradient-roll {
+    to { background-position: -200% 0; }
+  }
+
+  @keyframes gradient-roll-border {
+    to { background-position: 0 0, -200% 0; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* Slow on purpose: at this speed the colour under any one point takes
+       about ten seconds to change, which reads as drift rather than motion. */
+    .top-strip,
+    .swatch-strip,
+    .hero-frame,
+    .photo-frame {
+      animation: gradient-roll 20s linear infinite;
+    }
+
+    .app-window,
+    .video-card,
+    .density-diagram-frame,
+    .kit-visual {
+      animation: gradient-roll-border 20s linear infinite;
+    }
+  }
+
   /* ---------- top signal strip ---------- */
 
   .top-strip {
@@ -71,7 +105,8 @@
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--blue), var(--purple), var(--pink), var(--cyan), var(--green), var(--blue));
+    background: var(--grad-roll);
+    background-size: 200% 100%;
     z-index: 30;
   }
 
@@ -211,7 +246,8 @@
     height: 400px;
     padding: 2px;
     border-radius: 16px;
-    background: var(--grad);
+    background: var(--grad-roll);
+    background-size: 200% 100%;
     box-shadow: 0 30px 80px -30px rgba(155, 77, 255, 0.45);
     overflow: hidden;
   }
@@ -290,7 +326,8 @@
     margin: 44px 0 0;
     overflow: hidden;
     border-radius: 6px;
-    background: linear-gradient(90deg, var(--blue), var(--purple), var(--pink), var(--cyan), var(--green), var(--blue));
+    background: var(--grad-roll);
+    background-size: 200% 100%;
   }
   .swatch-strip span {
     height: 10px;
@@ -587,10 +624,13 @@
 
   .app-window {
     margin: 18px 0 0;
-    border: 1px solid var(--line);
+    border: 2px solid transparent;
     border-radius: 10px;
     overflow: hidden;
-    background: var(--surface-sunken);
+    background-image: linear-gradient(var(--surface-sunken), var(--surface-sunken)), var(--grad-roll);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    background-size: auto, 200% 100%;
   }
 
   .app-window-bar {
@@ -626,7 +666,8 @@
     margin-top: 18px;
     padding: 2px;
     border-radius: 14px;
-    background: var(--grad);
+    background: var(--grad-roll);
+    background-size: 200% 100%;
   }
   .photo-frame img {
     width: 100%;
@@ -643,10 +684,13 @@
 
   .video-card {
     margin-top: 18px;
-    border: 1px solid var(--line);
+    border: 2px solid transparent;
     border-radius: 12px;
     overflow: hidden;
-    background: var(--surface-sunken);
+    background-image: linear-gradient(var(--surface-sunken), var(--surface-sunken)), var(--grad-roll);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    background-size: auto, 200% 100%;
   }
 
   .video-card video {
@@ -972,9 +1016,12 @@
   .density-diagram-frame {
     margin-top: 10px;
     padding: 8px;
-    background: #fff;
     border-radius: 8px;
-    border: 1px solid var(--line);
+    border: 2px solid transparent;
+    background-image: linear-gradient(#fff, #fff), var(--grad-roll);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    background-size: auto, 200% 100%;
   }
   .density-diagram {
     width: 100%;
@@ -993,13 +1040,19 @@
 
   .kit-visual {
     height: 110px;
+    margin: 10px 10px 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 6px;
     overflow: hidden;
-    background: var(--surface-sunken);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    background-image: linear-gradient(var(--surface-sunken), var(--surface-sunken)), var(--grad-roll);
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+    background-size: auto, 200% 100%;
   }
 
   .kit-visual img {
