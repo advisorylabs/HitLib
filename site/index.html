@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pattern Studio 1.0.0</title>
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+
+<link rel="stylesheet" href="css/styles.css">
+
+<script src="js/vendor/gsap.min.js"></script>
+<script src="js/vendor/ScrollTrigger.min.js"></script>
+
+
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+
+<div class="ambient" aria-hidden="true">
+  <span class="b1"></span>
+  <span class="b2"></span>
+  <span class="b3"></span>
+  <span class="b4"></span>
+</div>
+
+<nav class="rail" id="rail" aria-hidden="true">
+  <a class="rail-item" href="#telemetry" data-target="telemetry">Telemetry</a>
+  <a class="rail-item" href="#overview" data-target="overview">Overview</a>
+  <a class="rail-item" href="#pattern-studio" data-target="pattern-studio">Pattern Studio</a>
+  <a class="rail-item" href="#led-kits" data-target="led-kits">LED Kits</a>
+  <a class="rail-item" href="#reference" data-target="reference">Reference</a>
+</nav>
+
+<div id="page-home">
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">
+      <img class="brand-logo" src="assets/hitlib.png" alt="HitLib" />
+    </div>
+    <div class="topbar-actions">
+      <a class="btn btn-small" href="#/">Dashboard</a>
+      <a class="btn primary btn-small" href="#/order">Buy the Kit</a>
+      <a class="cart-btn" href="#/cart" aria-label="View cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+        <span class="cart-badge" hidden>0</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="sale-banner">
+    <span class="label">Launch sale</span>
+    <span class="value">$5 off every kit, no code needed. Already reflected in the prices below.</span>
+  </div>
+
+  <div class="hero">
+    <div class="hero-frame" id="hero-carousel">
+      <img class="hero-slide active" style="object-position: center 62%;" src="assets/team-96671h-s-competition-robot-underglow-lit-on-t.webp" alt="Team 96671H's competition robot, underglow lit, on the reveal stage" />
+      <img class="hero-slide" style="object-position: center 45%;" src="assets/a-vex-robot-with-purple-underglow-lighting.webp" alt="A VEX robot with purple underglow lighting" />
+      <img class="hero-slide" style="object-position: center;" src="assets/closeup-of-a-blue-lit-ws2812b-strip-wired-to-a-tes.webp" alt="Closeup of a blue-lit WS2812B strip wired to a test controller" />
+    </div>
+
+    <div class="led-strip" aria-hidden="true">
+      <span class="led on-a" style="--i:0"></span>
+      <span class="led" style="--i:1"></span>
+      <span class="led on-c" style="--i:2"></span>
+      <span class="led" style="--i:3"></span>
+      <span class="led on-b" style="--i:4"></span>
+      <span class="led" style="--i:5"></span>
+      <span class="led on-a" style="--i:6"></span>
+      <span class="led" style="--i:7"></span>
+      <span class="led on-c" style="--i:8"></span>
+      <span class="led" style="--i:9"></span>
+      <span class="led on-b" style="--i:10"></span>
+      <span class="led" style="--i:11"></span>
+    </div>
+
+    <div class="team-id">96671H · Hitmen</div>
+    <h1>Pattern Studio reaches <span class="grad-text">1.0.0</span>.</h1>
+    <p class="lede">
+      Pattern Studio is now the main way to program animations on HitLib-controlled
+      strips. From here on, every new HitLib feature ships in Pattern Studio too.
+      Hand-writing animation code is still there, but it's the opt-out, not the default.
+    </p>
+
+    <div class="cta-row">
+      <a class="btn primary" href="#/order">Buy the Kit</a>
+      <a class="btn" href="https://youtu.be/DKvakzxzZ_k">Watch the launch video <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib">View HitLib on GitHub <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.3.0">Release notes <span class="arrow">↗</span></a>
+    </div>
+  </div>
+
+  <div class="swatch-strip reveal" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+
+  <div class="spotlight reveal" id="telemetry">
+    <span class="spotlight-badge">Top feature</span>
+    <h2>Colors that track your robot, live</h2>
+    <p>
+      A strand can fill like a gauge, tracking a motor's heat, an arm's rotation, or
+      the battery, entirely on its own, with nothing in your control loop watching it.
+      Split one strand into several independent gauges: a strip under the drivebase
+      can show all six drive motors' temperatures at once, each segment colored by
+      its own reading.
+    </p>
+    <div class="gauge-demo" aria-hidden="true">
+      <span class="gauge-bar" style="height:38%"></span>
+      <span class="gauge-bar" style="height:52%"></span>
+      <span class="gauge-bar" style="height:44%"></span>
+      <span class="gauge-bar" style="height:70%"></span>
+      <span class="gauge-bar" style="height:33%"></span>
+      <span class="gauge-bar" style="height:86%"></span>
+    </div>
+    <p class="gauge-caption">One strand, six independent gauges: each segment is one drive motor's temperature.</p>
+  </div>
+
+  <div class="explainer-head reveal" id="overview">
+    <h2>What HitLib actually does</h2>
+    <p>Three parts work together: a library that runs on the robot, an editor that builds the animations, and a physical kit that lights up. Here's what each one is for.</p>
+  </div>
+
+  <div class="explainer-grid">
+    <div class="explainer-card reveal">
+      <span class="kicker"><span class="dot" style="background:var(--blue)"></span>Library</span>
+      <h3>HitLib</h3>
+      <p>A PROS-based C++ library that drives WS2812B strips over a VEX V5 Brain's ADI ports. Compose animations like flow, rainbow, pulse, flash, twinkle, bitscroll, and center-spread into named, prioritized modes, or let a strand fill like a gauge that tracks a motor's heat, an arm's rotation, or the battery on its own.</p>
+    </div>
+    <div class="explainer-card reveal" style="--d: 0.05s">
+      <span class="kicker"><span class="dot" style="background:var(--purple)"></span>Editor</span>
+      <h3>Pattern Studio</h3>
+      <p>A desktop app that designs those looks against a live preview, then exports them as a ready-to-include C++ header. Drop a song into the Song bar and it bakes the track's loudness into a table your strip fills to as it plays. Hand-writing code is still there as an opt-out.</p>
+    </div>
+    <div class="explainer-card reveal" style="--d: 0.1s">
+      <span class="kicker"><span class="dot" style="background:var(--pink)"></span>Hardware</span>
+      <h3>LED Kits</h3>
+      <p>Physical strip and wiring kits from the team, built to plug straight into a VEX Brain. Test kits are already running, and general kits open for order Monday, September 7.</p>
+      <a class="card-link" href="#/order">Buy the Kit ↗</a>
+    </div>
+  </div>
+
+  <div class="module reveal" id="pattern-studio">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// pattern-studio</span>
+    </div>
+    <h2>One tool for every animation</h2>
+    <p>
+      HitLib is the PROS-based library that drives WS2812B strips off a VEX V5 Brain's
+      ADI ports, with animations like flow, rainbow, pulse, flash, twinkle, bitscroll,
+      and center-spread composed into named, prioritized modes you switch at runtime.
+      Pattern Studio sits alongside it as external software you install once, so you
+      can preview and build any of that live, then export it as ready-to-include C++.
+      No round-trip through code is required unless you want one.
+    </p>
+    <ul>
+      <li>Design against a live preview, then export straight to a ready-to-include C++ header.</li>
+      <li>Drag your PROS project onto the window and Deploy writes that header into <code>include/</code>.</li>
+      <li>Drop a song into the Song bar (MP3, M4A, FLAC, OGG, WAV, or MIDI) and the strip fills to its loudness as it plays.</li>
+      <li>Pick an animation such as Rainbow or Twinkle, then tune its speed and palette.</li>
+      <li>Splice Mask splits a strand into sections you can invert or alternate for layered effects.</li>
+      <li>Select multiple strands and group-edit them as a single animation.</li>
+      <li>Writing animation code by hand is still fully supported as an opt-out.</li>
+    </ul>
+    <p>Found a bug or have an idea? File it as a GitHub issue, or drop feature suggestions in <code>#suggestions</code> on Discord.</p>
+
+    <div class="video-card">
+      <video controls preload="metadata" playsinline poster="assets/launch-video-thumbnail.jpg">
+        <source src="assets/launch-video-630c72f57e.mp4" type="video/mp4">
+      </video>
+      <figcaption>Pattern Studio launch video (1:01, 360p). <a href="https://youtu.be/DKvakzxzZ_k">Watch in full quality on YouTube ↗</a></figcaption>
+    </div>
+
+    <figure class="app-window">
+      <div class="app-window-bar">
+        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+        <span class="app-window-title">HitLib Pattern Studio · strand4.hlb</span>
+      </div>
+      <img src="assets/pattern-studio-editor-showing-four-led-strands-run.webp" alt="Pattern Studio editor showing four LED strands running a Rainbow animation" />
+      <figcaption>Four strands, one Rainbow animation, phase-offset per row.</figcaption>
+    </figure>
+
+    <figure class="app-window">
+      <div class="app-window-bar">
+        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+        <span class="app-window-title">HitLib Pattern Studio v0.3.0a1 · strand2.hlb (group)</span>
+      </div>
+      <img src="assets/pattern-studio-editor-with-three-strands-grouped-t.webp" alt="Pattern Studio editor with three strands grouped together, editing a Twinkle animation with a shared palette" />
+      <figcaption>Group-edit: three strands sharing one Twinkle animation and palette.</figcaption>
+    </figure>
+  </div>
+
+  <div class="module reveal" id="led-kits">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// led-kits</span>
+    </div>
+    <h2>Test kits are in. Orders open next week.</h2>
+    <p>
+      The test kit shipment has arrived, and it held up. LED kits open for order this
+      coming Labor Day weekend. A few specifics are still being decided by poll, so
+      final contents may shift slightly before the listing goes live.
+    </p>
+
+    <div class="photo-frame">
+      <img src="assets/a-ws2812b-led-strip-lit-red-wired-straight-into-a-.png" alt="A WS2812B LED strip lit red, wired straight into a VEX Brain on a desk at night" />
+    </div>
+    <p class="photo-caption">Test kit strip, driven straight off a VEX Brain.</p>
+
+    <div class="stat-callout">
+      <span class="label">Orders open</span>
+      <span class="value">Monday, September 7</span>
+    </div>
+    <ul>
+      <li>Kit-spec polls will run beforehand, so watch for them.</li>
+      <li>Opt into <code>#opt-in-notifications</code> on Discord for a ping when they go live.</li>
+    </ul>
+    <div class="cta-row">
+      <a class="btn primary" href="#/order">Buy the Kit</a>
+    </div>
+  </div>
+
+  <div class="module reveal" id="choose-kit">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// choose-a-kit</span>
+    </div>
+    <h2>Choose a kit</h2>
+    <p>Three kits, by strand count: Single, Regular, and Extended, for $20, $35, and $65 during the launch sale ($5 off each, already applied below). Configure each strand's density on its own page, mix and match freely.</p>
+    <div class="kit-grid" id="kit-grid"></div>
+  </div>
+
+  <div class="footer reveal" id="reference">
+    <div class="footer-label">Reference</div>
+    <div class="pinout">
+      <a href="https://discord.gg/Y3XxxCm6Y">
+        <span class="name">Discord</span>
+        <span class="url">discord.gg/Y3XxxCm6Y</span>
+      </a>
+      <a href="https://youtu.be/DKvakzxzZ_k">
+        <span class="name">Pattern Studio · launch video</span>
+        <span class="url">youtu.be/DKvakzxzZ_k</span>
+      </a>
+      <a href="https://github.com/advisorylabs/HitLib">
+        <span class="name">HitLib repository</span>
+        <span class="url">github.com/advisorylabs/HitLib</span>
+      </a>
+      <a href="https://advisorylabs.github.io/HitLib/">
+        <span class="name">Documentation</span>
+        <span class="url">advisorylabs.github.io/HitLib</span>
+      </a>
+      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.3.0">
+        <span class="name">v1.3.0 release · HitLib · Pattern Studio 1.0.0</span>
+        <span class="url">.../releases/tag/1.3.0</span>
+      </a>
+      <a href="#/order">
+        <span class="name">Buy the Kit</span>
+        <span class="url">this page</span>
+      </a>
+    </div>
+    <p class="credit">
+      HitLib is a PROS-based, modernized LED library for WS2812B and Neopixel strip
+      control on VEX Brains, built by 96671H: Hitmen.
+    </p>
+  </div>
+
+</div>
+</div>
+
+<div id="page-buy" hidden>
+<div class="wrap">
+
+  <div class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="assets/hitlib.png" alt="HitLib" />
+    </a>
+    <div class="topbar-actions">
+      <a class="btn btn-small" href="#/">Dashboard</a>
+      <a class="cart-btn" href="#/cart" aria-label="View cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+        <span class="cart-badge" hidden>0</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="module" style="margin-top: 8px;">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// buy</span>
+    </div>
+    <h2>Buy a Kit</h2>
+    <p>
+      Orders open Monday, September 7. Placing an order locks in today's price and
+      adds you to the build queue.
+    </p>
+
+    <div id="buy-order-form">
+
+    <div class="stat-callout">
+      <span class="label">Orders open</span>
+      <span class="value">Monday, September 7</span>
+    </div>
+
+    <div class="sale-banner">
+      <span class="label">Launch sale</span>
+      <span class="value">$5 off every kit, already applied to the totals below.</span>
+    </div>
+
+    <div id="buy-cart-summary"></div>
+
+    <div class="pay-method-toggle" role="tablist" aria-label="How you'd like to proceed" id="buy-pay-toggle">
+      <button type="button" class="pay-method-btn active" data-method="card">Pay with card</button>
+      <button type="button" class="pay-method-btn" data-method="contact">Contact me later</button>
+    </div>
+
+    <form class="reserve-form" id="reserve-form">
+      <div class="field">
+        <label for="reserve-name">Name or handle <span class="required-mark">*</span></label>
+        <input id="reserve-name" name="name" type="text" maxlength="40" autocomplete="off" />
+      </div>
+
+      <div class="field method-contact-field" hidden>
+        <label for="reserve-contact">Discord or email <span class="required-mark">*</span></label>
+        <input id="reserve-contact" name="contact" type="text" maxlength="80" placeholder="so we can reach you" autocomplete="off" />
+      </div>
+
+      <div class="field method-card-field">
+        <label for="reserve-email">Email <span class="required-mark">*</span></label>
+        <input id="reserve-email" name="email" type="email" maxlength="80" placeholder="for your receipt" autocomplete="off" />
+      </div>
+      <div class="field method-card-field">
+        <label for="reserve-team">Team number <span class="required-mark">*</span></label>
+        <input id="reserve-team" name="team" type="text" maxlength="20" placeholder="e.g. 96671H" autocomplete="off" />
+      </div>
+
+      <div class="field">
+        <label for="reserve-note">Notes (optional)</label>
+        <input id="reserve-note" name="note" type="text" maxlength="80" placeholder="e.g. team name" autocomplete="off" />
+      </div>
+      <button class="btn primary" type="submit">Continue to payment</button>
+    </form>
+    <p class="buy-note" id="method-contact-note" hidden>
+      No charge happens now. Submitting just gives the team your handle so they can
+      reach out and arrange payment once kits are ready to ship.
+    </p>
+    <p class="buy-note" id="method-card-note">
+      You'll be taken to Stripe's secure checkout to enter your card and shipping
+      address. We never see or store your card details, Stripe handles that entirely.
+    </p>
+
+    <ul style="margin-top:18px;">
+      <li>Pay by card instantly through Stripe's secure checkout, or pick "Contact me later" for Zelle or Venmo, the team reaches out to arrange that after you submit.</li>
+      <li>Due to limited resources, warranties only cover damage that happens in shipping. Damage caused after you receive the kit is not covered.</li>
+      <li>Check <code>#resources</code> on Discord for care, use, and installation instructions.</li>
+    </ul>
+
+    <div class="reserve-status" id="reserve-status" role="status" aria-live="polite"></div>
+
+    <div class="reserve-count" id="reserve-count">Loading orders…</div>
+    <div class="ticker" id="reserve-ticker" hidden>
+      <div class="ticker-track" id="reserve-ticker-track"></div>
+    </div>
+
+    </div>
+
+    <div class="buy-confirm" id="buy-confirm" hidden>
+      <svg class="buy-confirm-check" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 12.5l2.5 2.5L16 9"></path></svg>
+      <h3 id="buy-confirm-title">Order placed</h3>
+      <p id="buy-confirm-subtitle">A team member will be with you shortly.</p>
+      <a class="btn primary" id="buy-confirm-back" href="#/">Back to the dashboard</a>
+    </div>
+  </div>
+
+  <a class="back-link" href="#/">← Back to the release notes</a>
+
+</div>
+</div>
+
+<div id="page-kit" hidden>
+<div class="wrap">
+
+  <div class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="assets/hitlib.png" alt="HitLib" />
+    </a>
+    <div class="topbar-actions">
+      <a class="btn btn-small" href="#/">Dashboard</a>
+      <a class="cart-btn" href="#/cart" aria-label="View cart">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+        <span class="cart-badge" hidden>0</span>
+      </a>
+    </div>
+  </div>
+
+  <div id="kit-page-content"></div>
+
+  <a class="back-link" href="#/">← Back to the dashboard</a>
+
+</div>
+</div>
+
+<div id="page-cart" hidden>
+<div class="wrap">
+
+  <div class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="assets/hitlib.png" alt="HitLib" />
+    </a>
+    <a class="btn btn-small" href="#/">Dashboard</a>
+  </div>
+
+  <div class="module" style="margin-top: 8px;">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// cart</span>
+    </div>
+    <h2>Your cart</h2>
+    <div id="cart-page-content"></div>
+  </div>
+
+  <a class="back-link" href="#/">← Continue shopping</a>
+
+</div>
+</div>
+
+<div id="page-order" hidden>
+<div class="wrap">
+
+  <div class="topbar">
+    <a class="brand" href="#/">
+      <img class="brand-logo" src="assets/hitlib.png" alt="HitLib" />
+    </a>
+    <a class="btn btn-small" href="#/">Dashboard</a>
+  </div>
+
+  <div class="module" style="margin-top: 8px;">
+    <div class="panel-bar">
+      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+      <span class="slug">// order</span>
+    </div>
+    <div id="order-wizard-content"></div>
+  </div>
+
+  <a class="back-link" href="#/">← Cancel and go back</a>
+
+</div>
+</div>
+
+<script src="js/app.js"></script>
+
+</body>
+</html>
