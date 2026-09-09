@@ -10,15 +10,20 @@
  *
  * ### Mode index table (all profiles)
  *
- * | Index | Name        | Classic                     | Modern                        | Showy                   |
- * |-------|-------------|-----------------------------|-------------------------------|-------------------------|
- * | 0     | Showoff     | rainbow scroll              | rainbow scroll                | —                       |
- * | 1     | Idle        | magenta flow                | pink pulse                    | purple flow             |
- * | 2     | Red         | red pulse                   | red pulse + orange bg         | white pulse / red bg    |
- * | 3     | Blue        | blue pulse                  | blue pulse + cyan bg          | white pulse / blue bg   |
- * | 4     | Scoring     | green pulse                 | green flash                   | teal pulse              |
- * | 5     | Matchload   | yellow pulse                | yellow pulse                  | —                       |
- * | 6     | Endgame     | warn → white → cycle (12 s) | solid green → pulse (19 s)    | yellow → rainbow (10 s) |
+ * Classic and Modern have seven modes each and share their numbering.  Showy
+ * has five, so its indices are its own: no Showoff or Matchload, and Endgame
+ * is 4 rather than 6.  activateMode() takes a raw index into the profile's
+ * mode array, so activateMode(6) against Showy is out of range.
+ *
+ * | Mode      | Classic                         | Modern                            | Showy                       |
+ * |-----------|---------------------------------|-----------------------------------|-----------------------------|
+ * | Showoff   | `0` rainbow scroll              | `0` rainbow scroll                | —                           |
+ * | Idle      | `1` magenta flow                | `1` pink pulse                    | `0` purple flow             |
+ * | Red       | `2` red pulse                   | `2` red pulse + orange bg         | `1` white pulse / red bg    |
+ * | Blue      | `3` blue pulse                  | `3` blue pulse + cyan bg          | `2` white pulse / blue bg   |
+ * | Scoring   | `4` green pulse                 | `4` green flash                   | `3` teal pulse              |
+ * | Matchload | `5` yellow pulse                | `5` yellow pulse                  | —                           |
+ * | Endgame   | `6` warn → white → cycle (12 s) | `6` solid green → pulse (19 s)    | `4` yellow → rainbow (10 s) |
  *
  * ### Usage
  * @code{.cpp}

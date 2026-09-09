@@ -1,7 +1,11 @@
 # Animation Reference {#animations}
 
-Every animation is available on both hitlib::LedStrand and hitlib::LedGroup.
-Group calls fan out to every strand in the group simultaneously.
+Every animation below is available on hitlib::LedStrand. Nearly all of them are
+on hitlib::LedGroup too, where the call fans out to every strand in the group
+simultaneously; the exceptions are noted where they come up -
+`overlayTwinkle()`, `overlayBitscroll()` and the per-region gauge helpers
+(`motorHeatGauge()`, `setRegionLevel()`) are strand-only, so reach a strand
+through `group[i]` for those.
 
 All calls are **thread-safe** and take effect on the next refresh tick.
 
@@ -117,7 +121,7 @@ the whole strip, with `false` a single copy travels the strip on its own.
 ## Overlay Animations
 
 A second animation buffer, independent of the base animation. Shown directly
-in [splice mask](\ref LedStrand::spliceMask) regions that set `useOverlay`.
+in [splice mask](\ref hitlib::LedStrand::spliceMask) regions that set `useOverlay`.
 
 ```cpp
 strand.overlaySetColor(0xFFFFFF);
@@ -290,7 +294,7 @@ strand.musicPause(false);     // and carry on
 
 Everything about *how* the song drives the strip - which band, how hard it
 punches, how fast it falls away - is decided in Pattern Studio and baked into
-the table. A three-minute song at the default 25 ms frame is about 8 KB of
+the table. A three-minute song at the default 25 ms frame is about 7 KB of
 flash per band.
 
 ---
@@ -298,9 +302,9 @@ flash per band.
 ## Splice Mask
 
 Overrides part of the strip, either as equal alternating bins sharing the
-[overlay](\ref LedStrand::overlaySetColor) buffer (`spliceMask`) or as
+[overlay](\ref hitlib::LedStrand::overlaySetColor) buffer (`spliceMask`) or as
 arbitrarily placed regions that each animate independently
-(`spliceMaskCustom`). The two forms are mutually exclusive whichever was
+(`spliceMaskCustom`). The two forms are mutually exclusive - whichever was
 called most recently is what's active.
 
 ```cpp
@@ -329,18 +333,49 @@ strand.spliceMaskCustom({
 strand.clearSpliceMask();
 ```
 
+### Region animation kinds
+
+`SpliceRegionAnimKind` has nine values. Each region reads only the fields its
+kind uses, so the rest can be left at their defaults:
+
+| Kind | Shows | Fields it reads |
+|---|---|---|
+| `OFF` | Nothing - the region stays dark. The default. | - |
+| `SOLID` | One flat color. | `color` |
+| `PULSE` | A run of color travelling over a background. | `color`, `bgColor`, `runLength`, `speed` |
+| `FLASH` | The whole region blinking on and off. | `color`, `bgColor`, `onMs`, `offMs` |
+| `FLOW` | A two-color gradient scrolling through the region. | `color`, `color2`, `speed`, `seamless` |
+| `RAINBOW` | A full HSV rainbow across the region. | `speed` |
+| `TWINKLE` | Sparkles drawn from a palette. | `palette`, `densityPct`, `fadeStep`, `bgColor` |
+| `BITSCROLL` | Evenly sized runs scrolling through the region. | `color`, `bgColor`, `segmentWidth`, `spacing`, `repeating`, `speed`, `invert` |
+| `GAUGE` | A meter colored off its own scale. See below. | `read`, `emptyAt`, `fullAt`, `wrap`, `smoothing`, `stops`, `style`, `blend`, `bgColor`, `invert` |
+
+`invert` is narrower here than on the base animations: it reverses a
+`BITSCROLL`'s scroll direction and picks which end a `GAUGE` `BAR` fills from,
+and every other kind ignores it. There is no `bounce` at all - a region scrolls
+a buffer its own width, and bouncing needs a wider master pattern to slide a
+window over.
+
+Regions animate on their own clocks, so a `FLASH` region and a `BITSCROLL`
+region in the same mask do not have to agree on a period. A region's
+`BITSCROLL` takes a single `segmentWidth` rather than the base animation's list
+of `BitScrollSegment`s, since a region is usually only a few pixels wide.
+`SOLID` and `OFF` cost nothing per tick: neither one allocates a buffer.
+
 ### Gauge regions
 
 A `GAUGE` region is the odd one out: it animates from a *reading* rather than
 from a clock. Each one polls its own value every tick and colors itself off its
 own scale, so a single strip can carry several independent meters -- which the
-strand-wide [level meter](
-ef LedStrand::levelFill) cannot do, there being one of those per
-strand.
+strand-wide [level meter](\ref hitlib::LedStrand::levelFill) cannot do, there
+being one of those per strand.
 
 The scale is a list of stops given in the reading's own units, so it says what
 it means. Below the first stop and above the last, the gauge holds that stop's
-color, so a scale never has to cover a range you don't care about.
+color, so a scale never has to cover a range you don't care about. `stops` is
+optional: leave it empty and the gauge falls back to `color` at `emptyAt`
+blending to `color2` at `fullAt`, so a plain two-color gauge needs no scale at
+all.
 
 ```cpp
 using Kind = LedStrand::SpliceRegionAnimKind;
@@ -365,14 +400,14 @@ actually reached -- the honest choice when the stops are thresholds something
 crosses rather than points on a ramp.
 
 Leave `read` as `nullptr` and the region is hand-driven instead, through
-[setRegionLevel()](\ref LedStrand::setRegionLevel) -- `setLevel()`'s
+[setRegionLevel()](\ref hitlib::LedStrand::setRegionLevel) -- `setLevel()`'s
 counterpart for one region.
 
 ### Motor heat, one segment per motor
 
 The case gauges exist for: a strip under the drivebase, split into one segment
 per motor, each colored by how hot its own motor is.
-[motorHeatGauge()](\ref LedStrand::motorHeatGauge) is a gauge region arriving
+[motorHeatGauge()](\ref hitlib::LedStrand::motorHeatGauge) is a gauge region arriving
 pre-loaded with the V5's own derating schedule, so the colors mean something
 specific rather than being a pretty ramp -- green cold, yellow nearing the first
 cut, then orange, red and deep red for the 50%, 25% and 12.5% current limits,

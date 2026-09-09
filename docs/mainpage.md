@@ -28,9 +28,10 @@ LedGroup
  └─ LedStrand
       ├─ Base layer      ← flow / rainbow / pulse / bitscroll / twinkle, or a
       │                    level meter driven by hand, by a value, or by a song
-      ├─ Overlay layer   ← second independent animation
-      ├─ Spread mask     ← wipes overlay over base from center outward
+      ├─ Overlay layer   ← second independent animation, shown where a
+      │                    splice mask asks for it
       ├─ Splice mask     ← alternating sections, or arbitrary custom regions
+      │                    that each animate on their own
       └─ Profile         ← priority-based mode stack for match events
 ```
 
@@ -43,9 +44,10 @@ LedGroup
 | **Animations** | Static, flow gradient, rainbow, pulse, flash, twinkle, bitscroll |
 | **Bounce variants** | Pulse bounce, bitscroll bounce |
 | **Overlay system** | A second animation layer, shown in a splice mask's masked bins |
-| **Splice mask** | Alternating sections or custom regions, solid color or overlay |
+| **Splice mask** | Alternating sections sharing the overlay, or custom regions that each run their own animation |
 | **Level meter** | Fill the strip in proportion to a value - by hand, or tracking a motor, sensor or the battery on its own |
-| **Music sync** | Fill in time with a song - MP3/FLAC/WAV or MIDI, analysed by Pattern Studio |
+| **Music sync** | Fill in time with a song - MP3/M4A/FLAC/OGG/WAV or MIDI, analysed by Pattern Studio |
+| **Gauges** | Several independent meters on one strip, each colored off its own scale - motorHeatGauge() ships with the V5's derating schedule |
 | **Profiles** | Priority mode stack, activateMode / activateModeTimed |
 | **Sequencer** | Multi-phase timed driver for endgame sequences |
 | **Groups** | One call fans out to every strand in the group |

@@ -688,6 +688,9 @@ public:
 
     /**
      * @brief Scroll a gradient in the overlay buffer.
+     * @param color1    Color the gradient starts from (0xRRGGBB).
+     * @param color2    Color the gradient runs to (0xRRGGBB).
+     * @param speed     Pixels shifted per refresh tick.
      * @param seamless  Loop the gradient back to @p color1 instead of
      *                  cutting straight from @p color2 to @p color1 at the
      *                  wrap (default @c true). See @c flow().

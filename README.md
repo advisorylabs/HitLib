@@ -3,7 +3,7 @@
 **LED animation and control library for VEX V5, built for [PROS](https://pros.cs.purdue.edu/).**
 
 Drive WS2812B strips off the V5's ADI ports with animations: flow,
-rainbow, pulse, flash, twinkle, bitscroll, and center-spread composed into named,
+rainbow, pulse, flash, twinkle, and bitscroll composed into named,
 prioritized modes you switch at runtime. Strips can also fill like a meter -
 tracking a motor's heat, an arm's rotation or the battery on their own, or
 filling in time with a song. One strip can be split into several independent

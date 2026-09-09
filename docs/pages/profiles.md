@@ -12,15 +12,20 @@ Three ready-made profiles are available in `hitlib/profiles/classic.hpp`.
 
 ### Mode Index Table
 
-| Index | Name | Classic | Modern | Showy |
-|---|---|---|---|---|
-| 0 | Showoff | rainbow | rainbow | - |
-| 1 | Idle | magenta flow | pink pulse | purple flow |
-| 2 | Alliance Red | red pulse | red pulse + orange bg | white pulse / red bg |
-| 3 | Alliance Blue | blue pulse | blue pulse + cyan bg | white pulse / blue bg |
-| 4 | Scoring | green pulse | green flash | teal pulse |
-| 5 | Matchloading | yellow pulse | yellow pulse | - |
-| 6 | Endgame | warn -> white -> cycle | solid green -> pulse | yellow -> rainbow |
+| Mode | Classic | Modern | Showy |
+|---|---|---|---|
+| Showoff | `0` rainbow | `0` rainbow | not in this profile |
+| Idle | `1` magenta flow | `1` pink pulse | `0` purple flow |
+| Alliance Red | `2` red pulse | `2` red pulse + orange bg | `1` white pulse / red bg |
+| Alliance Blue | `3` blue pulse | `3` blue pulse + cyan bg | `2` white pulse / blue bg |
+| Scoring | `4` green pulse | `4` green flash | `3` teal pulse |
+| Matchloading | `5` yellow pulse | `5` yellow pulse | not in this profile |
+| Endgame | `6` warn -> white -> cycle | `6` solid green -> pulse | `4` yellow -> rainbow |
+
+Classic and Modern have seven modes each and share their numbering. **Showy has
+five**, so its indices are its own: no Showoff or Matchloading, and Endgame is
+`4`, not `6`. `activateMode()` takes a raw index into the profile's mode array,
+so `activateMode(6)` against Showy is out of range and simply never wins.
 
 ```cpp
 #include "hitlib/profiles/classic.hpp"
