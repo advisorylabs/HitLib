@@ -134,18 +134,6 @@ make
 Full packaging steps are in the
 [installation guide](https://advisorylabs.github.io/HitLib/install_page.html).
 
-## Store site
-
-`site/` holds the HitLib release and ordering page — a static hash-routed SPA
-plus four Vercel serverless functions (`site/api/`) for Discord order
-notifications and Stripe Checkout. It is independent of the library build: see
-[`site/README.md`](site/README.md) for how it works and which environment
-variables it needs.
-
-It deploys from this repo on Vercel with **Root Directory** set to `site`.
-The Doxygen API reference is unaffected and keeps publishing to GitHub Pages at
-<https://advisorylabs.github.io/HitLib/> via `.github/workflows/docs.yml`.
-
 ## License
 
 [Mozilla Public License 2.0](LICENSE).
