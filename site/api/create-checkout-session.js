@@ -1,3 +1,5 @@
+var shipping = require('./_shipping');
+
 // Trusted server-side prices (cents). Never trust a client-submitted price.
 var KIT_PRICES_CENTS = {
   single: 2000,
@@ -72,6 +74,22 @@ module.exports = async function handler(req, res) {
     });
   }
 
+  // Hosted Checkout can't re-rate shipping once the buyer types an address
+  // there, so the address is collected on our page and quoted here, and Stripe
+  // gets a fixed shipping amount plus the address it was quoted for.
+  var address, quote;
+  try {
+    address = shipping.parseAddress(body.address);
+    quote = await shipping.quoteShipping(items, address);
+  } catch (e) {
+    if (e instanceof shipping.ShippingError) {
+      res.status(e.status).json({ error: e.message });
+      return;
+    }
+    res.status(502).json({ error: 'Could not get a shipping rate.' });
+    return;
+  }
+
   var origin = 'https://' + req.headers.host;
 
   try {
@@ -79,11 +97,36 @@ module.exports = async function handler(req, res) {
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: line_items,
-      shipping_address_collection: { allowed_countries: ['US'] },
+      shipping_options: [{
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          display_name: quote.service.slice(0, 100),
+          fixed_amount: { amount: quote.amountCents, currency: 'usd' }
+        }
+      }],
+      payment_intent_data: {
+        shipping: {
+          name: address.name,
+          address: {
+            line1: address.street1,
+            line2: address.street2 || undefined,
+            city: address.city,
+            state: address.state,
+            postal_code: address.zip,
+            country: 'US'
+          }
+        }
+      },
       customer_email: email,
       success_url: origin + '/?paid=1&session_id={CHECKOUT_SESSION_ID}#/buy',
       cancel_url: origin + '/#/buy',
-      metadata: { name: name, team: team, note: note }
+      metadata: {
+        name: name,
+        team: team,
+        note: note,
+        ship_to: (address.name + ', ' + shipping.oneLine(address)).slice(0, 500),
+        ship_service: quote.service.slice(0, 100)
+      }
     });
     res.status(200).json({ url: session.url });
   } catch (e) {

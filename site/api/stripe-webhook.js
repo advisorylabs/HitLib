@@ -44,9 +44,14 @@ async function notifyDiscord(stripe, session) {
     || (session.collected_information && session.collected_information.shipping_details)
     || session.shipping
     || null;
-  var address = shipping && shipping.address
-    ? [shipping.address.line1, shipping.address.line2, shipping.address.city, shipping.address.state, shipping.address.postal_code].filter(Boolean).join(', ')
-    : 'n/a';
+  // Sessions from create-checkout-session carry the quoted address in
+  // metadata (Stripe no longer collects it); the fallbacks cover older ones.
+  var address = meta.ship_to
+    || (shipping && shipping.address
+      ? [shipping.address.line1, shipping.address.line2, shipping.address.city, shipping.address.state, shipping.address.postal_code].filter(Boolean).join(', ')
+      : 'n/a');
+  var shippingCents = (session.total_details && session.total_details.amount_shipping) || 0;
+  var shippingText = '$' + (shippingCents / 100).toFixed(2) + (meta.ship_service ? ' (' + meta.ship_service + ')' : '');
 
   var embed = {
     title: 'New HitLib order (paid via Stripe)',
@@ -57,6 +62,7 @@ async function notifyDiscord(stripe, session) {
       { name: 'Team', value: clean(meta.team || 'n/a', 20), inline: true },
       { name: 'Email', value: clean((session.customer_details && session.customer_details.email) || 'n/a', 80) },
       { name: 'Shipping address', value: clean(address, 200) },
+      { name: 'Shipping', value: clean(shippingText, 120) },
       { name: 'Items', value: clean(await orderedItems(stripe, session.id), 1000) || 'none' }
     ],
     timestamp: new Date().toISOString()

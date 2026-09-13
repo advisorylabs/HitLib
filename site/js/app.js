@@ -169,6 +169,19 @@
   function cartTotal(cart) {
     return cartLines(cart).reduce(function (sum, l) { return sum + l.kit.price * l.qty; }, 0);
   }
+
+  // Mirrors MAX_STRIPS_PER_ENVELOPE and its message in api/_shipping.js, so an
+  // oversized cart is flagged before the buyer fills in an address. The server
+  // enforces the limit regardless.
+  var MAX_STRIPS_PER_ENVELOPE = 5;
+  var OVER_LIMIT_MESSAGE = 'Orders this large may ship in multiple packages for extra protection against shipping damage, please use "Contact me Later" to have this order forwarded to the team for further processing.';
+  function cartOverStripLimit(cart) {
+    var strips = cartLines(cart).reduce(function (n, l) { return n + l.kit.strands * l.qty; }, 0);
+    return strips > MAX_STRIPS_PER_ENVELOPE;
+  }
+  function overLimitNoteHtml() {
+    return '<div class="shipping-limit-note">' + escapeHtml(OVER_LIMIT_MESSAGE) + '</div>';
+  }
   function money(n) { return '$' + n.toFixed(2); }
 
   function kitPriceHtml(kit, extraStyle) {
@@ -316,7 +329,10 @@
           '<button type="button" class="cart-remove" data-line-key="' + l.key + '" aria-label="Remove">&times;</button>' +
         '</div>';
     }).join('');
-    html += '<div class="cart-total-row"><span>Total</span><span class="amount">' + money(cartTotal(cart)) + '</span></div>';
+    html += '<div class="cart-total-row"><span>Subtotal</span><span class="amount">' + money(cartTotal(cart)) + '</span></div>';
+    html += cartOverStripLimit(cart)
+      ? overLimitNoteHtml()
+      : '<div class="shipping-hint">Shipping is calculated at checkout from your address.</div>';
     html += '<div class="cta-row" style="margin-top:20px;"><a class="btn primary" href="#/buy">Continue to checkout</a></div>';
     container.innerHTML = html;
 
@@ -388,11 +404,88 @@
       });
   }
 
+  /* ---------- shipping quote ---------- */
+
+  // Latest live carrier quote for the #/buy summary. `key` is the cart and
+  // address it was requested for, so a slow stale response can't overwrite a
+  // newer one. Display only: the server re-quotes before charging.
+  var IDLE_QUOTE = { key: '', status: 'idle', amountCents: 0, service: '', error: '' };
+  var shippingQuote = IDLE_QUOTE;
+  // Turned off inside a Claude artifact, where there's no /api to quote from.
+  var shippingEnabled = true;
+
+  function readShipAddress() {
+    function val(id) {
+      var el = document.getElementById(id);
+      return el ? el.value.trim() : '';
+    }
+    return {
+      name: val('ship-name'),
+      street1: val('ship-street1'),
+      street2: val('ship-street2'),
+      city: val('ship-city'),
+      state: val('ship-state'),
+      zip: val('ship-zip')
+    };
+  }
+  function shipAddressComplete(a) {
+    return !!(a.name && a.street1 && a.city && a.state && /^\d{5}(-\d{4})?$/.test(a.zip));
+  }
+
+  function requestShippingQuote() {
+    if (!shippingEnabled) return;
+    var cart = readCart();
+    var lines = cartLines(cart);
+    var address = readShipAddress();
+    // An oversized cart would only get the limit error back from the carrier call.
+    if (!lines.length || !shipAddressComplete(address) || cartOverStripLimit(cart)) {
+      if (shippingQuote.status !== 'idle') {
+        shippingQuote = IDLE_QUOTE;
+        renderBuyTotals();
+      }
+      return;
+    }
+    var items = lines.map(function (l) { return { kitId: l.kit.id, densities: l.densities, qty: l.qty }; });
+    var key = JSON.stringify([items, address.street1, address.street2, address.city, address.state, address.zip]);
+    if (key === shippingQuote.key && shippingQuote.status !== 'error') return;
+
+    function settle(next) {
+      if (shippingQuote.key !== key) return;
+      shippingQuote = next;
+      renderBuyTotals();
+    }
+    shippingQuote = { key: key, status: 'loading', amountCents: 0, service: '', error: '' };
+    renderBuyTotals();
+    fetch('/api/shipping-quote', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: items, address: address })
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          if (r.ok && typeof data.amountCents === 'number') {
+            settle({ key: key, status: 'ok', amountCents: data.amountCents, service: String(data.service || ''), error: '' });
+          } else {
+            settle({ key: key, status: 'error', amountCents: 0, service: '', error: data.error || 'Could not get a shipping rate.' });
+          }
+        });
+      })
+      .catch(function () {
+        settle({ key: key, status: 'error', amountCents: 0, service: '', error: 'Could not reach the shipping desk. Try again in a bit.' });
+      });
+  }
+
   function renderBuySummary() {
     var orderForm = document.getElementById('buy-order-form');
     var confirm = document.getElementById('buy-confirm');
     if (orderForm) orderForm.hidden = false;
     if (confirm) confirm.hidden = true;
+    return renderBuyTotals();
+  }
+
+  // Fills in the summary box only, so a quote landing late can't un-hide the
+  // order form behind a confirmation screen.
+  function renderBuyTotals() {
     var container = document.getElementById('buy-cart-summary');
     if (!container) return null;
     var cart = readCart();
@@ -405,11 +498,37 @@
       var densityText = l.densities.map(densityLabel).join(', ');
       return '<div class="buy-summary-row"><span>' + l.kit.name + ' &times; ' + l.qty + '<br><span style="font-size:12px; color:var(--text-muted);">' + densityText + '</span></span><span class="amount">' + money(l.kit.price * l.qty) + '</span></div>';
     }).join('');
-    var total = cartTotal(cart);
+
+    var subtotal = cartTotal(cart);
+    var total = subtotal;
+    var overLimit = cartOverStripLimit(cart);
+    var quoted = shippingQuote.status === 'ok' && !overLimit;
+    var shipLabel = 'Shipping';
+    var shipValue;
+    if (!shippingEnabled) {
+      shipValue = '<span class="pending">Arranged with the team</span>';
+    } else if (overLimit) {
+      shipValue = '<span class="pending">Quoted by the team</span>';
+    } else if (quoted) {
+      total += shippingQuote.amountCents / 100;
+      if (shippingQuote.service) shipLabel += '<br><span style="font-size:12px; color:var(--text-muted);">' + escapeHtml(shippingQuote.service) + '</span>';
+      shipValue = '<span class="amount">' + money(shippingQuote.amountCents / 100) + '</span>';
+    } else if (shippingQuote.status === 'loading') {
+      shipValue = '<span class="pending">Calculating…</span>';
+    } else if (shippingQuote.status === 'error') {
+      shipValue = '<span class="pending">' + escapeHtml(shippingQuote.error) + '</span>';
+    } else {
+      shipValue = '<span class="pending">Enter your address below</span>';
+    }
+    var totalLabel = quoted || !shippingEnabled ? 'Total' : 'Total before shipping';
+
     container.innerHTML = '<div class="buy-summary">' + rows +
-      '<div class="buy-summary-row total"><span>Total</span><span class="amount">' + money(total) + '</span></div>' +
+      '<div class="buy-summary-row"><span>Subtotal</span><span class="amount">' + money(subtotal) + '</span></div>' +
+      '<div class="buy-summary-row"><span>' + shipLabel + '</span>' + shipValue + '</div>' +
+      '<div class="buy-summary-row total"><span>' + totalLabel + '</span><span class="amount">' + money(total) + '</span></div>' +
+      (overLimit && shippingEnabled ? overLimitNoteHtml() : '') +
       '</div>';
-    return { lines: lines, total: total };
+    return { lines: lines, subtotal: subtotal, total: total };
   }
 
   /* ---------- order wizard (kit picker landing) ---------- */
@@ -488,7 +607,11 @@
     }
     if (route.page === 'kit') renderKitPage(route.kitId);
     if (route.page === 'cart') renderCartPage();
-    if (route.page === 'buy') renderBuySummary();
+    if (route.page === 'buy') {
+      renderBuySummary();
+      // Covers an address the browser restored, which fires no input event.
+      requestShippingQuote();
+    }
     if (route.page === 'order') renderOrderWizard();
     if (route.page !== 'home') animatePageIn('#page-' + route.page + ' .module');
     if (route.page === 'home') resetLedStrip();
@@ -554,6 +677,19 @@
   var cardFields = document.querySelectorAll('.method-card-field');
   var contactNote = document.getElementById('method-contact-note');
   var cardNote = document.getElementById('method-card-note');
+  var shipFields = document.querySelectorAll('.ship-field');
+
+  var quoteTimer = null;
+  shipFields.forEach(function (f) {
+    var input = f.querySelector('input, select');
+    if (!input) return;
+    ['input', 'change'].forEach(function (type) {
+      input.addEventListener(type, function () {
+        clearTimeout(quoteTimer);
+        quoteTimer = setTimeout(requestShippingQuote, 500);
+      });
+    });
+  });
 
   methodBtns.forEach(function (btn) {
     btn.addEventListener('click', function () {
@@ -598,6 +734,14 @@
     var col = db ? db.collection('orders') : null;
 
     if (col) {
+      // Artifact viewer: no /api to quote from, and the orders collection is
+      // readable by other viewers, so no home addresses go into it.
+      shippingEnabled = false;
+      shipFields.forEach(function (f) { f.hidden = true; });
+      renderBuyTotals();
+    }
+
+    if (col) {
       col.orderBy('ts', 'desc').limit(50).onSnapshot(function (snap) {
         countEl.innerHTML = '<b>' + snap.size + '</b> ' + (snap.size === 1 ? 'order placed so far' : 'orders placed so far');
         renderTicker(snap);
@@ -627,16 +771,29 @@
         items: summary.lines.map(function (l) {
           return { kitId: l.kit.id, name: l.kit.name, strands: l.kit.strands, densities: l.densities, qty: l.qty, unitPrice: l.kit.price };
         }),
+        subtotal: Math.round(summary.subtotal * 100) / 100,
         total: Math.round(summary.total * 100) / 100,
         note: note,
         ts: Date.now()
       };
 
+      var address = readShipAddress();
+      var needsAddress = shippingEnabled && !shipAddressComplete(address);
+      if (shippingEnabled) payload.address = address;
+
       if (isCard) {
         payload.email = emailInput.value.trim();
         payload.team = teamInput.value.trim();
+        if (shippingEnabled && cartOverStripLimit(readCart())) {
+          statusEl.textContent = OVER_LIMIT_MESSAGE;
+          return;
+        }
         if (!name || !payload.email || !payload.team) {
           statusEl.textContent = 'Fill in your name, email, and team number.';
+          return;
+        }
+        if (needsAddress) {
+          statusEl.textContent = 'Fill in your full shipping address.';
           return;
         }
 
@@ -651,9 +808,12 @@
           });
           var checkoutData = await checkoutResp.json().catch(function () { return {}; });
           if (!checkoutResp.ok || !checkoutData.url) {
-            statusEl.textContent = checkoutResp.status === 500
-              ? "Card payments aren't set up yet. Try \"Contact me later\" instead."
-              : 'Could not start checkout. Try again, or use "Contact me later".';
+            // 400/422 carry a buyer-facing reason (bad address, no carrier, box too big).
+            statusEl.textContent = (checkoutResp.status === 400 || checkoutResp.status === 422) && checkoutData.error
+              ? checkoutData.error
+              : checkoutResp.status === 500
+                ? "Card payments aren't set up yet. Try \"Contact me later\" instead."
+                : 'Could not start checkout. Try again, or use "Contact me later".';
             submitBtn.disabled = false;
             return;
           }
@@ -668,6 +828,10 @@
       payload.contact = contactInput.value.trim();
       if (!name || !payload.contact) {
         statusEl.textContent = 'Fill in your name and a Discord handle or email.';
+        return;
+      }
+      if (needsAddress) {
+        statusEl.textContent = 'Fill in your full shipping address.';
         return;
       }
 
@@ -693,6 +857,7 @@
         writeCart([]);
         updateCartBadges();
         form.reset();
+        shippingQuote = IDLE_QUOTE;
         showBuyConfirm();
       } catch (err) {
         var code = err && err.code;

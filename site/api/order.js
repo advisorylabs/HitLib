@@ -1,3 +1,5 @@
+var shipping = require('./_shipping');
+
 function clean(v, max) {
   return String(v == null ? '' : v)
     .slice(0, max || 200)
@@ -21,7 +23,8 @@ module.exports = async function handler(req, res) {
   var name = clean(body.name, 40);
   var method = body.method === 'card' ? 'card' : 'contact';
   var items = Array.isArray(body.items) ? body.items.slice(0, 10) : [];
-  var total = typeof body.total === 'number' && isFinite(body.total) ? body.total : 0;
+  // Kits only; shipping is re-quoted below rather than taken from the client.
+  var total = typeof body.subtotal === 'number' && isFinite(body.subtotal) ? body.subtotal : 0;
   var note = clean(body.note, 80);
 
   if (!name || items.length === 0) {
@@ -48,6 +51,28 @@ module.exports = async function handler(req, res) {
     contactLine = 'Discord/email: ' + contact;
   }
 
+  // Nothing is charged on this path, so a failed carrier lookup still lets
+  // the reservation through; the team sees why and quotes shipping by hand.
+  var address = null;
+  var shippingLine = 'n/a';
+  var shippingCents = 0;
+  if (method === 'contact') {
+    try {
+      address = shipping.parseAddress(body.address);
+    } catch (e) {
+      res.status(400).json({ error: e.message || 'Missing shipping address.' });
+      return;
+    }
+    try {
+      var quote = await shipping.quoteShipping(items, address);
+      shippingCents = quote.amountCents;
+      shippingLine = '$' + (shippingCents / 100).toFixed(2) + ' (' + quote.service + ')';
+    } catch (e) {
+      shippingLine = 'Not quoted: ' + (e.message || 'carrier lookup failed');
+    }
+    contactLine += '\nShip to: ' + address.name + ', ' + shipping.oneLine(address);
+  }
+
   var itemLines = items.map(function (it) {
     var densities = Array.isArray(it.densities) ? it.densities.join(', ') : '';
     var qty = Number(it.qty) || 1;
@@ -61,8 +86,9 @@ module.exports = async function handler(req, res) {
     fields: [
       { name: 'Name', value: name, inline: true },
       { name: 'Method', value: method === 'card' ? 'Full order details' : 'Contact me later', inline: true },
-      { name: 'Total', value: '$' + total.toFixed(2), inline: true },
-      { name: 'Contact', value: contactLine },
+      { name: 'Total', value: '$' + (total + shippingCents / 100).toFixed(2), inline: true },
+      { name: 'Contact', value: clean(contactLine, 400) },
+      { name: 'Shipping', value: clean(shippingLine, 200) },
       { name: 'Items', value: itemLines || 'none' }
     ],
     timestamp: new Date().toISOString()

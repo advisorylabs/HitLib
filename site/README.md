@@ -37,8 +37,9 @@ It's a single-page app using hash routing, all client-side, no server needed:
 - `#/order` - pick a kit (Single / Regular / Extended)
 - `#/kit/<id>` - configure that kit's per-strand density, add to cart
 - `#/cart` - review cart, adjust quantities
-- `#/buy` - checkout ("Contact me later" for Zelle/Venmo via Discord, or "Pay with
-  card" via Stripe Checkout; no card fields on this site itself, see below)
+- `#/buy` - checkout: shipping address plus live shipping quote, then "Contact me
+  later" for Zelle/Venmo via Discord, or "Pay with card" via Stripe Checkout (no
+  card fields on this site itself, see below)
 
 ## Order notifications
 
@@ -61,8 +62,10 @@ holding that URL can post to it. Without the env var set, `/api/order` returns a
 "Pay with card" POSTs to `/api/create-checkout-session`, which creates a Stripe
 Checkout Session server-side (kit prices come from a trusted map in that file,
 never from the client) and redirects the buyer to Stripe's own hosted payment
-page - card number, CVC, and shipping address are entered there, never in a
-field on this site. Stripe redirects back to `#/buy` afterward, where the page
+page - card number and CVC are entered there, never in a field on this site.
+The shipping address is the exception: it's entered on `#/buy` so shipping can
+be quoted before checkout (see [Shipping](#shipping-shippo) below), and it's
+passed to Stripe along with the shipping charge. Stripe redirects back to `#/buy` afterward, where the page
 calls `/api/verify-session` to confirm the session actually paid before showing
 the confirmation screen and clearing the cart.
 
@@ -87,6 +90,57 @@ expiry, any CVC. Without `STRIPE_SECRET_KEY` set, `/api/create-checkout-session`
 returns a 500 and the form tells the buyer to use "Contact me later" instead;
 everything else on the site keeps working.
 
+## Shipping (Shippo)
+
+Shipping is a live carrier rate. As the buyer fills in their address on `#/buy`,
+the page POSTs the cart and address to `/api/shipping-quote`, which asks
+[Shippo](https://goshippo.com) for rates and shows the cheapest one in the
+order summary. That quote is display-only. `/api/create-checkout-session` and
+`/api/order` re-quote on the server with the same code (`api/_shipping.js`;
+the underscore keeps Vercel from routing it), so the charged amount never
+comes from the browser.
+
+Stripe's hosted Checkout page can't recalculate shipping after an address is
+typed there, which is why the address is collected on our page. The checkout
+session gets the rate as a fixed-amount `shipping_options` entry, and the
+address as `payment_intent_data.shipping` plus `ship_to` metadata. Buyers can't
+change the address on Stripe's page, so the quote always matches it. The
+Discord notification (from `api/stripe-webhook.js`) shows the address, the
+shipping charge, and the carrier service.
+
+On "Contact me later", the address is required too, and the notification
+includes the quoted shipping. Nothing is charged on that path, so if the carrier
+lookup fails the order still goes through, marked "Not quoted", for the team to
+price by hand. Inside a Claude artifact there's no `/api`, so the address
+fields are hidden and shipping is left to the team. That also keeps home
+addresses out of the artifact's shared `orders` collection.
+
+Every order ships in one 7" x 9" padded envelope, however many kits are in the
+cart, so there's one shipping charge per order. Weight is each strip's maximum
+weight (30 LEDs/m 0.6 oz; 60 and 74 LEDs/m 0.4 oz) plus 1 oz of packaging. These
+values, and the envelope size, are at the top of `api/_shipping.js`; update
+them there if packaging changes. Envelope thickness is quoted as 2" to be safe.
+
+Orders of more than 5 strips (`MAX_STRIPS_PER_ENVELOPE`) don't get a live quote.
+Card checkout refuses them with a note to use "Contact me later", and those
+orders reach Discord marked "Not quoted" so the team can price shipping by hand.
+For reference: one Extended kit (4) or an Extended plus a Single (5) still
+quotes; three Regular kits (6) don't.
+
+Setup:
+
+1. Create a Shippo account. Its test API token (`shippo_test_...`, Settings ->
+   API) returns real-looking rates without buying labels. Switch to the live
+   token for production.
+2. `SHIPPO_API_TOKEN` - that token.
+3. The ship-from address, which every quote is priced from: `SHIP_FROM_NAME`,
+   `SHIP_FROM_STREET1`, `SHIP_FROM_STREET2` (optional), `SHIP_FROM_CITY`,
+   `SHIP_FROM_STATE` (two-letter), `SHIP_FROM_ZIP`. These are env vars rather
+   than code so the address stays out of this public repo.
+
+Without these, quotes fail with "Shipping rates are not configured yet", card
+checkout is refused, and "Contact me later" orders go through unquoted.
+
 ## Deploying
 
 This folder lives inside the main `advisorylabs/HitLib` repository, alongside the
@@ -99,13 +153,15 @@ the output directory, `npm install` picks up `stripe` from the `package.json`
 here, and each file in `api/` becomes a Node serverless function at `/api/<name>`.
 After that every push to `main` that touches `site/` redeploys automatically.
 
-Set these environment variables in the Vercel project (all three described above):
+Set these environment variables in the Vercel project (all described above):
 
 | Variable | Used by | Without it |
 | --- | --- | --- |
 | `DISCORD_WEBHOOK_URL` | `api/order.js`, `api/stripe-webhook.js` | `/api/order` 500s; the form shows a generic error |
 | `STRIPE_SECRET_KEY` | `api/create-checkout-session.js`, `api/verify-session.js` | card payment 500s; buyers fall back to "Contact me later" |
 | `STRIPE_WEBHOOK_SECRET` | `api/stripe-webhook.js` | paid orders never reach Discord |
+| `SHIPPO_API_TOKEN` | `api/_shipping.js` | no shipping quotes; card checkout refused, contact orders go through unquoted |
+| `SHIP_FROM_NAME`, `SHIP_FROM_STREET1`, `SHIP_FROM_STREET2` (optional), `SHIP_FROM_CITY`, `SHIP_FROM_STATE`, `SHIP_FROM_ZIP` | `api/_shipping.js` | same as missing `SHIPPO_API_TOKEN` |
 
 Point the Stripe webhook endpoint at `https://<your-domain>/api/stripe-webhook`.
 
