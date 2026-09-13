@@ -174,7 +174,7 @@
   // oversized cart is flagged before the buyer fills in an address. The server
   // enforces the limit regardless.
   var MAX_STRIPS_PER_ENVELOPE = 5;
-  var OVER_LIMIT_MESSAGE = 'Orders this large may ship in multiple packages for extra protection against shipping damage, please use "Contact me Later" to have this order forwarded to the team for further processing.';
+  var OVER_LIMIT_MESSAGE = 'Orders this large may ship in multiple packages for extra protection against shipping damage, "Contact me later" must be used to have this order forwarded to our team for further processing.';
   function cartOverStripLimit(cart) {
     var strips = cartLines(cart).reduce(function (n, l) { return n + l.kit.strands * l.qty; }, 0);
     return strips > MAX_STRIPS_PER_ENVELOPE;
@@ -490,6 +490,9 @@
     if (!container) return null;
     var cart = readCart();
     var lines = cartLines(cart);
+    var overLimit = cartOverStripLimit(cart);
+    // Before the empty-cart return, so emptying the cart brings card checkout back.
+    syncCardOption(shippingEnabled && overLimit);
     if (!lines.length) {
       container.innerHTML = '<div class="buy-summary"><p style="margin:0; color:var(--text-muted);">Your cart is empty. <a href="#/">Pick a kit</a> before checking out.</p></div>';
       return null;
@@ -501,7 +504,6 @@
 
     var subtotal = cartTotal(cart);
     var total = subtotal;
-    var overLimit = cartOverStripLimit(cart);
     var quoted = shippingQuote.status === 'ok' && !overLimit;
     var shipLabel = 'Shipping';
     var shipValue;
@@ -691,19 +693,44 @@
     });
   });
 
+  function selectPayMethod(method) {
+    payMethod = method;
+    var isCard = method === 'card';
+    methodBtns.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-method') === method); });
+    contactFields.forEach(function (f) { f.hidden = isCard; });
+    cardFields.forEach(function (f) { f.hidden = !isCard; });
+    if (contactNote) contactNote.hidden = isCard;
+    if (cardNote) cardNote.hidden = !isCard;
+    submitBtn.textContent = isCard ? 'Continue to payment' : 'Reserve my spot';
+    statusEl.textContent = '';
+  }
+
   methodBtns.forEach(function (btn) {
     btn.addEventListener('click', function () {
-      payMethod = btn.getAttribute('data-method');
-      var isCard = payMethod === 'card';
-      methodBtns.forEach(function (b) { b.classList.toggle('active', b === btn); });
-      contactFields.forEach(function (f) { f.hidden = isCard; });
-      cardFields.forEach(function (f) { f.hidden = !isCard; });
-      if (contactNote) contactNote.hidden = isCard;
-      if (cardNote) cardNote.hidden = !isCard;
-      submitBtn.textContent = isCard ? 'Continue to payment' : 'Reserve my spot';
-      statusEl.textContent = '';
+      selectPayMethod(btn.getAttribute('data-method'));
     });
   });
+
+  // An oversized cart can't be quoted, so card checkout is removed outright
+  // rather than refused on submit. If that forced the switch to "Contact me
+  // later", card comes back as the default once the cart is small enough again.
+  var cardForcedOff = false;
+  function syncCardOption(overLimit) {
+    if (!methodBtns) return; // the first render runs before the order form is wired up
+    methodBtns.forEach(function (b) {
+      if (b.getAttribute('data-method') === 'card') b.hidden = overLimit;
+    });
+    var toggle = document.getElementById('buy-pay-toggle');
+    if (toggle) toggle.classList.toggle('single', overLimit);
+    if (overLimit && payMethod === 'card') {
+      cardForcedOff = true;
+      selectPayMethod('contact');
+    } else if (!overLimit && cardForcedOff) {
+      cardForcedOff = false;
+      selectPayMethod('card');
+    }
+  }
+  syncCardOption(shippingEnabled && cartOverStripLimit(readCart()));
 
   if (!reduceMotion) tickerEl.classList.add('anim');
 

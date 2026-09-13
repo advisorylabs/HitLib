@@ -799,9 +799,10 @@
   .shipping-limit-note {
     margin-top: 14px;
     padding: 10px 14px;
-    border-left: 3px solid var(--amber);
+    border: 1px solid rgba(255, 32, 32, 0.45);
+    border-left: 3px solid var(--heat-hot);
     border-radius: 8px;
-    background: rgba(255, 182, 72, 0.08);
+    background: rgba(255, 32, 32, 0.12);
     font-size: 13px;
     line-height: 1.5;
     color: var(--text);
@@ -845,6 +846,10 @@
     cursor: pointer;
     transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
   }
+
+  /* Only "Contact me later" is left (oversized cart): center it at a normal width. */
+  .pay-method-toggle.single { justify-content: center; }
+  .pay-method-toggle.single .pay-method-btn { flex: 0 1 320px; }
 
   .pay-method-btn:hover { color: var(--text); }
 

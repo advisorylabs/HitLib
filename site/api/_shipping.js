@@ -94,7 +94,7 @@ function packParcel(items) {
   }
   if (strips === 0) throw new ShippingError('Your cart is empty.', 400);
   if (strips > MAX_STRIPS_PER_ENVELOPE) {
-    throw new ShippingError('Orders this large may ship in multiple packages for extra protection against shipping damage, please use "Contact me Later" to have this order forwarded to the team for further processing.', 422);
+    throw new ShippingError('Orders this large may ship in multiple packages for extra protection against shipping damage, "Contact me later" must be used to have this order forwarded to our team for further processing.', 422);
   }
 
   // Rounded to a tenth so float sums like 0.6 + 0.4 don't reach Shippo as 1.0000000000000002.
