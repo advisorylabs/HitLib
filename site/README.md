@@ -149,6 +149,48 @@ Setup:
 Without these, quotes fail with "Shipping rates are not configured yet", card
 checkout is refused, and "Contact me later" orders go through unquoted.
 
+## Order goal and stock counters
+
+The bar across the top of every page shows the order goal (orders placed out of
+the target) and how many strands of each density are in stock. The page loads
+the numbers from `/api/inventory`. Wherever that route doesn't exist (a local
+static server, a Claude artifact), the bar stays hidden. The stock numbers are
+display only. Checkout doesn't block an order for more strands than are in stock.
+
+The counters are stored as metadata on one inactive Stripe product with the ID
+`hitlib_site_counters`, named "HitLib site counters". It's created on first use
+with the starting values in `SEED` at the top of `api/_inventory.js`. Test mode
+and live mode each get their own copy, so check the live one's numbers after
+switching keys.
+
+**Changing them by hand** (restocks, a new goal, a cancelled order): in the
+Stripe dashboard, open Product catalog, find "HitLib site counters" (it's
+archived, so it may be under the archived filter), and edit its metadata:
+
+| Key | Meaning |
+| --- | --- |
+| `orders_placed` | orders so far |
+| `order_goal` | the target |
+| `stock_d30`, `stock_d60`, `stock_d74` | strands on hand per density |
+
+Changing them takes a Stripe dashboard login, so there's no admin page or
+passcode in this public repo. The page picks up edits within about 10 seconds.
+That's the edge cache on `/api/inventory`.
+
+**Automatic updates:** every order adds 1 to `orders_placed` and subtracts its
+strands from each density's stock, never going below 0:
+
+- Card orders are counted in `api/stripe-webhook.js` once Stripe confirms
+  payment. `api/create-checkout-session.js` stores the cart in the session's
+  `items` metadata for this. The session is then flagged `inventory_counted`, so
+  a redelivered webhook doesn't count it twice. Abandoned checkouts never count.
+- "Contact me later" orders are counted in `api/order.js` as soon as they reach
+  Discord. They're unpaid and anyone can submit one, so if one falls through,
+  add its strands back and lower `orders_placed` in the dashboard.
+
+A count that fails never blocks the order itself. Both paths use
+`STRIPE_SECRET_KEY`, so without it there are no counters and the bar stays hidden.
+
 ## Deploying
 
 This folder lives inside the main `advisorylabs/HitLib` repository, alongside the
@@ -166,7 +208,7 @@ Set these environment variables in the Vercel project (all described above):
 | Variable | Used by | Without it |
 | --- | --- | --- |
 | `DISCORD_WEBHOOK_URL` | `api/order.js`, `api/stripe-webhook.js` | `/api/order` 500s; the form shows a generic error |
-| `STRIPE_SECRET_KEY` | `api/create-checkout-session.js`, `api/verify-session.js` | card payment 500s; buyers fall back to "Contact me later" |
+| `STRIPE_SECRET_KEY` | `api/create-checkout-session.js`, `api/verify-session.js`, `api/_inventory.js` | card payment 500s; buyers fall back to "Contact me later"; no order goal/stock bar |
 | `STRIPE_WEBHOOK_SECRET` | `api/stripe-webhook.js` | paid orders never reach Discord |
 | `SHIPPO_API_TOKEN` | `api/_shipping.js` | no shipping quotes; card checkout refused, contact orders go through unquoted |
 | `SHIP_FROM_NAME`, `SHIP_FROM_STREET1`, `SHIP_FROM_STREET2` (optional), `SHIP_FROM_CITY`, `SHIP_FROM_STATE`, `SHIP_FROM_ZIP` | `api/_shipping.js` | same as missing `SHIPPO_API_TOKEN` |

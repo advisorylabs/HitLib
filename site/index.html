@@ -18,6 +18,22 @@
 <body>
 <div class="top-strip" aria-hidden="true"></div>
 
+<div class="goal-bar" id="goal-bar" hidden>
+  <div class="goal-bar-inner">
+    <div class="goal-progress">
+      <span class="goal-label">Order goal</span>
+      <span class="goal-count" id="goal-count"></span>
+      <span class="goal-track" id="goal-track" role="progressbar" aria-label="Order goal progress">
+        <span class="goal-fill" id="goal-fill"></span>
+      </span>
+    </div>
+    <div class="goal-stock">
+      <span class="goal-label">In stock</span>
+      <span class="goal-stock-list" id="goal-stock-list"></span>
+    </div>
+  </div>
+</div>
+
 <div class="ambient" aria-hidden="true">
   <span class="b1"></span>
   <span class="b2"></span>

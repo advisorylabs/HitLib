@@ -1,3 +1,5 @@
+var inventory = require('./_inventory');
+
 function clean(v, max) {
   return String(v == null ? '' : v)
     .slice(0, max || 200)
@@ -80,6 +82,22 @@ async function notifyDiscord(stripe, session) {
   } catch (e) {}
 }
 
+// Takes a paid order off the site counters once. Stripe can deliver the same
+// event more than once, so the session is flagged after counting; the event's
+// own copy of the session is a snapshot, so the flag is read from a fresh one.
+async function countOrder(stripe, sessionId) {
+  try {
+    var fresh = await stripe.checkout.sessions.retrieve(sessionId);
+    var meta = fresh.metadata || {};
+    // Sessions from before the counters existed carry no items to count.
+    if (meta.inventory_counted === 'yes' || !meta.items) return;
+    await inventory.recordOrder(stripe, inventory.decodeItems(meta.items));
+    await stripe.checkout.sessions.update(sessionId, { metadata: { inventory_counted: 'yes' } });
+  } catch (e) {
+    // The order is paid either way; a missed count gets fixed in the dashboard.
+  }
+}
+
 async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).end();
@@ -107,6 +125,7 @@ async function handler(req, res) {
     var session = event.data.object;
     if (session.payment_status === 'paid') {
       await notifyDiscord(stripe, session);
+      await countOrder(stripe, session.id);
     }
   }
 

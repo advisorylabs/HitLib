@@ -110,6 +110,105 @@
     z-index: 30;
   }
 
+  /* ---------- order goal + stock bar ---------- */
+
+  .goal-bar {
+    padding-top: 3px; /* clears the fixed top strip */
+    background: var(--surface-sunken);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .goal-bar-inner {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 28px;
+    flex-wrap: wrap;
+  }
+
+  .goal-progress,
+  .goal-stock {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .goal-progress { flex: 1 1 280px; }
+
+  .goal-label {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .goal-count {
+    font-weight: 700;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .goal-track {
+    flex: 1 1 120px;
+    max-width: 260px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--line);
+    overflow: hidden;
+  }
+
+  .goal-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--grad-roll);
+    background-size: 200% 100%;
+    transition: width 0.6s ease;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .goal-fill { animation: gradient-roll 20s linear infinite; }
+  }
+
+  .goal-stock-list {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .stock-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 20px;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  .stock-chip .density {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .stock-chip .qty {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--green);
+  }
+
+  .stock-chip.low .qty { color: var(--amber); }
+  .stock-chip.out .qty { color: var(--heat-hot); }
+
   /* ---------- ambient background ---------- */
 
   .ambient {

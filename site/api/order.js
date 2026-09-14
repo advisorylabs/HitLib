@@ -1,4 +1,5 @@
 var shipping = require('./_shipping');
+var inventory = require('./_inventory');
 
 function clean(v, max) {
   return String(v == null ? '' : v)
@@ -111,6 +112,17 @@ module.exports = async function handler(req, res) {
   } catch (e) {
     res.status(502).json({ error: 'Could not reach Discord.' });
     return;
+  }
+
+  // Unpaid, but still a spot in the build queue, so it counts toward the goal
+  // and holds its strands. Cancelled ones get added back in the Stripe dashboard.
+  var stripe = inventory.stripeClient();
+  if (stripe) {
+    try {
+      await inventory.recordOrder(stripe, items);
+    } catch (e) {
+      // The team already has the order in Discord; the counters can be fixed by hand.
+    }
   }
 
   res.status(200).json({ ok: true });

@@ -86,6 +86,13 @@
     d74: 'assets/density-74-leds-per-m.png'
   };
 
+  // Order goal and strands in stock per density, from /api/inventory (edited in
+  // the Stripe dashboard, adjusted by each order; see api/_inventory.js). Null
+  // until loaded, or wherever there's no /api, which keeps the bar hidden.
+  // Display only: nothing at checkout enforces stock.
+  var counters = null;
+  var LOW_STOCK = 3;
+
   var DENSITIES = [
     { id: 'd30', length: '26.2"', ledsPerM: 30 },
     { id: 'd60', length: '13.1"', ledsPerM: 60 },
@@ -236,13 +243,67 @@
     grid.innerHTML = KITS.map(kitCardHtml).join('');
   }
 
+  function stockOf(d) {
+    return counters ? counters.stock[d.id] || 0 : 0;
+  }
+  function densityOptionText(d) {
+    var text = d.length + ' · ' + d.ledsPerM + ' LEDs/m';
+    if (!counters) return text;
+    return text + ' · ' + (stockOf(d) > 0 ? stockOf(d) + ' in stock' : 'out of stock');
+  }
+
+  function renderGoalBar() {
+    var bar = document.getElementById('goal-bar');
+    var count = document.getElementById('goal-count');
+    var track = document.getElementById('goal-track');
+    var fill = document.getElementById('goal-fill');
+    var list = document.getElementById('goal-stock-list');
+    if (!bar || !count || !track || !fill || !list) return;
+    bar.hidden = !counters;
+    if (!counters) return;
+    var placed = counters.ordersPlaced;
+    var goal = counters.orderGoal;
+    var pct = goal > 0 ? Math.min(100, Math.round(placed / goal * 100)) : 100;
+    count.textContent = placed + ' / ' + goal + ' orders';
+    fill.style.width = pct + '%';
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', String(goal));
+    track.setAttribute('aria-valuenow', String(placed));
+    list.innerHTML = DENSITIES.map(function (d) {
+      var n = stockOf(d);
+      var cls = n <= 0 ? ' out' : n <= LOW_STOCK ? ' low' : '';
+      return '<span class="stock-chip' + cls + '" title="' + d.length + ' strand, ' + (n > 0 ? n + ' in stock' : 'out of stock') + '">' +
+        '<span class="density">' + d.ledsPerM + ' LEDs/m</span>' +
+        '<span class="qty">' + n + '</span>' +
+      '</span>';
+    }).join('');
+  }
+
+  // `fresh` skips the edge cache, for right after this browser placed an order.
+  function loadCounters(fresh) {
+    return fetch('/api/inventory' + (fresh ? '?t=' + Date.now() : ''))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.stock) return;
+        counters = data;
+        renderGoalBar();
+        // A kit page rendered before the counters arrived gets its labels
+        // filled in place, keeping whatever densities were already picked.
+        document.querySelectorAll('.density-select option').forEach(function (opt) {
+          var d = getDensity(opt.value);
+          if (d) opt.textContent = densityOptionText(d);
+        });
+      })
+      .catch(function () {});
+  }
+
   function strandPickerHtml(index, selectedId) {
     return '' +
       '<div class="strand-picker">' +
         '<label>Strand ' + (index + 1) + '</label>' +
         '<select class="density-select" data-strand-index="' + index + '">' +
           DENSITIES.map(function (d) {
-            return '<option value="' + d.id + '"' + (d.id === selectedId ? ' selected' : '') + '>' + d.length + ' &middot; ' + d.ledsPerM + ' LEDs/m</option>';
+            return '<option value="' + d.id + '"' + (d.id === selectedId ? ' selected' : '') + '>' + escapeHtml(densityOptionText(d)) + '</option>';
           }).join('') +
         '</select>' +
         '<div class="density-diagram-frame">' +
@@ -395,6 +456,8 @@
           writeCart([]);
           updateCartBadges();
           showBuyConfirm('Order placed', 'A team member will be with you shortly.');
+          // Stripe's webhook, which does the counting, can land a moment after the redirect.
+          setTimeout(function () { loadCounters(true); }, 4000);
         } else {
           showBuyConfirm("Couldn't confirm payment", "If you were charged, reach out on Discord and we'll sort it out.");
         }
@@ -571,6 +634,7 @@
     });
   }
 
+  loadCounters();
   renderKitGrid();
   updateCartBadges();
 
@@ -897,6 +961,7 @@
         form.reset();
         shippingQuote = IDLE_QUOTE;
         showBuyConfirm();
+        if (!col) loadCounters(true);
       } catch (err) {
         var code = err && err.code;
         if (code === 'quota_exceeded') {

@@ -1,4 +1,5 @@
 var shipping = require('./_shipping');
+var inventory = require('./_inventory');
 
 // Trusted server-side prices (cents). Never trust a client-submitted price.
 var KIT_PRICES_CENTS = {
@@ -45,6 +46,7 @@ module.exports = async function handler(req, res) {
   }
 
   var line_items = [];
+  var counted = [];
   for (var i = 0; i < items.length; i++) {
     var it = items[i] || {};
     var kitId = String(it.kitId || '');
@@ -61,6 +63,7 @@ module.exports = async function handler(req, res) {
         return;
       }
     }
+    counted.push({ kitId: kitId, densities: densityIds.map(String), qty: qty });
     var densities = densityIds.join(', ');
     line_items.push({
       price_data: {
@@ -139,7 +142,9 @@ module.exports = async function handler(req, res) {
         note: note,
         ship_to: (address.name + ', ' + shipping.oneLine(address)).slice(0, 500),
         ship_service: quote.service.slice(0, 100),
-        protection: protection ? 'yes' : 'no'
+        protection: protection ? 'yes' : 'no',
+        // Stock comes off in stripe-webhook.js once this is paid.
+        items: inventory.encodeItems(counted)
       }
     });
     res.status(200).json({ url: session.url });
