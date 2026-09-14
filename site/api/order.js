@@ -73,6 +73,8 @@ module.exports = async function handler(req, res) {
     contactLine += '\nShip to: ' + address.name + ', ' + shipping.oneLine(address);
   }
 
+  var protectionCents = body.protection === true ? shipping.PROTECTION_CENTS : 0;
+
   var itemLines = items.map(function (it) {
     var densities = Array.isArray(it.densities) ? it.densities.join(', ') : '';
     var qty = Number(it.qty) || 1;
@@ -86,9 +88,10 @@ module.exports = async function handler(req, res) {
     fields: [
       { name: 'Name', value: name, inline: true },
       { name: 'Method', value: method === 'card' ? 'Full order details' : 'Contact me later', inline: true },
-      { name: 'Total', value: '$' + (total + shippingCents / 100).toFixed(2), inline: true },
+      { name: 'Total', value: '$' + (total + (shippingCents + protectionCents) / 100).toFixed(2), inline: true },
       { name: 'Contact', value: clean(contactLine, 400) },
       { name: 'Shipping', value: clean(shippingLine, 200) },
+      { name: 'Shipping protection', value: protectionCents ? 'Yes ($' + (protectionCents / 100).toFixed(2) + ')' : 'No', inline: true },
       { name: 'Items', value: itemLines || 'none' }
     ],
     timestamp: new Date().toISOString()

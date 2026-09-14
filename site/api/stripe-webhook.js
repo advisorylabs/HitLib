@@ -63,6 +63,8 @@ async function notifyDiscord(stripe, session) {
       { name: 'Email', value: clean((session.customer_details && session.customer_details.email) || 'n/a', 80) },
       { name: 'Shipping address', value: clean(address, 200) },
       { name: 'Shipping', value: clean(shippingText, 120) },
+      // The charged amount is already in Items, which comes from Stripe's line items.
+      { name: 'Shipping protection', value: meta.protection === 'yes' ? 'Yes' : 'No', inline: true },
       { name: 'Items', value: clean(await orderedItems(stripe, session.id), 1000) || 'none' }
     ],
     timestamp: new Date().toISOString()

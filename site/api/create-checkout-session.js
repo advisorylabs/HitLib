@@ -74,6 +74,19 @@ module.exports = async function handler(req, res) {
     });
   }
 
+  // Only a literal true opts in, so a missing or malformed field never adds a charge.
+  var protection = body.protection === true;
+  if (protection) {
+    line_items.push({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: 'Shipping protection (lost or stolen packages)' },
+        unit_amount: shipping.PROTECTION_CENTS
+      },
+      quantity: 1
+    });
+  }
+
   // Hosted Checkout can't re-rate shipping once the buyer types an address
   // there, so the address is collected on our page and quoted here, and Stripe
   // gets a fixed shipping amount plus the address it was quoted for.
@@ -125,7 +138,8 @@ module.exports = async function handler(req, res) {
         team: team,
         note: note,
         ship_to: (address.name + ', ' + shipping.oneLine(address)).slice(0, 500),
-        ship_service: quote.service.slice(0, 100)
+        ship_service: quote.service.slice(0, 100),
+        protection: protection ? 'yes' : 'no'
       }
     });
     res.status(200).json({ url: session.url });

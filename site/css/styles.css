@@ -1285,6 +1285,48 @@
   .field.state { flex: 0 1 90px; }
   .field.zip { flex: 0 1 130px; }
 
+  .protection-option {
+    flex-basis: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 6px;
+    padding: 12px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface-sunken);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .protection-option:has(input:checked) {
+    border-color: var(--pink);
+    background: rgba(255, 63, 174, 0.08);
+  }
+  .protection-option input {
+    margin: 2px 0 0;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    accent-color: var(--pink);
+    cursor: pointer;
+  }
+  .protection-option input:focus-visible {
+    outline: 2px solid var(--pink);
+    outline-offset: 2px;
+  }
+  .protection-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .protection-desc {
+    display: block;
+    margin-top: 3px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
   .form-section-label {
     flex-basis: 100%;
     margin-top: 10px;

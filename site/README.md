@@ -127,6 +127,14 @@ orders reach Discord marked "Not quoted" so the team can price shipping by hand.
 For reference: one Extended kit (4) or an Extended plus a Single (5) still
 quotes; three Regular kits (6) don't.
 
+Buyers can also tick **shipping protection** (+$2.00, unchecked by default),
+which covers packages lost or stolen in transit. Damage in shipping is covered
+on every order either way. The price is `PROTECTION_CENTS` in `api/_shipping.js`,
+with display copies in `js/app.js` and the checkbox label in `index.html`. On
+card orders it's a separate Stripe line item. Both Discord notifications show
+a "Shipping protection" field, so the team knows which orders to replace or
+refund if a package goes missing.
+
 Setup:
 
 1. Create a Shippo account. Its test API token (`shippo_test_...`, Settings ->

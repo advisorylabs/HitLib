@@ -25,6 +25,11 @@ var ENVELOPE = { length: 9, width: 7, height: 2 }; // inches; height padded to b
 // "Contact me later", where the team quotes shipping by hand.
 var MAX_STRIPS_PER_ENVELOPE = 5;
 
+// Optional shipping protection add-on (lost or stolen packages; damage in
+// transit is covered on every order). Trusted price, mirrored for display as
+// PROTECTION_PRICE in js/app.js and in the checkbox label in index.html.
+var PROTECTION_CENTS = 200;
+
 var US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL',
   'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE',
@@ -182,6 +187,7 @@ async function quoteShipping(items, address) {
 }
 
 module.exports = {
+  PROTECTION_CENTS: PROTECTION_CENTS,
   ShippingError: ShippingError,
   parseAddress: parseAddress,
   oneLine: oneLine,

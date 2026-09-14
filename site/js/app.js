@@ -174,7 +174,10 @@
   // oversized cart is flagged before the buyer fills in an address. The server
   // enforces the limit regardless.
   var MAX_STRIPS_PER_ENVELOPE = 5;
-  var OVER_LIMIT_MESSAGE = 'Orders this large may ship in multiple packages for extra protection against shipping damage, "Contact me later" must be used to have this order forwarded to our team for further processing.';
+  // Display copy of PROTECTION_CENTS in api/_shipping.js (also in the checkbox
+  // label in index.html); the server sets what's actually charged.
+  var PROTECTION_PRICE = 2;
+  var OVER_LIMIT_MESSAGE ='Orders this large may ship in multiple packages for extra protection against shipping damage, "Contact me later" must be used to have this order forwarded to our team for further processing.';
   function cartOverStripLimit(cart) {
     var strips = cartLines(cart).reduce(function (n, l) { return n + l.kit.strands * l.qty; }, 0);
     return strips > MAX_STRIPS_PER_ENVELOPE;
@@ -524,13 +527,18 @@
     }
     var totalLabel = quoted || !shippingEnabled ? 'Total' : 'Total before shipping';
 
+    var protectionInput = document.getElementById('ship-protection');
+    var protection = !!(protectionInput && protectionInput.checked);
+    if (protection) total += PROTECTION_PRICE;
+
     container.innerHTML = '<div class="buy-summary">' + rows +
       '<div class="buy-summary-row"><span>Subtotal</span><span class="amount">' + money(subtotal) + '</span></div>' +
       '<div class="buy-summary-row"><span>' + shipLabel + '</span>' + shipValue + '</div>' +
+      (protection ? '<div class="buy-summary-row"><span>Shipping protection</span><span class="amount">' + money(PROTECTION_PRICE) + '</span></div>' : '') +
       '<div class="buy-summary-row total"><span>' + totalLabel + '</span><span class="amount">' + money(total) + '</span></div>' +
       (overLimit && shippingEnabled ? overLimitNoteHtml() : '') +
       '</div>';
-    return { lines: lines, subtotal: subtotal, total: total };
+    return { lines: lines, subtotal: subtotal, total: total, protection: protection };
   }
 
   /* ---------- order wizard (kit picker landing) ---------- */
@@ -680,6 +688,8 @@
   var contactNote = document.getElementById('method-contact-note');
   var cardNote = document.getElementById('method-card-note');
   var shipFields = document.querySelectorAll('.ship-field');
+  var protectionInput = document.getElementById('ship-protection');
+  if (protectionInput) protectionInput.addEventListener('change', renderBuyTotals);
 
   var quoteTimer = null;
   shipFields.forEach(function (f) {
@@ -800,6 +810,7 @@
         }),
         subtotal: Math.round(summary.subtotal * 100) / 100,
         total: Math.round(summary.total * 100) / 100,
+        protection: summary.protection,
         note: note,
         ts: Date.now()
       };
