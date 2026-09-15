@@ -39,14 +39,26 @@ jobs:
           cp template.pros template_pkg/
           cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
 
+      # VEXcode has no package manager or prebuilt-library support worth
+      # relying on, so it gets the sources to drop into a project instead.
+      - name: Package VEXcode sources
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
+          mkdir -p vexcode_pkg/include vexcode_pkg/src/hitlib
+          cp -r include/hitlib vexcode_pkg/include/
+          cp src/led_*.cpp src/platform_*.cpp vexcode_pkg/src/hitlib/
+          cd vexcode_pkg && zip -r ../hitlib-vexcode@${VERSION}.zip .
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: hitlib-template
-          path: hitlib@*.zip
+          path: |
+            hitlib@*.zip
+            hitlib-vexcode@*.zip
 
       - name: Attach to GitHub Release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" hitlib@*.zip --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" hitlib@*.zip hitlib-vexcode@*.zip --clobber
