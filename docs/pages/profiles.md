@@ -72,8 +72,8 @@ strand.activateMode(0);   // Idle
 [Pattern Studio](#install_page) writes the three steps above for you, and can
 put the result straight into your project.
 
-Show it your PROS project once - **Export > Choose PROS Project...**, or drag
-the project folder onto the window - and **Deploy** writes
+Show it your PROS or VEXcode project once - **Export > Choose Robot
+Project...**, or drag the project folder onto the window - and **Deploy** writes
 `include/hitlib_studio.hpp` every time you click it. Re-deploying overwrites
 that one file, so changing a port or adding a mode is: click Deploy, rebuild.
 
@@ -100,6 +100,43 @@ safe.
 
 The exported file opens with this same snippet as a comment, filled in with your
 design's real identifiers and mode names.
+
+### VEXcode
+
+A VEXcode project gets the same file for VEXcode's C++11 compiler. The snippet
+uses the competition template's functions, and everything you call is spelled
+the same:
+
+```cpp
+#include "hitlib_studio.hpp"
+
+namespace myRobot = hitlib::profiles::myRobot;
+
+void pre_auton() {
+    hitlib::studio::begin();
+}
+
+void usercontrol() {
+    myRobot::strand.activateModeTimed(myRobot::mode::endgame, 30000);
+}
+```
+
+C++11 has no inline variables, so inside the file each shared object is a
+static member of a small class template, with a reference of the usual name
+bound to it:
+
+```cpp
+template <typename = void> struct strand_ { static LedStrand value; };
+template <typename T> LedStrand strand_<T>::value{adiPort, length, refreshMs};
+static LedStrand& strand = strand_<>::value;
+```
+
+That keeps one strand however many files include the header. Use `strand`;
+`strand_` is only where it lives.
+
+Deploy picks the form from the project it writes into. File and clipboard
+exports use **Export > Target Platform**, which follows the last project you
+chose.
 
 ### What the file contains
 

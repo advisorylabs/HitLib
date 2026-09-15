@@ -85,8 +85,11 @@ If your strip is on an ADI expander connected to a smart port:
 
 ```cpp
 // Smart port 2, ADI port A (1), 63 LEDs
-hitlib::LedStrand strand(2, 1, 63);
+hitlib::LedStrand strand({2, 1}, 63);
 ```
+
+The braces matter: three bare numbers always mean `(adiPort, length, refreshMs)`
+on the brain's own ports.
 
 ---
 
@@ -131,9 +134,11 @@ pattern-studio
 
 ### Getting a design onto the robot
 
-1. Point Pattern Studio at your PROS project - drag the project folder onto the
-   window, or **Export > Choose PROS Project...**. It looks for `project.pros`,
-   and remembers the project between runs.
+1. Point Pattern Studio at your project - drag the project folder onto the
+   window, or **Export > Choose Robot Project...**. It recognises a PROS
+   `project.pros`, a VEXcode `.v5code` file, and a VS Code VEX extension
+   project's `.vscode/vex_project_settings.json`, and remembers the project
+   between runs.
 2. **Export > Deploy**. The header lands in the project's `include/` as
    `hitlib_studio.hpp`.
 3. Paste the two lines it shows you into `main.cpp`, once:
@@ -141,7 +146,7 @@ pattern-studio
 ```cpp
 #include "hitlib_studio.hpp"
 
-void initialize() { hitlib::studio::begin(); }
+void initialize() { hitlib::studio::begin(); }   // pre_auton() in VEXcode
 ```
 
 Deploying again overwrites that header and `main.cpp` does not change:

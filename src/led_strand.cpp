@@ -41,16 +41,12 @@ uint32_t wheel(uint8_t pos) {
 // Construction / init
 // ============================================================================
 
+// Smart Port 0 means the brain's own ADI ports.
 LedStrand::LedStrand(uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
-    : adiPort(adiPort_), smartPort(0), length(std::max<uint8_t>(1, std::min<uint8_t>(length_, MAX_LEDS))),
-      refreshMs(refreshMs_) {
-    buffer.assign(length, 0);
-    overlayBuffer.assign(length, 0);
-    spliceShowAnim.assign(length, true);
-    splicePixelBg.assign(length, 0);
-    splicePixelUseOverlay.assign(length, false);
-    splicePixelRegionIdx.assign(length, -1);
-}
+    : LedStrand(0, adiPort_, length_, refreshMs_) {}
+
+LedStrand::LedStrand(ExpanderPort port, uint8_t length_, uint32_t refreshMs_)
+    : LedStrand(port.smartPort, port.adiPort, length_, refreshMs_) {}
 
 LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
     : adiPort(adiPort_), smartPort(smartPort_),

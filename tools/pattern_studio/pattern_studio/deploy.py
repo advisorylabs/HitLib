@@ -1,7 +1,14 @@
-"""Writes an export into a PROS project's include/ directory.
+"""Writes an export into a robot project's include/ directory.
 
-A project is identified by `project.pros` at its root. `include/` is already on
-the compiler's search path, so a header dropped there needs no build changes.
+Three kinds of project are recognised by the file at their root:
+
+  * PROS - `project.pros`.
+  * VEXcode Pro V5 (and VEXcode V5) - a `<name>.v5code` file.
+  * The VEX VS Code extension - `.vscode/vex_project_settings.json`.
+
+All three keep headers in `include/`, which is already on the compiler's search
+path, so a header dropped there needs no build changes. Which kind it is
+decides the dialect the export is generated in.
 
 Nothing here edits existing code: main.cpp varies too much between projects to
 rewrite safely, so the lines that use the export are left for the user.
@@ -9,52 +16,104 @@ rewrite safely, so the lines that use the export are left for the user.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+
+from .platforms import Platform
 
 #: What marks a directory as the root of a PROS project.
 MANIFEST = "project.pros"
 
-#: Where a PROS project's headers live, relative to that root.
+#: The VS Code extension's project file, relative to the project root.
+VSCODE_SETTINGS = Path(".vscode") / "vex_project_settings.json"
+
+#: VEXcode's project file extension for a V5 C++ project. Python projects use
+#: another (.v5python), so a match here is already the right language.
+V5CODE_SUFFIX = ".v5code"
+
+#: Where a project's headers live, relative to its root.
 INCLUDE_DIR = "include"
 
 #: The header that is present exactly when HitLib is installed into a project.
 _HITLIB_MARKER = "hitlib/hitapi.hpp"
 
-#: Shown when it isn't. Separate lines so no entry has to carry an escape.
-#: Names no version: a pinned URL goes stale at the next release.
-INSTALL_HINT_LINES = (
-    "Download the template from",
-    "    https://github.com/advisorylabs/HitLib/releases",
-    "then, in the project:",
-    "    pros c fetch <the downloaded .zip>",
-    "    pros c apply hitlib",
-)
+#: Shown when it isn't, per platform. Separate lines so no entry has to carry
+#: an escape. Names no version: a pinned URL goes stale at the next release.
+_INSTALL_HINTS = {
+    Platform.PROS: (
+        "Download the template from",
+        "    https://github.com/advisorylabs/HitLib/releases",
+        "then, in the project:",
+        "    pros c fetch <the downloaded .zip>",
+        "    pros c apply hitlib",
+    ),
+    Platform.VEXCODE: (
+        "Download hitlib-vexcode from",
+        "    https://github.com/advisorylabs/HitLib/releases",
+        "and copy its include/hitlib/ and src/hitlib/ folders",
+        "into the project.",
+    ),
+}
 
 #: How far up from a dropped file to look for the manifest. Bounded so an
 #: unrelated file does not walk up to the drive root and match something.
 _MAX_DEPTH = 6
 
 
-def find_project_root(path: Path) -> Path | None:
-    """The PROS project @p path belongs to, or None.
+def install_hint_lines(platform: Platform) -> tuple[str, ...]:
+    """How to install HitLib into a project on @p platform."""
+    return _INSTALL_HINTS[platform]
 
-    Accepts the project folder, its `project.pros`, or any file inside it.
+
+def _vscode_project_is_v5_cpp(settings: Path) -> bool:
+    """Whether a VS Code extension project is one HitLib can build in.
+
+    The same settings file marks IQ, EXP and Python projects. An unreadable
+    file gets the benefit of the doubt: the folder is still plainly a VEX
+    project, and refusing it would give no reason the user could act on.
+    """
+    try:
+        project = json.loads(settings.read_text(encoding="utf-8")).get("project", {})
+    except (OSError, ValueError, AttributeError):
+        return True
+    platform = str(project.get("platform", "V5")).upper()
+    language = str(project.get("language", "cpp")).lower()
+    return platform == "V5" and language == "cpp"
+
+
+def platform_at(directory: Path) -> Platform | None:
+    """The kind of project rooted at @p directory, or None if it isn't one."""
+    if (directory / MANIFEST).is_file():
+        return Platform.PROS
+    settings = directory / VSCODE_SETTINGS
+    if settings.is_file():
+        return Platform.VEXCODE if _vscode_project_is_v5_cpp(settings) else None
+    if any(p.is_file() for p in directory.glob(f"*{V5CODE_SUFFIX}")):
+        return Platform.VEXCODE
+    return None
+
+
+def find_project_root(path: Path) -> Path | None:
+    """The robot project @p path belongs to, or None.
+
+    Accepts the project folder, its project file, or any file inside it.
     """
     # A relative path has no usable .parents to walk, so resolve first.
     path = Path(path).resolve()
     start = path if path.is_dir() else path.parent
     for candidate in [start, *start.parents][:_MAX_DEPTH]:
-        if (candidate / MANIFEST).is_file():
+        if platform_at(candidate) is not None:
             return candidate
     return None
 
 
 @dataclass(frozen=True)
 class Project:
-    """A PROS project the app can deploy into, and whether it is ready to."""
+    """A robot project the app can deploy into, and whether it is ready to."""
 
     root: Path
+    platform: Platform = Platform.PROS
 
     @property
     def include_dir(self) -> Path:
@@ -68,6 +127,10 @@ class Project:
         missing-include errors, which say nothing about the actual fix.
         """
         return (self.include_dir / _HITLIB_MARKER).is_file()
+
+    @property
+    def install_hint_lines(self) -> tuple[str, ...]:
+        return install_hint_lines(self.platform)
 
     def header_path(self, header_name: str) -> Path:
         return self.include_dir / header_name
@@ -87,4 +150,6 @@ class Project:
 def open_project(path: Path) -> Project | None:
     """A Project for whatever was dropped or picked, or None if it isn't one."""
     root = find_project_root(Path(path))
-    return Project(root) if root is not None else None
+    if root is None:
+        return None
+    return Project(root, platform_at(root))

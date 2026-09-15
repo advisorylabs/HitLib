@@ -58,6 +58,21 @@ public:
     /// @{
 
     /**
+     * @brief A port on an ADI expander: the Smart Port the expander is plugged
+     *        into, and the ADI port on it.
+     *
+     * Written as a braced pair, the same way PROS writes its own expander
+     * ports:
+     * @code{.cpp}
+     * hitlib::LedStrand strand({2, 1}, 63);   // expander on Smart Port 2, ADI port A
+     * @endcode
+     */
+    struct ExpanderPort {
+        uint8_t smartPort; ///< Smart Port the expander is connected to (1–21).
+        uint8_t adiPort;   ///< ADI port on the expander (1–8).
+    };
+
+    /**
      * @brief One colored segment in a bitscroll pattern.
      */
     struct BitScrollSegment {
@@ -238,12 +253,30 @@ public:
     /**
      * @brief Construct a strand on an ADI expander port.
      *
-     * @param smartPort  Smart port the expander is connected to (1–21).
-     * @param adiPort    ADI port on the expander (1–8).
+     * @code{.cpp}
+     * hitlib::LedStrand strand({2, 1}, 63);   // Smart Port 2, ADI port A, 63 LEDs
+     * @endcode
+     *
+     * @param port       Smart Port of the expander, and ADI port on it.
      * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
      * @param refreshMs  Refresh interval in milliseconds (default 20 ms).
      */
-    LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs = 20);
+    LedStrand(ExpanderPort port, uint8_t length, uint32_t refreshMs = 20);
+
+    /**
+     * @brief Construct a strand on an ADI expander port, from four numbers.
+     *
+     * Same as `LedStrand({smartPort, adiPort}, length, refreshMs)`.  The
+     * interval has no default here: three bare numbers always mean
+     * `(adiPort, length, refreshMs)`, since nothing else could tell
+     * `(2, 1, 63)` the expander apart from `(2, 1, 63)` the brain port.
+     *
+     * @param smartPort  Smart port the expander is connected to (1–21).
+     * @param adiPort    ADI port on the expander (1–8).
+     * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
+     * @param refreshMs  Refresh interval in milliseconds.
+     */
+    LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs);
 
     /// @}
 

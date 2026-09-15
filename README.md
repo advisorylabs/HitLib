@@ -94,9 +94,10 @@ Prebuilt Windows binaries are on the
 [Releases page](https://github.com/advisorylabs/HitLib/releases)
 (`HitLibPatternStudio-*-windows.zip`).
 
-Show it your PROS project once - drag the project folder onto the window, or
-**Export > Choose PROS Project...** - and **Deploy** writes the header straight
-into the project's `include/`. Everything the design knows comes with it: ports,
+Show it your PROS or VEXcode project once - drag the project folder onto the
+window, or **Export > Choose Robot Project...** - and **Deploy** writes the header
+straight into the project's `include/`, in the form that project's compiler
+wants. Everything the design knows comes with it: ports,
 lengths, refresh intervals, brightness, named mode constants, and the strands
 themselves. Wiring it up is two lines, written once:
 
@@ -115,7 +116,9 @@ void opcontrol() {
 ```
 
 Re-deploying overwrites that file, so changing a port or adding a mode is a
-click and a rebuild; `main.cpp` does not change again.
+click and a rebuild; `main.cpp` does not change again. In a VEXcode project the
+same two lines go in `pre_auton()` and `usercontrol()`, and robot code reads
+identically.
 
 To wire the strands up yourself: `hitlib::studio::begin(yourGroup)` adds them
 to a group you own, and `#define HITLIB_STUDIO_NO_AUTOWIRE` before the include

@@ -1,4 +1,4 @@
-"""Finding a PROS project, and writing an export into one.
+"""Finding a PROS or VEXcode project, and writing an export into one.
 
 The pure half (locating a project, writing the header) is exercised directly.
 The GUI half drives MainWindow the way test_export.py does, with QMessageBox
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from pattern_studio import deploy
 from pattern_studio.main_window import MainWindow
+from pattern_studio.platforms import Platform
 
 
 @pytest.fixture
@@ -25,6 +26,33 @@ def project(tmp_path) -> Path:
     (root / "src").mkdir()
     (root / "project.pros").write_text('{"target": "v5"}', encoding="utf-8")
     (root / "include" / "hitlib" / "hitapi.hpp").write_text("#pragma once\n", encoding="utf-8")
+    return root
+
+
+def _with_hitlib(root: Path) -> Path:
+    (root / "include" / "hitlib").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "include" / "hitlib" / "hitapi.hpp").write_text("#pragma once\n", encoding="utf-8")
+    return root
+
+
+@pytest.fixture
+def vexcode_project(tmp_path) -> Path:
+    """A VEXcode Pro V5 project: a .v5code file at the root."""
+    root = _with_hitlib(tmp_path / "ProV5Robot")
+    (root / "ProV5Robot.v5code").write_text('{"language":"cpp"}', encoding="utf-8")
+    return root
+
+
+@pytest.fixture
+def vscode_project(tmp_path) -> Path:
+    """A project from the VEX VS Code extension."""
+    root = _with_hitlib(tmp_path / "VsCodeRobot")
+    (root / ".vscode").mkdir()
+    (root / ".vscode" / "vex_project_settings.json").write_text(
+        '{"project": {"name": "VsCodeRobot", "platform": "V5", "language": "cpp"}}',
+        encoding="utf-8",
+    )
     return root
 
 
@@ -60,6 +88,34 @@ def test_the_search_upward_gives_up_rather_than_reaching_the_drive_root(project)
     deep = project / "a" / "b" / "c" / "d" / "e" / "f" / "g"
     deep.mkdir(parents=True)
     assert deploy.open_project(deep) is None
+
+
+def test_each_kind_of_project_is_recognised_as_its_platform(project, vexcode_project, vscode_project):
+    assert deploy.open_project(project).platform is Platform.PROS
+    assert deploy.open_project(vexcode_project).platform is Platform.VEXCODE
+    assert deploy.open_project(vscode_project / "src").platform is Platform.VEXCODE
+
+
+@pytest.mark.parametrize(
+    "platform, language",
+    [("IQ2", "cpp"), ("EXP", "cpp"), ("V5", "python")],
+)
+def test_a_vs_code_project_hitlib_cannot_build_in_is_not_offered(vscode_project, platform, language):
+    (vscode_project / ".vscode" / "vex_project_settings.json").write_text(
+        f'{{"project": {{"platform": "{platform}", "language": "{language}"}}}}', encoding="utf-8"
+    )
+    assert deploy.open_project(vscode_project) is None
+
+
+def test_an_unreadable_vs_code_settings_file_still_counts_as_a_project(vscode_project):
+    (vscode_project / ".vscode" / "vex_project_settings.json").write_text("{ not json", encoding="utf-8")
+    assert deploy.open_project(vscode_project).platform is Platform.VEXCODE
+
+
+def test_the_install_hint_matches_the_project(project, vexcode_project):
+    assert any("pros c apply" in line for line in deploy.open_project(project).install_hint_lines)
+    vex_hint = " ".join(deploy.open_project(vexcode_project).install_hint_lines)
+    assert "hitlib-vexcode" in vex_hint and "pros" not in vex_hint
 
 
 def test_hitlib_has_to_actually_be_installed(project):
@@ -112,6 +168,60 @@ def test_deploy_writes_the_design_into_the_project(qapp, project, isolated_setti
     body = header.read_text(encoding="utf-8")
     assert "namespace hitlib::studio {" in body
     assert "inline LedStrand strand{adiPort, length, refreshMs};" in body
+
+
+def test_deploying_into_a_vexcode_project_writes_a_vexcode_export(
+    qapp, vexcode_project, isolated_settings
+):
+    win = MainWindow()
+    win._set_project(deploy.open_project(vexcode_project))
+
+    win._deploy()
+
+    body = (vexcode_project / "include" / "hitlib_studio.hpp").read_text(encoding="utf-8")
+    assert "namespace hitlib { namespace studio {" in body
+    assert "static LedStrand& strand = strand_<>::value;" in body
+    assert "void pre_auton() {" in win._deploy_dialog.paste_box.toPlainText()
+    win._deploy_dialog.close()
+
+
+def test_picking_a_project_points_exports_at_its_platform(
+    qapp, project, vexcode_project, isolated_settings
+):
+    win = MainWindow()
+    win._set_project(deploy.open_project(vexcode_project))
+    assert win._platform is Platform.VEXCODE
+    assert win._platform_actions[Platform.VEXCODE].isChecked()
+
+    win._set_project(deploy.open_project(project))
+    assert win._platform is Platform.PROS
+    assert win._platform_actions[Platform.PROS].isChecked()
+
+
+def test_the_export_platform_is_remembered_without_a_project(qapp, isolated_settings):
+    win = MainWindow()
+    win._project = None
+    win._platform_actions[Platform.VEXCODE].trigger()
+
+    again = MainWindow()
+    again._project = None
+    assert again._remembered_platform() is Platform.VEXCODE
+
+
+def test_deploy_uses_the_projects_platform_even_if_exports_point_elsewhere(
+    qapp, vexcode_project, isolated_settings
+):
+    # The menu choice is for files headed who-knows-where. A project says
+    # exactly what it builds with.
+    win = MainWindow()
+    win._set_project(deploy.open_project(vexcode_project))
+    win._set_platform(Platform.PROS)
+
+    win._deploy()
+
+    body = (vexcode_project / "include" / "hitlib_studio.hpp").read_text(encoding="utf-8")
+    assert "namespace hitlib { namespace studio {" in body
+    win._deploy_dialog.close()
 
 
 def test_the_first_deploy_hands_over_the_lines_to_paste(qapp, project, isolated_settings):
@@ -197,7 +307,7 @@ def test_the_menu_item_names_where_it_will_write(qapp, project, isolated_setting
     win = MainWindow()
     win._project = None
     win._refresh_deploy_action()
-    assert "PROS Project" in win._deploy_action.text()
+    assert "Robot Project" in win._deploy_action.text()
 
     win._set_project(deploy.open_project(project))
     assert project.name in win._deploy_action.text()
