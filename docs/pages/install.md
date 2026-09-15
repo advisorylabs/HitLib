@@ -12,7 +12,7 @@
 ## Install via PROS CLI
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.3.0/hitlib@1.3.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
 pros c apply hitlib
 ```
 
@@ -26,7 +26,7 @@ latest version and swap the version number above if a newer one is available.
 ## Install into a VEXcode project
 
 VEXcode has no template system, so HitLib ships as source for it. Download
-`hitlib-vexcode@1.3.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+`hitlib-vexcode@1.4.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
 and copy its two folders into your project:
 
 ```
@@ -37,11 +37,16 @@ your-project/
 
 The VEXcode makefile already builds `src/*/*.cpp` and searches `include/`, so
 there is nothing to configure. HitLib notices it is building against the VEX
-SDK and uses it in place of PROS. Then, in `main.cpp`:
+SDK and uses it in place of PROS.
+
+In this download every header ends in `.h` rather than `.hpp`, because VEXcode
+Pro V5 only shows `.h` files in its file tree. Wherever these docs include
+`hitlib/hitapi.hpp` or `hitlib/profiles/classic.hpp`, a VEXcode project includes
+`hitlib/hitapi.h` and `hitlib/profiles/classic.h`. Then, in `main.cpp`:
 
 ```cpp
 #include "vex.h"
-#include "hitlib/hitapi.hpp"
+#include "hitlib/hitapi.h"
 
 hitlib::LedStrand strand(1, 63);   // 3-wire port A, 63 LEDs
 hitlib::LedGroup  group;
@@ -68,13 +73,13 @@ VEXcode's device menu; HitLib drives it directly.
 Add one include at the top of your `main.h` or any file that uses hitlib:
 
 ```cpp
-#include "hitlib/hitapi.hpp"
+#include "hitlib/hitapi.hpp"      // hitlib/hitapi.h in VEXcode
 ```
 
 To use the built-in profiles, also include:
 
 ```cpp
-#include "hitlib/profiles/classic.hpp"
+#include "hitlib/profiles/classic.hpp"      // hitlib/profiles/classic.h in VEXcode
 ```
 
 ---
@@ -140,11 +145,13 @@ pattern-studio
    project's `.vscode/vex_project_settings.json`, and remembers the project
    between runs.
 2. **Export > Deploy**. The header lands in the project's `include/` as
-   `hitlib_studio.hpp`.
+   `hitlib_studio.hpp`, or `hitlib_studio.h` in a VEXcode project - VEXcode Pro
+   V5 lists only `.h` headers in its file tree, so Deploy also adds it to the
+   project's `.v5code` file list.
 3. Paste the two lines it shows you into `main.cpp`, once:
 
 ```cpp
-#include "hitlib_studio.hpp"
+#include "hitlib_studio.hpp"   // hitlib_studio.h in VEXcode
 
 void initialize() { hitlib::studio::begin(); }   // pre_auton() in VEXcode
 ```
@@ -184,8 +191,20 @@ mkdir -p template_pkg/include template_pkg/lib
 cp -r include/ template_pkg/
 cp bin/hitlib.a template_pkg/lib/
 cp template.pros template_pkg/
-cd template_pkg && zip -r ../hitlib@1.3.0.zip .
+cd template_pkg && zip -r ../hitlib@1.4.0.zip .
 ```
 
-This produces `hitlib@1.3.0.zip` in the project root (matching the `version`
+This produces `hitlib@1.4.0.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.
+
+## Building the VEXcode download from source
+
+The VEXcode download is the library's sources, with the headers renamed to
+`.h`. No toolchain is needed, only Python 3:
+
+```bash
+python tools/package_vexcode.py vexcode_pkg
+```
+
+`vexcode_pkg/` then holds the `include/hitlib/` and `src/hitlib/` folders to
+copy into a VEXcode project, exactly as the release zip does.

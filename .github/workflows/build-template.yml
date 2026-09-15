@@ -40,13 +40,12 @@ jobs:
           cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
 
       # VEXcode has no package manager or prebuilt-library support worth
-      # relying on, so it gets the sources to drop into a project instead.
+      # relying on, so it gets the sources to drop into a project instead,
+      # with headers renamed .h so VEXcode Pro V5 lists them.
       - name: Package VEXcode sources
         run: |
           VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
-          mkdir -p vexcode_pkg/include vexcode_pkg/src/hitlib
-          cp -r include/hitlib vexcode_pkg/include/
-          cp src/led_*.cpp src/platform_*.cpp vexcode_pkg/src/hitlib/
+          python3 tools/package_vexcode.py vexcode_pkg
           cd vexcode_pkg && zip -r ../hitlib-vexcode@${VERSION}.zip .
 
       - name: Upload artifact

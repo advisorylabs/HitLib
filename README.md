@@ -20,15 +20,17 @@ and exports them as ready-to-include C++.
 ## Install
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.3.0/hitlib@1.3.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
 pros c apply hitlib
 ```
 
 Or paste that URL into **Install Template** in the PROS VS Code extension.
 
 **VEXcode** (V5, Pro V5, or the VS Code extension): download
-`hitlib-vexcode@1.3.0.zip` from the Releases page and copy its `include/hitlib/`
-and `src/hitlib/` folders into your project. See the
+`hitlib-vexcode@1.4.0.zip` from the Releases page and copy its `include/hitlib/`
+and `src/hitlib/` folders into your project. Its headers end in `.h`, since
+VEXcode Pro V5 only shows `.h` files, so VEXcode code includes
+`hitlib/hitapi.h`. See the
 [installation guide](https://advisorylabs.github.io/HitLib/install_page.html).
 
 ## Hello, strip
@@ -117,8 +119,8 @@ void opcontrol() {
 
 Re-deploying overwrites that file, so changing a port or adding a mode is a
 click and a rebuild; `main.cpp` does not change again. In a VEXcode project the
-same two lines go in `pre_auton()` and `usercontrol()`, and robot code reads
-identically.
+header is `hitlib_studio.h` (VEXcode Pro V5 lists only `.h` headers), the same
+lines go in `pre_auton()` and `usercontrol()`, and robot code reads identically.
 
 To wire the strands up yourself: `hitlib::studio::begin(yourGroup)` adds them
 to a group you own, and `#define HITLIB_STUDIO_NO_AUTOWIRE` before the include
@@ -136,7 +138,8 @@ drops the strands and group entirely, leaving the profile and constants.
 Requires an `arm-none-eabi-gcc` toolchain on `PATH` (PROS installs one).
 
 ```bash
-make
+make                                          # PROS: bin/hitlib.a
+python tools/package_vexcode.py vexcode_pkg   # VEXcode: sources, headers as .h
 ```
 
 Full packaging steps are in the

@@ -28,6 +28,7 @@ from .codegen import (
     generate_cpp,
     generate_document_cpp,
     paste_block,
+    document_header_name,
     suggested_header_name,
     validate_document_for_export,
     validate_for_export,
@@ -48,17 +49,7 @@ from . import window_chrome
 
 _FILE_FILTER = "HitLib Pattern Studio Profile (*.hlprofile);;JSON (*.json);;All Files (*)"
 _DEFAULT_SUFFIX = ".hlprofile"
-_CPP_FILE_FILTER = "C++ Header (*.hpp);;All Files (*)"
-#: Default filename offered by the Export All save dialog.
-_DOCUMENT_HEADER_NAME = "led_profiles.hpp"
-
-#: What Deploy always writes, whatever the design is called.
-#:
-#: Fixed, not derived from the design name: renaming a strand would otherwise
-#: deploy under a new name and leave the previous header in place, still
-#: included by main.cpp. The file also defines hitlib::studio, so a project can
-#: only carry one.
-_STUDIO_HEADER_NAME = "hitlib_studio.hpp"
+_CPP_FILE_FILTER = "C++ Header (*.hpp *.h);;All Files (*)"
 
 #: Where the remembered deploy target lives. Named explicitly rather than left
 #: to QApplication, so a MainWindow built outside app.main() reads the same
@@ -471,7 +462,7 @@ class MainWindow(QMainWindow):
             return
         p = Path(path)
         if not p.suffix:
-            p = p.with_suffix(".hpp")
+            p = p.with_suffix(self._platform.header_suffix)
         try:
             p.write_text(code_for(p.name), encoding="utf-8")
         except OSError as exc:
@@ -484,7 +475,7 @@ class MainWindow(QMainWindow):
         self._write_export(
             lambda name: generate_cpp(config, name, self.music, self._platform),
             "Export C++ Profile",
-            suggested_header_name(config.name),
+            suggested_header_name(config.name, self._platform),
         )
 
     def _export_all_save(self) -> None:
@@ -494,7 +485,7 @@ class MainWindow(QMainWindow):
         self._write_export(
             lambda name: generate_document_cpp(configs, name, self.music, self._platform),
             "Export All Strands as C++",
-            _DOCUMENT_HEADER_NAME,
+            document_header_name(self._platform),
         )
 
     def _export_clipboard(self) -> None:
@@ -592,10 +583,11 @@ class MainWindow(QMainWindow):
 
         # Asked before the write, since afterwards every deploy looks like a
         # repeat one.
-        first_time = not project.header_path(_STUDIO_HEADER_NAME).exists()
-        code = generate_document_cpp(configs, _STUDIO_HEADER_NAME, self.music, project.platform)
+        header_name = project.studio_header_name
+        first_time = not project.header_path(header_name).exists()
+        code = generate_document_cpp(configs, header_name, self.music, project.platform)
         try:
-            written = project.deploy(_STUDIO_HEADER_NAME, code)
+            written = project.deploy(header_name, code)
         except OSError as exc:
             QMessageBox.critical(
                 self, "Deploy Failed", f"Couldn't write into {project.include_dir}:\n{exc}"

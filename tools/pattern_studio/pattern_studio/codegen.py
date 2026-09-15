@@ -1145,15 +1145,16 @@ def _render_file(
 
     entries = [_render_strand(cfg, ns_namer, music_ref, platform) for cfg in configs]
 
-    default_name = suggested_header_name(configs[0].name) if single else "led_profiles.hpp"
+    default_name = (
+        suggested_header_name(configs[0].name, platform) if single else document_header_name(platform)
+    )
 
     lines: list[str] = ["#pragma once", ""]
     lines.extend(_usage_banner(entries, header_name or default_name, music_ref, platform))
     lines.append("")
-    lines.append('#include "hitlib/led_group.hpp"')
-    lines.append('#include "hitlib/led_profile.hpp"')
-    lines.append('#include "hitlib/led_sequencer.hpp"')
-    lines.append('#include "hitlib/led_strand.hpp"')
+    # HitLib's headers are .h in its VEXcode download.
+    for library_header in ("led_group", "led_profile", "led_sequencer", "led_strand"):
+        lines.append(f'#include "hitlib/{library_header}{platform.header_suffix}"')
     device_includes = sorted({inc for e in entries for inc in e.sources.includes})
     if device_includes:
         lines.append("")
@@ -1182,10 +1183,15 @@ def _render_file(
     return "\n".join(lines)
 
 
-def suggested_header_name(strand_name: str) -> str:
+def suggested_header_name(strand_name: str, platform: Platform = Platform.PROS) -> str:
     """Default filename to offer for a single-strand export: "My Robot" ->
-    my_robot.hpp."""
-    return _snake_case(strand_name or "profile", "profile") + ".hpp"
+    my_robot.hpp (my_robot.h for VEXcode)."""
+    return _snake_case(strand_name or "profile", "profile") + platform.header_suffix
+
+
+def document_header_name(platform: Platform = Platform.PROS) -> str:
+    """Default filename to offer for a whole-document export."""
+    return "led_profiles" + platform.header_suffix
 
 
 def generate_cpp(

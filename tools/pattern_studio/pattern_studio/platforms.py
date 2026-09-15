@@ -20,6 +20,18 @@ class Platform(str, Enum):
     def label(self) -> str:
         return "PROS" if self is Platform.PROS else "VEXcode"
 
+    @property
+    def header_suffix(self) -> str:
+        """The extension headers have on this platform: an exported header's,
+        and HitLib's own.
+
+        VEXcode Pro V5 only recognises `.h` as a header: an `.hpp` still
+        compiles, since the build runs on the folder, but never appears in the
+        project's file tree, so the team cannot see or open it. HitLib's
+        VEXcode download renames its headers to match (tools/package_vexcode.py).
+        """
+        return ".hpp" if self is Platform.PROS else ".h"
+
     @classmethod
     def parse(cls, value: str) -> Platform:
         """The platform `value` names, falling back to PROS for anything

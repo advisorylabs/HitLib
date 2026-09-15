@@ -11,7 +11,14 @@ import re
 import pytest
 
 from pattern_studio import fill_sources
-from pattern_studio.codegen import generate_cpp, generate_document_cpp, paste_block, validate_for_export
+from pattern_studio.codegen import (
+    document_header_name,
+    generate_cpp,
+    generate_document_cpp,
+    paste_block,
+    suggested_header_name,
+    validate_for_export,
+)
 from pattern_studio.models import AnimationKind, ModeConfig, StrandConfig
 from pattern_studio.platforms import Platform
 from test_codegen import (
@@ -49,7 +56,7 @@ def _every_source_config() -> StrandConfig:
 def _translation_unit(header: str, main: str, defines: tuple[str, ...] = ()) -> str:
     return (
         VEX_PROLOGUE
-        + '#include "hitlib/hitapi.hpp"\n'
+        + '#include "hitlib/hitapi.h"\n'
         + "".join(f"#define {d}\n" for d in defines)
         + f'#include "{header}"\n\n'
         + main
@@ -113,7 +120,7 @@ def test_splice_regions_are_filled_in_field_by_field():
 
 
 def test_the_banner_uses_the_competition_templates_entry_points():
-    out = generate_cpp(_elaborate_config(), "leds.hpp", platform=VEX)
+    out = generate_cpp(_elaborate_config(), "leds.h", platform=VEX)
     paste = paste_block(out)
     assert "your VEXcode project's include/" in out
     assert "void pre_auton() {" in paste
@@ -131,6 +138,15 @@ def test_fill_readers_call_the_vex_sdk_not_pros():
     assert "device.angle(vex::rotationUnits::deg) * 100.0" in out
     # ADI port C is index 2 on the brain's internal triport.
     assert "static vex::triport ports(vex::PORT22); static vex::pot device(ports.Port[2]);" in out
+
+
+def test_vexcode_exports_are_named_dot_h_so_vexcode_pro_lists_them():
+    assert suggested_header_name("My Robot", VEX) == "my_robot.h"
+    assert document_header_name(VEX) == "led_profiles.h"
+    assert suggested_header_name("My Robot") == "my_robot.hpp"
+    assert document_header_name() == "led_profiles.hpp"
+    # The banner's #include names what the file will be saved as.
+    assert '#include "my_robot.h"' in paste_block(generate_cpp(StrandConfig(name="My Robot"), platform=VEX))
 
 
 def test_every_device_source_has_a_vex_reader():
@@ -152,22 +168,22 @@ def test_every_device_source_has_a_vex_reader():
     ids=["elaborate", "drive-heat", "sparkle", "every-source"],
 )
 def test_the_usage_banner_compiles_as_pasted(tmp_path, config):
-    header = generate_cpp(config(), "generated_profile.hpp", platform=VEX)
-    (tmp_path / "generated_profile.hpp").write_text(header, encoding="utf-8")
+    header = generate_cpp(config(), "generated_profile.h", platform=VEX)
+    (tmp_path / "generated_profile.h").write_text(header, encoding="utf-8")
     body = "\n".join(line for line in paste_block(header).splitlines() if not line.startswith("#include"))
 
-    compile_or_fail(tmp_path, _translation_unit("generated_profile.hpp", body + "\n"))
+    compile_or_fail(tmp_path, _translation_unit("generated_profile.h", body + "\n"))
 
 
 @needs_vexcode
 def test_a_music_sync_export_compiles(tmp_path):
-    (tmp_path / "meter.hpp").write_text(
-        generate_cpp(_music_strand(), "meter.hpp", _music(), platform=VEX), encoding="utf-8"
+    (tmp_path / "meter.h").write_text(
+        generate_cpp(_music_strand(), "meter.h", _music(), platform=VEX), encoding="utf-8"
     )
     compile_or_fail(
         tmp_path,
         _translation_unit(
-            "meter.hpp",
+            "meter.h",
             "void usercontrol() {\n"
             "    hitlib::studio::begin();\n"
             "    hitlib::profiles::meter::strand.setSensitivity(80);\n"
@@ -178,14 +194,14 @@ def test_a_music_sync_export_compiles(tmp_path):
 
 @needs_vexcode
 def test_a_multi_strand_document_compiles(tmp_path):
-    (tmp_path / "leds.hpp").write_text(
-        generate_document_cpp(_two_strands_sharing_a_mode_name(), "leds.hpp", platform=VEX),
+    (tmp_path / "leds.h").write_text(
+        generate_document_cpp(_two_strands_sharing_a_mode_name(), "leds.h", platform=VEX),
         encoding="utf-8",
     )
     compile_or_fail(
         tmp_path,
         _translation_unit(
-            "leds.hpp",
+            "leds.h",
             "void usercontrol() {\n"
             "    hitlib::studio::begin();\n"
             "    hitlib::profiles::left::strand.activateMode(hitlib::profiles::left::mode::idle);\n"
@@ -197,11 +213,11 @@ def test_a_multi_strand_document_compiles(tmp_path):
 
 @needs_vexcode
 def test_the_escape_hatches_compile(tmp_path):
-    (tmp_path / "leds.hpp").write_text(generate_cpp(_elaborate_config(), platform=VEX), encoding="utf-8")
+    (tmp_path / "leds.h").write_text(generate_cpp(_elaborate_config(), platform=VEX), encoding="utf-8")
     compile_or_fail(
         tmp_path,
         _translation_unit(
-            "leds.hpp",
+            "leds.h",
             "hitlib::LedStrand ourOwnStrand(3, 20);\n"
             "hitlib::LedGroup  ourGroup;\n\n"
             "void pre_auton() {\n"
@@ -216,7 +232,7 @@ def test_the_escape_hatches_compile(tmp_path):
     compile_or_fail(
         tmp_path,
         _translation_unit(
-            "leds.hpp",
+            "leds.h",
             "namespace classicDemo = hitlib::profiles::classicDemo;\n\n"
             "hitlib::LedStrand testStrand(classicDemo::adiPort, classicDemo::length,\n"
             "                             classicDemo::refreshMs);\n\n"
@@ -235,18 +251,18 @@ def test_two_files_including_the_export_share_one_of_everything(tmp_path):
     """What the template-member form is for: main.cpp and an autonomous file
     both including the header must link to one strand, one group and one
     hook, not a copy each."""
-    (tmp_path / "leds.hpp").write_text(
-        generate_cpp(_every_source_config(), "leds.hpp", platform=VEX), encoding="utf-8"
+    (tmp_path / "leds.h").write_text(
+        generate_cpp(_every_source_config(), "leds.h", platform=VEX), encoding="utf-8"
     )
     main = compile_or_fail(
         tmp_path,
-        _translation_unit("leds.hpp", "void pre_auton() { hitlib::studio::begin(); }\n"),
+        _translation_unit("leds.h", "void pre_auton() { hitlib::studio::begin(); }\n"),
         name="main",
     )
     auton = compile_or_fail(
         tmp_path,
         _translation_unit(
-            "leds.hpp",
+            "leds.h",
             "namespace es = hitlib::profiles::everySource;\n"
             "void autonomous() {\n"
             "    es::source::customAssignInCode = [] { return 1.0; };\n"
@@ -264,11 +280,11 @@ def test_two_files_including_the_export_share_one_of_everything(tmp_path):
 @needs_vexcode
 def test_the_link_check_does_catch_a_definition_in_two_files(tmp_path):
     # Without this, the test above could pass because the check can't fail.
-    (tmp_path / "naive.hpp").write_text(
-        '#include "hitlib/hitapi.hpp"\nhitlib::LedStrand naive(1, 10);\n', encoding="utf-8"
+    (tmp_path / "naive.h").write_text(
+        '#include "hitlib/hitapi.h"\nhitlib::LedStrand naive(1, 10);\n', encoding="utf-8"
     )
-    one = compile_or_fail(tmp_path, VEX_PROLOGUE + '#include "naive.hpp"\n', name="one")
-    two = compile_or_fail(tmp_path, VEX_PROLOGUE + '#include "naive.hpp"\n', name="two")
+    one = compile_or_fail(tmp_path, VEX_PROLOGUE + '#include "naive.h"\n', name="one")
+    two = compile_or_fail(tmp_path, VEX_PROLOGUE + '#include "naive.h"\n', name="two")
 
     linked = partial_link(tmp_path, [one, two])
     assert linked.returncode != 0

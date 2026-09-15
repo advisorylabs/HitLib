@@ -74,7 +74,8 @@ put the result straight into your project.
 
 Show it your PROS or VEXcode project once - **Export > Choose Robot
 Project...**, or drag the project folder onto the window - and **Deploy** writes
-`include/hitlib_studio.hpp` every time you click it. Re-deploying overwrites
+`include/hitlib_studio.hpp` (`hitlib_studio.h` for VEXcode) every time you
+click it. Re-deploying overwrites
 that one file, so changing a port or adding a mode is: click Deploy, rebuild.
 
 ### What you write once
@@ -105,10 +106,11 @@ design's real identifiers and mode names.
 
 A VEXcode project gets the same file for VEXcode's C++11 compiler. The snippet
 uses the competition template's functions, and everything you call is spelled
-the same:
+the same. The header is `hitlib_studio.h`, since VEXcode Pro V5 only shows
+`.h` headers in its file tree:
 
 ```cpp
-#include "hitlib_studio.hpp"
+#include "hitlib_studio.h"
 
 namespace myRobot = hitlib::profiles::myRobot;
 

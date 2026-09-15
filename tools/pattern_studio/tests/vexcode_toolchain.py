@@ -9,12 +9,41 @@ installed.
 
 from __future__ import annotations
 
+import atexit
+import functools
+import importlib.util
 import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _load_packager():
+    spec = importlib.util.spec_from_file_location("package_vexcode", REPO_ROOT / "tools" / "package_vexcode.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+#: tools/package_vexcode.py, which builds HitLib's VEXcode download.
+packager = _load_packager()
+
+
+@functools.lru_cache(maxsize=None)
+def vexcode_package() -> Path:
+    """HitLib as the VEXcode download ships it - headers renamed .h - built
+    from the working tree once per test run.
+
+    VEXcode code is compiled against this, not the repo's .hpp headers, so the
+    tests exercise what a team actually copies into their project.
+    """
+    root = Path(tempfile.mkdtemp(prefix="hitlib_vexcode_pkg_"))
+    atexit.register(shutil.rmtree, root, True)
+    return packager.build(root / "pkg")
 
 _PRO = (
     Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
@@ -68,13 +97,14 @@ def compile_or_fail(tmp_path: Path, source: str, name: str = "compile_check") ->
     """Compile @p source as a VEXcode translation unit, with -Wall warnings
     treated as failures, and return the object file.
 
-    HitLib's headers are found the way a VEXcode project finds them: through a
-    relative `include`, from the root. For its bare-metal target, clang also
-    adds a relative `include` as a *system* directory, so a project's headers
-    are system headers and their warnings never reach the team; reaching
-    HitLib by an absolute path instead would report warnings no VEXcode user
-    sees. Files in @p tmp_path, the exports under test among them, get no such
-    pass: an export is held to compiling warning-free on its own.
+    HitLib comes from vexcode_package(), and its headers are found the way a
+    VEXcode project finds them: through a relative `include`, from the root.
+    For its bare-metal target, clang also adds a relative `include` as a
+    *system* directory, so a project's headers are system headers and their
+    warnings never reach the team; reaching HitLib by an absolute path instead
+    would report warnings no VEXcode user sees. Files in @p tmp_path, the
+    exports under test among them, get no such pass: an export is held to
+    compiling warning-free on its own.
     """
     toolchain = find_vexcode()
     source_path = tmp_path / f"{name}.cpp"
@@ -86,7 +116,7 @@ def compile_or_fail(tmp_path: Path, source: str, name: str = "compile_check") ->
             "-Iinclude", f"-I{tmp_path}",
             "-c", "-o", str(obj), str(source_path),
         ],
-        cwd=REPO_ROOT,
+        cwd=vexcode_package(),
         capture_output=True,
         text=True,
         timeout=120,
