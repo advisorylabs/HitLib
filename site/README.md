@@ -1,6 +1,6 @@
 # HitLib - release page
 
-Static site announcing HitLib v1.3.0 / Pattern Studio 1.0.0. Plain HTML/CSS/JS,
+Static site announcing HitLib v1.4.0 / Pattern Studio 1.1.0. Plain HTML/CSS/JS,
 no build step, no dependencies to install - open it directly or serve the folder
 with any static file server.
 
@@ -11,7 +11,9 @@ with any static file server.
 - `css/styles.css` - all page styles.
 - `js/app.js` - **the actual application code**: routing (`#/`, `#/order`,
   `#/kit/:id`, `#/cart`, `#/buy`), the kit/density catalog, cart logic, the
-  hero carousel, and scroll-reveal wiring. This is the file to read if you want
+  hero carousel, scroll-reveal wiring, and the homepage's LED demos (small
+  browser ports of HitLib's animations, the gauge and mode-stack demos, and the
+  PROS/VEXcode code-sample toggle). This is the file to read if you want
   to understand or change how the site behaves.
 - `js/vendor/` - vendored copies of GSAP and ScrollTrigger (unmodified,
   fetched from the official CDN release), used for the scroll animations.

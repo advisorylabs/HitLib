@@ -3,9 +3,9 @@ var inventory = require('./_inventory');
 
 // Trusted server-side prices (cents). Never trust a client-submitted price.
 var KIT_PRICES_CENTS = {
-  single: 2000,
-  standard: 3500,
-  extended: 6500
+  single: 2500,
+  standard: 4000,
+  extended: 7000
 };
 var KIT_NAMES = {
   single: 'Single',

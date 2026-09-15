@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pattern Studio 1.0.0</title>
+<title>HitLib 1.4.0 · Pattern Studio 1.1.0</title>
+<meta name="description" content="HitLib is an LED animation library for VEX V5 robots, now for PROS and VEXcode. Pattern Studio designs the looks and deploys them into your robot project.">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -41,11 +42,14 @@
   <span class="b4"></span>
 </div>
 
-<nav class="rail" id="rail" aria-hidden="true">
-  <a class="rail-item" href="#telemetry" data-target="telemetry">Telemetry</a>
-  <a class="rail-item" href="#overview" data-target="overview">Overview</a>
+<nav class="rail" id="rail" aria-label="Page sections">
+  <a class="rail-item" href="#whats-new" data-target="whats-new">What's new</a>
+  <a class="rail-item" href="#animations" data-target="animations" data-also="zones">Animations</a>
+  <a class="rail-item" href="#gauges" data-target="gauges">Gauges</a>
+  <a class="rail-item" href="#modes" data-target="modes">Modes</a>
+  <a class="rail-item" href="#music" data-target="music" data-also="engine">Music</a>
   <a class="rail-item" href="#pattern-studio" data-target="pattern-studio">Pattern Studio</a>
-  <a class="rail-item" href="#led-kits" data-target="led-kits">LED Kits</a>
+  <a class="rail-item" href="#kits" data-target="kits">Kits</a>
   <a class="rail-item" href="#reference" data-target="reference">Reference</a>
 </nav>
 
@@ -65,16 +69,11 @@
     </div>
   </div>
 
-  <div class="sale-banner">
-    <span class="label">Launch sale</span>
-    <span class="value">$5 off every kit, no code needed. Already reflected in the prices below.</span>
-  </div>
-
   <div class="hero">
     <div class="hero-frame" id="hero-carousel">
       <img class="hero-slide active" style="object-position: center 62%;" src="assets/team-96671h-s-competition-robot-underglow-lit-on-t.webp" alt="Team 96671H's competition robot, underglow lit, on the reveal stage" />
       <img class="hero-slide" style="object-position: center 45%;" src="assets/a-vex-robot-with-purple-underglow-lighting.webp" alt="A VEX robot with purple underglow lighting" />
-      <img class="hero-slide" style="object-position: center;" src="assets/closeup-of-a-blue-lit-ws2812b-strip-wired-to-a-tes.webp" alt="Closeup of a blue-lit WS2812B strip wired to a test controller" />
+      <img class="hero-slide" style="object-position: center;" src="assets/closeup-of-a-blue-lit-ws2812b-strip-wired-to-a-tes.webp" alt="Closeup of a blue-lit WS2812B strip wired to a controller" />
     </div>
 
     <div class="led-strip" aria-hidden="true">
@@ -92,162 +91,578 @@
       <span class="led" style="--i:11"></span>
     </div>
 
-    <div class="team-id">96671H · Hitmen</div>
-    <h1>Pattern Studio reaches <span class="grad-text">1.0.0</span>.</h1>
+    <div class="hero-meta">
+      <span class="team-id">96671H · Hitmen</span>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.4.0</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.1.0</a>
+    </div>
+    <h1>HitLib comes to <span class="grad-text">VEXcode</span>.</h1>
     <p class="lede">
-      Pattern Studio is now the main way to program animations on HitLib-controlled
-      strips. From here on, every new HitLib feature ships in Pattern Studio too.
-      Hand-writing animation code is still there, but it's the opt-out, not the default.
+      HitLib is an LED animation library for VEX V5 robots, and Pattern Studio is
+      the desktop app that designs for it. This release brings both to VEXcode.
     </p>
 
     <div class="cta-row">
       <a class="btn primary" href="#/order">Buy the Kit</a>
-      <a class="btn" href="https://youtu.be/DKvakzxzZ_k">Watch the launch video <span class="arrow">↗</span></a>
-      <a class="btn" href="https://github.com/advisorylabs/HitLib">View HitLib on GitHub <span class="arrow">↗</span></a>
-      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.3.0">Release notes <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">1.4.0 release notes <span class="arrow">↗</span></a>
+      <a class="btn" href="https://advisorylabs.github.io/HitLib/">Documentation <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib">HitLib on GitHub <span class="arrow">↗</span></a>
     </div>
   </div>
 
-  <div class="swatch-strip reveal" aria-hidden="true">
-    <span></span><span></span><span></span><span></span><span></span><span></span>
-    <span></span><span></span><span></span><span></span><span></span><span></span>
-  </div>
+  <!-- ===================== what's new ===================== -->
 
-  <div class="spotlight reveal" id="telemetry">
-    <span class="spotlight-badge">Top feature</span>
-    <h2>Colors that track your robot, live</h2>
-    <p>
-      A strand can fill like a gauge, tracking a motor's heat, an arm's rotation, or
-      the battery, entirely on its own, with nothing in your control loop watching it.
-      Split one strand into several independent gauges: a strip under the drivebase
-      can show all six drive motors' temperatures at once, each segment colored by
-      its own reading.
-    </p>
-    <div class="gauge-demo" aria-hidden="true">
-      <span class="gauge-bar" style="height:38%"></span>
-      <span class="gauge-bar" style="height:52%"></span>
-      <span class="gauge-bar" style="height:44%"></span>
-      <span class="gauge-bar" style="height:70%"></span>
-      <span class="gauge-bar" style="height:33%"></span>
-      <span class="gauge-bar" style="height:86%"></span>
+  <section class="section reveal" id="whats-new">
+    <div class="section-head">
+      <span class="eyebrow">// what's new</span>
+      <h2>Same calls, PROS or VEXcode</h2>
+      <p>
+        HitLib now builds in VEXcode V5, VEXcode Pro V5 and the VEX VS Code extension
+        as well as PROS 4.x. The lines that drive your strips don't change, only the
+        includes and entry points do. Pick your platform here and every code sample
+        on this page follows it.
+      </p>
     </div>
-    <p class="gauge-caption">One strand, six independent gauges: each segment is one drive motor's temperature.</p>
-  </div>
 
-  <div class="explainer-head reveal" id="overview">
-    <h2>What HitLib actually does</h2>
-    <p>Three parts work together: a library that runs on the robot, an editor that builds the animations, and a physical kit that lights up. Here's what each one is for.</p>
-  </div>
+    <div class="code-window">
+      <div class="code-window-bar">
+        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+        <span class="code-window-title">main.cpp</span>
+        <div class="seg-toggle platform-toggle" role="group" aria-label="Platform">
+          <button type="button" class="seg-btn active" data-platform="pros" aria-pressed="true">PROS</button>
+          <button type="button" class="seg-btn" data-platform="vexcode" aria-pressed="false">VEXcode</button>
+        </div>
+      </div>
+<pre class="code" data-platform-pane="pros"><code><span class="diff"><span class="t-pp">#include</span> <span class="t-str">"main.h"</span></span>
+<span class="diff"><span class="t-pp">#include</span> <span class="t-str">"hitlib/hitapi.hpp"</span></span>
 
-  <div class="explainer-grid">
-    <div class="explainer-card reveal">
-      <span class="kicker"><span class="dot" style="background:var(--blue)"></span>Library</span>
-      <h3>HitLib</h3>
-      <p>A PROS-based C++ library that drives WS2812B strips over a VEX V5 Brain's ADI ports. Compose animations like flow, rainbow, pulse, flash, twinkle, and bitscroll into named, prioritized modes, or let a strand fill like a gauge that tracks a motor's heat, an arm's rotation, or the battery on its own.</p>
-    </div>
-    <div class="explainer-card reveal" style="--d: 0.05s">
-      <span class="kicker"><span class="dot" style="background:var(--purple)"></span>Editor</span>
-      <h3>Pattern Studio</h3>
-      <p>A desktop app that designs those looks against a live preview, then exports them as a ready-to-include C++ header. Drop a song into the Song bar and it bakes the track's loudness into a table your strip fills to as it plays. Hand-writing code is still there as an opt-out.</p>
-    </div>
-    <div class="explainer-card reveal" style="--d: 0.1s">
-      <span class="kicker"><span class="dot" style="background:var(--pink)"></span>Hardware</span>
-      <h3>LED Kits</h3>
-      <p>Physical strip and wiring kits from the team, built to plug straight into a VEX Brain. Test kits are already running, and general kits are open for order now.</p>
-      <a class="card-link" href="#/order">Buy the Kit ↗</a>
-    </div>
-  </div>
+hitlib::LedStrand strand(<span class="t-num">1</span>, <span class="t-num">63</span>);   <span class="t-com">// 3-wire port A, 63 LEDs</span>
+hitlib::LedGroup  group;
 
-  <div class="module reveal" id="pattern-studio">
-    <div class="panel-bar">
-      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-      <span class="slug">// pattern-studio</span>
-    </div>
-    <h2>One tool for every animation</h2>
-    <p>
-      HitLib is the PROS-based library that drives WS2812B strips off a VEX V5 Brain's
-      ADI ports, with animations like flow, rainbow, pulse, flash, twinkle and
-      bitscroll, composed into named, prioritized modes you switch at runtime.
-      Pattern Studio sits alongside it as external software you install once, so you
-      can preview and build any of that live, then export it as ready-to-include C++.
-      No round-trip through code is required unless you want one.
-    </p>
-    <ul>
-      <li>Design against a live preview, then export straight to a ready-to-include C++ header.</li>
-      <li>Drag your PROS project onto the window and Deploy writes that header into <code>include/</code>.</li>
-      <li>Drop a song into the Song bar (MP3, M4A, FLAC, OGG, WAV, or MIDI) and the strip fills to its loudness as it plays.</li>
-      <li>Pick an animation such as Rainbow or Twinkle, then tune its speed and palette.</li>
-      <li>Splice Mask splits a strand into sections you can invert or alternate for layered effects.</li>
-      <li>Select multiple strands and group-edit them as a single animation.</li>
-      <li>Writing animation code by hand is still fully supported as an opt-out.</li>
-    </ul>
-    <p>Found a bug or have an idea? File it as a GitHub issue, or drop feature suggestions in <code>#suggestions</code> on Discord.</p>
+<span class="diff"><span class="t-kw">void</span> initialize() {</span>
+    group.add(&amp;strand);
+    group.init();
+    group.start();
+}
 
-    <div class="video-card">
+<span class="diff"><span class="t-kw">void</span> opcontrol() {</span>
+    group.rainbow(<span class="t-num">1</span>);
+}</code></pre>
+<pre class="code" data-platform-pane="vexcode" hidden><code><span class="diff"><span class="t-pp">#include</span> <span class="t-str">"vex.h"</span></span>
+<span class="diff"><span class="t-pp">#include</span> <span class="t-str">"hitlib/hitapi.h"</span></span>
+
+hitlib::LedStrand strand(<span class="t-num">1</span>, <span class="t-num">63</span>);   <span class="t-com">// 3-wire port A, 63 LEDs</span>
+hitlib::LedGroup  group;
+
+<span class="diff"><span class="t-kw">int</span> main() {</span>
+<span class="diff">    vexcodeInit();</span>
+    group.add(&amp;strand);
+    group.init();
+    group.start();
+
+    group.rainbow(<span class="t-num">1</span>);
+
+<span class="diff">    <span class="t-kw">while</span> (<span class="t-kw">true</span>) vex::this_thread::sleep_for(<span class="t-num">100</span>);   <span class="t-com">// keep main() from exiting</span></span>
+}</code></pre>
+      <div class="code-output">
+        <span class="code-output-label">group.rainbow(1)</span>
+        <div class="leds" data-demo="rainbow" data-n="32" aria-hidden="true"></div>
+      </div>
+      <div class="install-line" data-platform-pane="pros">
+        <span class="install-label">Install</span>
+        <pre><code>pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
+pros c apply hitlib</code></pre>
+      </div>
+      <div class="install-line" data-platform-pane="vexcode" hidden>
+        <span class="install-label">Install</span>
+        <p>
+          Download <code>hitlib-vexcode@1.4.0.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">release</a>
+          and copy its <code>include/hitlib/</code> and <code>src/hitlib/</code> folders
+          into your project. Don't also add the LED port in VEXcode's device menu.
+        </p>
+      </div>
+    </div>
+
+    <div class="new-grid">
+      <div class="new-col">
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.4.0</div>
+        <div class="new-item">
+          <h3>Finds its platform</h3>
+          <p>HitLib looks for PROS or the VEX SDK on your include path and builds for whichever it finds, so there's nothing to set.</p>
+        </div>
+        <div class="new-item">
+          <h3>Headers VEXcode can list</h3>
+          <p>The VEXcode download renames every header to <code>.h</code>, since VEXcode Pro V5 only shows <code>.h</code> files in its project tree.</p>
+        </div>
+        <div class="new-item">
+          <h3>Expander ports in braces</h3>
+          <p><code>LedStrand({2, 1}, 63)</code> is Smart Port 2, ADI port A. Three bare numbers now always mean a brain port, so add the braces when upgrading expander code from 1.3.0.</p>
+        </div>
+      </div>
+      <div class="new-col">
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.1.0</div>
+        <div class="new-item">
+          <h3>Deploys into VEXcode projects</h3>
+          <p>Show it a PROS, VEXcode or VS Code VEX extension project. For VEXcode it writes <code>hitlib_studio.h</code> in C++11 and adds it to VEXcode Pro V5's file list.</p>
+        </div>
+        <div class="new-item">
+          <h3>Sensor readers for the VEX SDK</h3>
+          <p>Meters that follow a motor, the battery or a sensor export as VEX SDK calls, reading the same units as on PROS.</p>
+        </div>
+        <div class="new-item">
+          <h3>Export &gt; Target Platform</h3>
+          <p>Save or copy a PROS or VEXcode header for a project that isn't on this computer. Deploying to a project without HitLib shows that platform's install steps.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== animations ===================== -->
+
+  <section class="section reveal" id="animations">
+    <div class="section-head">
+      <span class="eyebrow">// animations</span>
+      <h2>Seven looks, one call each</h2>
+      <p>Colors are <code>0xRRGGBB</code> and speed is whole pixels per tick. Each strip below runs the call beside it, slowed down so you can watch.</p>
+    </div>
+
+    <div class="specimen">
+      <div class="specimen-row">
+        <code class="specimen-call">strand.setColor(<span class="t-num">0x3AA8FF</span>);</code>
+        <div class="leds" data-demo="solid" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">One solid color. <code>off()</code> blanks the strip.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.flow(<span class="t-num">0xFF00DD</span>, <span class="t-num">0x000000</span>, <span class="t-num">1</span>);</code>
+        <div class="leds" data-demo="flow" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">Two colors scrolling, seamless by default so there's no hard edge at the wrap.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.rainbow(<span class="t-num">1</span>);</code>
+        <div class="leds" data-demo="rainbow" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">One full color wheel across the strip, scrolling.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.pulse(<span class="t-num">0xFF0000</span>, <span class="t-num">5</span>, <span class="t-num">1</span>, <span class="t-num">0x330000</span>, <span class="t-kw">false</span>, <span class="t-kw">true</span>);</code>
+        <div class="leds" data-demo="pulse" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">A run of lit pixels over a background. It wraps, or with bounce turns at each end like a scanner.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.flash(<span class="t-num">0x00FF00</span>, <span class="t-num">100</span>, <span class="t-num">400</span>);</code>
+        <div class="leds" data-demo="flash" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">On and off times are set separately: a quick blip with a long gap.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.twinkle({<span class="t-num">0xFFFFFF</span>, <span class="t-num">0xFFDD88</span>}, <span class="t-num">30</span>);</code>
+        <div class="leds" data-demo="twinkle" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">Sparkles from your palette fade in, hold and fade out, staggered rather than in unison.</p>
+      </div>
+      <div class="specimen-row">
+        <code class="specimen-call">strand.bitscroll({{<span class="t-num">0xFF0000</span>, <span class="t-num">3</span>}, {<span class="t-num">0x00FF00</span>, <span class="t-num">3</span>}, {<span class="t-num">0x0000FF</span>, <span class="t-num">3</span>}}, <span class="t-num">1</span>);</code>
+        <div class="leds" data-demo="bitscroll" data-n="24" aria-hidden="true"></div>
+        <p class="specimen-note">Your own color blocks as a marquee, tiled or sent across alone, scrolling or rocking back and forth.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== splice masks ===================== -->
+
+  <section class="section reveal" id="zones">
+    <div class="section-head">
+      <span class="eyebrow">// splice masks</span>
+      <h2>One strip, several shows</h2>
+      <p>Custom regions place zones anywhere on a strand by start and width. Each one runs its own animation on its own clock, and pixels outside every region keep the base look.</p>
+    </div>
+
+    <div class="lightbox">
+      <div class="zone-map" aria-hidden="true">
+        <div class="zone-labels">
+          <span style="--s: 1; --w: 5; --c: #ff0000">SOLID</span>
+          <span style="--s: 11; --w: 8; --c: #ff00ff">RAINBOW</span>
+          <span style="--s: 21; --w: 6; --c: #00ff00">PULSE</span>
+          <span style="--s: 31; --w: 6; --c: #ffffff">TWINKLE</span>
+          <span style="--s: 41; --w: 8; --c: #00ffaa">BITSCROLL</span>
+        </div>
+        <div class="leds" data-demo="zones" data-n="48"></div>
+        <ul class="zone-legend">
+          <li style="--c: #ff0000">SOLID</li>
+          <li style="--c: #ff00ff">RAINBOW</li>
+          <li style="--c: #00ff00">PULSE</li>
+          <li style="--c: #ffffff">TWINKLE</li>
+          <li style="--c: #00ffaa">BITSCROLL</li>
+        </ul>
+      </div>
+      <p class="demo-caption">Five regions on a 48-LED strand. The dim purple between them is the base layer showing through.</p>
+      <div class="kind-row">
+        <span class="kind-label">Region kinds</span>
+        <span class="kind-chip">OFF</span><span class="kind-chip">SOLID</span><span class="kind-chip">PULSE</span><span class="kind-chip">FLASH</span><span class="kind-chip">FLOW</span><span class="kind-chip">RAINBOW</span><span class="kind-chip">TWINKLE</span><span class="kind-chip">BITSCROLL</span><a class="kind-chip kind-chip-gauge" href="#gauges">GAUGE</a>
+      </div>
+    </div>
+
+    <div class="split-demo">
+      <div class="split-copy">
+        <h3>Two animations, interleaved</h3>
+        <p>Every strand also carries an independent overlay. A split mask cuts the strip into equal bins, hands every other bin to the overlay, and can swap them on a timer. Nothing blends: each pixel comes from one layer or the other.</p>
+      </div>
+      <div class="split-visual">
+        <div class="leds" data-demo="split" data-n="24" aria-hidden="true"></div>
+<pre class="code code-compact"><code>strand.flow(<span class="t-num">0x9B4DFF</span>, <span class="t-num">0x000000</span>, <span class="t-num">1</span>);
+strand.overlayRainbow(<span class="t-num">1</span>);
+strand.spliceMask(<span class="t-num">3</span>, <span class="t-kw">false</span>, <span class="t-kw">true</span>,      <span class="t-com">// 4 bins, alternating</span>
+                  <span class="t-num">400</span>, <span class="t-num">0x000000</span>, <span class="t-kw">true</span>);  <span class="t-com">// every 400 ms, overlay</span></code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== gauges ===================== -->
+
+  <section class="section reveal" id="gauges">
+    <div class="section-head">
+      <span class="eyebrow">// gauges</span>
+      <h2>Lights that read the robot</h2>
+      <p>Hand a strip a reading and it tracks the value by itself. HitLib polls the reader once per tick on the LED task and maps your range onto the LEDs, with smoothing for coarse sensors and wrap-around for angles. Gauge regions put several meters on one strip, each colored from its own scale.</p>
+    </div>
+
+    <div class="gauge-demo" id="gauge-demo">
+      <div class="gauge-top">
+        <svg class="drivebase" viewBox="0 0 400 210" role="img" aria-label="Top-down drivebase with six drive motors, each colored by its simulated temperature">
+          <defs>
+            <filter id="motor-glow" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="3" />
+            </filter>
+          </defs>
+          <rect class="chassis" x="118" y="14" width="164" height="182" rx="16" />
+          <text class="chassis-label" x="200" y="34" text-anchor="middle">FRONT</text>
+          <line class="chassis-wire" x1="140" y1="176" x2="260" y2="176" />
+          <g class="motor" data-motor="0"><circle class="motor-halo" cx="92" cy="50" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="92" cy="50" r="15" /><text class="motor-id" x="92" y="54" text-anchor="middle">L1</text><text class="motor-temp" x="62" y="54" text-anchor="end">-</text></g>
+          <g class="motor" data-motor="1"><circle class="motor-halo" cx="92" cy="105" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="92" cy="105" r="15" /><text class="motor-id" x="92" y="109" text-anchor="middle">L2</text><text class="motor-temp" x="62" y="109" text-anchor="end">-</text></g>
+          <g class="motor" data-motor="2"><circle class="motor-halo" cx="92" cy="160" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="92" cy="160" r="15" /><text class="motor-id" x="92" y="164" text-anchor="middle">L3</text><text class="motor-temp" x="62" y="164" text-anchor="end">-</text></g>
+          <g class="motor" data-motor="3"><circle class="motor-halo" cx="308" cy="50" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="308" cy="50" r="15" /><text class="motor-id" x="308" y="54" text-anchor="middle">R1</text><text class="motor-temp" x="338" y="54" text-anchor="start">-</text></g>
+          <g class="motor" data-motor="4"><circle class="motor-halo" cx="308" cy="105" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="308" cy="105" r="15" /><text class="motor-id" x="308" y="109" text-anchor="middle">R2</text><text class="motor-temp" x="338" y="109" text-anchor="start">-</text></g>
+          <g class="motor" data-motor="5"><circle class="motor-halo" cx="308" cy="160" r="17" filter="url(#motor-glow)" /><circle class="motor-body" cx="308" cy="160" r="15" /><text class="motor-id" x="308" y="164" text-anchor="middle">R3</text><text class="motor-temp" x="338" y="164" text-anchor="start">-</text></g>
+        </svg>
+
+        <div class="gauge-side">
+          <div class="gauge-control">
+            <span class="kind-label">Shows</span>
+            <div class="seg-toggle" role="group" aria-label="Gauge style">
+              <button type="button" class="seg-btn active" data-gauge-style="heat" aria-pressed="true">Whole Segment</button>
+              <button type="button" class="seg-btn" data-gauge-style="bar" aria-pressed="false">Fill Bar</button>
+            </div>
+          </div>
+<pre class="code code-compact"><code>std::vector&lt;LedStrand::SpliceRegion&gt; segments;
+<span class="t-kw">for</span> (uint8_t i = <span class="t-num">0</span>; i &lt; <span class="t-num">6</span>; ++i) {
+    segments.push_back(
+        LedStrand::motorHeatGauge(i * <span class="t-num">10</span>, <span class="t-num">9</span>, readers[i]));
+}
+strand.off();   <span class="t-com">// dark base, so the gap between segments stays unlit</span>
+strand.spliceMaskCustom(segments);</code></pre>
+        </div>
+      </div>
+
+      <div class="heat-strip" aria-hidden="true">
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="0" data-n="9"></div><span class="heat-label">L1 <b>-</b></span></div>
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="1" data-n="9"></div><span class="heat-label">L2 <b>-</b></span></div>
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="2" data-n="9"></div><span class="heat-label">L3 <b>-</b></span></div>
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="3" data-n="9"></div><span class="heat-label">R1 <b>-</b></span></div>
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="4" data-n="9"></div><span class="heat-label">R2 <b>-</b></span></div>
+        <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="5" data-n="9"></div><span class="heat-label">R3 <b>-</b></span></div>
+      </div>
+
+      <ul class="heat-legend">
+        <li style="--c: #00ff00"><b>20 °C</b>full power</li>
+        <li style="--c: #ffff00"><b>45 °C</b>first cut coming</li>
+        <li style="--c: #ff7000"><b>55 °C</b>50% current</li>
+        <li style="--c: #ff2000"><b>60 °C</b>25% current</li>
+        <li style="--c: #ff0000"><b>65 °C</b>12.5% current</li>
+        <li style="--c: #ff00ff"><b>70 °C</b>shut down</li>
+      </ul>
+      <p class="demo-caption">Simulated readings. <code>motorHeatGauge()</code> colors each segment at the temperatures where a V5 motor starts losing power.</p>
+    </div>
+
+    <div class="sources">
+      <p>In Pattern Studio, pick what a meter follows and the reader is written for you:</p>
+      <ul class="chip-list">
+        <li>Battery Capacity</li>
+        <li class="lit">Motor Temperature</li>
+        <li>Motor Position</li>
+        <li>Motor Velocity</li>
+        <li>Motor Efficiency</li>
+        <li>Rotation Sensor</li>
+        <li>IMU Heading</li>
+        <li>Distance Sensor</li>
+        <li>Potentiometer (ADI)</li>
+        <li>Manual (setLevel)</li>
+        <li>Custom (assign in code)</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===================== modes ===================== -->
+
+  <section class="section reveal" id="modes">
+    <div class="section-head">
+      <span class="eyebrow">// profiles</span>
+      <h2>The most important look wins</h2>
+      <p>A profile is a set of looks, each with a priority. Turn modes on and off from match code and the strip shows the highest-priority one that's active. A timed mode runs out on its own and hands the strip back to whatever is underneath.</p>
+    </div>
+
+    <div class="mode-demo">
+      <div class="mode-panel">
+        <div class="mode-panel-head">
+          <span>Classic profile</span>
+          <span class="mode-hint">tap modes on and off</span>
+        </div>
+        <div class="mode-list" role="group" aria-label="Classic profile modes">
+          <button type="button" class="mode-card" data-mode="6" aria-pressed="false" style="--c: #ffff00"><span class="mode-swatch"></span><span class="mode-name">Endgame</span><span class="mode-pri">pri 100</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="5" aria-pressed="false" style="--c: #eed202"><span class="mode-swatch"></span><span class="mode-name">Matchloading</span><span class="mode-pri">pri 90</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="4" aria-pressed="false" style="--c: #00ff00"><span class="mode-swatch"></span><span class="mode-name">Scoring</span><span class="mode-pri">pri 70</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="2" aria-pressed="false" style="--c: #ff0000"><span class="mode-swatch"></span><span class="mode-name">Red</span><span class="mode-pri">pri 20</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="3" aria-pressed="false" style="--c: #0000ff"><span class="mode-swatch"></span><span class="mode-name">Blue</span><span class="mode-pri">pri 20</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="0" aria-pressed="false" style="--c: #ff00ff"><span class="mode-swatch"></span><span class="mode-name">Showoff</span><span class="mode-pri">pri 15</span><span class="mode-drain"></span></button>
+          <button type="button" class="mode-card" data-mode="1" aria-pressed="false" style="--c: #ff00dd"><span class="mode-swatch"></span><span class="mode-name">Idle</span><span class="mode-pri">pri 10</span><span class="mode-drain"></span></button>
+        </div>
+      </div>
+
+      <div class="mode-stage">
+        <div class="leds mode-strip" data-demo="mode" data-n="20" aria-hidden="true"></div>
+        <p class="mode-readout" id="mode-readout" aria-live="polite">On the strip: Red · priority 20</p>
+        <div class="phases" id="phases" hidden>
+          <div class="phase-bar" aria-hidden="true">
+            <span class="phase" style="--w: 12.5%; --c: #ffff00"></span>
+            <span class="phase" style="--w: 70.8%; --c: #ffffff"></span>
+            <span class="phase" style="--w: 16.7%; --c: #ff0000"></span>
+            <span class="phase-head" id="phase-head"></span>
+          </div>
+          <ul class="phase-legend">
+            <li style="--c: #ffff00">1.5 s yellow flash</li>
+            <li style="--c: #ffffff">8.5 s white</li>
+            <li style="--c: #ff0000">2 s red pulse</li>
+          </ul>
+        </div>
+        <button type="button" class="btn mode-score" id="mode-score">Score for 1.5 s <code>activateModeTimed(4, 1500)</code></button>
+<pre class="code code-compact"><code>group.attachProfile(&amp;hitlib::profiles::classic);
+group.activateMode(<span class="t-num">1</span>);                <span class="t-com">// Idle</span>
+group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</span>);     <span class="t-com">// Scoring, for 1.5 s, then back to Idle</span></code></pre>
+      </div>
+    </div>
+
+    <div class="duo">
+      <div class="duo-item">
+        <h3>Three in the box</h3>
+        <p>Classic, Modern and Showy profiles ship with HitLib, each ready for idle, alliance colors, scoring and endgame.</p>
+      </div>
+      <div class="duo-item">
+        <h3>Loops on its own</h3>
+        <p>Classic's endgame is a Sequencer: a small table of timed phases that repeats for as long as that mode is winning.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== music ===================== -->
+
+  <section class="section reveal" id="music">
+    <div class="section-head">
+      <span class="eyebrow">// music sync</span>
+      <h2>Strips that keep time with a song</h2>
+      <p>A V5 brain can't hear, so Pattern Studio does the listening. Load a song, pick the part each strand follows, and scrub through it with the audio playing. The loudness is baked into a table inside your header, and the brain plays it back on its own clock.</p>
+    </div>
+
+    <div class="music-grid">
+      <figure class="app-window">
+        <div class="app-window-bar">
+          <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+          <span class="app-window-title">four strands · music sync</span>
+        </div>
+        <img src="assets/pattern-studio-four-strands-music-sync.webp" alt="Pattern Studio with four LED strands on Music Sync, each following a different band of the song: bass, mid, treble and full mix" />
+        <figcaption>Four strands on one song, following bass, mid, treble and the full mix.</figcaption>
+      </figure>
+
+      <div class="music-side">
+        <div class="eq" aria-hidden="true">
+          <div class="eq-col"><div class="leds leds-col" data-demo="eq" data-band="0" data-n="10"></div><span>Bass</span></div>
+          <div class="eq-col"><div class="leds leds-col" data-demo="eq" data-band="1" data-n="10"></div><span>Mid</span></div>
+          <div class="eq-col"><div class="leds leds-col" data-demo="eq" data-band="2" data-n="10"></div><span>Treble</span></div>
+          <div class="eq-col"><div class="leds leds-col" data-demo="eq" data-band="3" data-n="10"></div><span>Full mix</span></div>
+        </div>
+        <ol class="pipe">
+          <li><b>Load</b><span>MP3, M4A, FLAC, OGG, WAV or MIDI</span></li>
+          <li><b>Pick a band</b><span>Bass, Mid, Treble or Full mix</span></li>
+          <li><b>Bake</b><span>About 7 KB of flash per band for a three-minute song</span></li>
+          <li><b>Play</b><span><code>musicSync()</code> on the brain. <code>setSensitivity()</code> retunes it without a re-export.</span></li>
+        </ol>
+        <p class="note"><span class="chip-led" style="--c: var(--amber)"></span>Start the mode when the music starts. The robot plays the lights, not the audio.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== under the hood ===================== -->
+
+  <section class="section reveal" id="engine">
+    <div class="section-head">
+      <span class="eyebrow">// under the hood</span>
+      <h2>Stays out of your control loop</h2>
+    </div>
+
+    <div class="hood-grid">
+      <div class="hood-tile">
+        <h3>Its own task</h3>
+        <p>Start a group once and a background task animates every strand in it. Calls are thread-safe from any task and take effect on the next tick.</p>
+      </div>
+      <div class="hood-tile">
+        <h3>One call, every strip</h3>
+        <p>A group call reaches all of its strands, and <code>group[i]</code> still gets you one. Hardware writes take turns, so a robot with several strips doesn't fall behind.</p>
+      </div>
+      <div class="hood-tile hood-tile-wide">
+        <h3>Brightness that leaves the look alone</h3>
+        <p><code>setBrightness()</code> scales 0 to 100% as each frame is written, so the animation underneath never changes.</p>
+        <div class="bright-demo">
+          <div class="leds" data-demo="brightness" data-n="24" aria-hidden="true"></div>
+          <label class="bright-control">
+            <code id="bright-code">strand.setBrightness(60);</code>
+            <input type="range" id="bright-range" min="0" max="100" step="5" value="60" aria-label="Brightness percent" />
+          </label>
+        </div>
+      </div>
+      <div class="hood-tile">
+        <h3>Up to 64 LEDs a strand</h3>
+        <p>Any WS2812B-compatible strip, on one of the brain's 3-wire ports or an ADI expander.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== pattern studio ===================== -->
+
+  <section class="section reveal" id="pattern-studio">
+    <div class="section-head">
+      <span class="eyebrow">// pattern studio 1.1.0</span>
+      <h2>Design against a live preview, not the robot</h2>
+      <p>Pattern Studio draws every strand as a row of glowing LEDs and animates it with a Python port of HitLib's own engine. Get the look right on a laptop, then send it to your robot as one header.</p>
+    </div>
+
+    <figure class="video-card">
       <video controls preload="metadata" playsinline poster="assets/launch-video-thumbnail.jpg">
         <source src="assets/launch-video-630c72f57e.mp4" type="video/mp4">
       </video>
-      <figcaption>Pattern Studio launch video (1:01, 360p). <a href="https://youtu.be/DKvakzxzZ_k">Watch in full quality on YouTube ↗</a></figcaption>
-    </div>
-
-    <figure class="app-window">
-      <div class="app-window-bar">
-        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-        <span class="app-window-title">four strands · four animations</span>
-      </div>
-      <img src="assets/pattern-studio-four-strands-four-animations.webp" alt="Pattern Studio 1.0.0 with four LED strands, each running a different animation: Rainbow, Bitscroll, Pulse and Twinkle" />
-      <figcaption>Four strands, four animations at once: Rainbow, Bitscroll, Pulse and Twinkle, each on its own ADI port.</figcaption>
+      <figcaption>Pattern Studio in a minute (1:01, 360p). <a href="https://youtu.be/DKvakzxzZ_k">Watch in full quality on YouTube ↗</a></figcaption>
     </figure>
 
-    <figure class="app-window">
-      <div class="app-window-bar">
-        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-        <span class="app-window-title">four strands · music sync</span>
-      </div>
-      <img src="assets/pattern-studio-four-strands-music-sync.webp" alt="Pattern Studio 1.0.0 with four LED strands on Music Sync, each following a different band of the song: bass, mid, treble and full mix" />
-      <figcaption>Music Sync: four strands filling to the same song, each following a different band: bass, mid, treble and the full mix.</figcaption>
-    </figure>
-  </div>
+    <div class="ps-grid">
+      <figure class="app-window">
+        <div class="app-window-bar">
+          <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+          <span class="app-window-title">four strands · four animations</span>
+        </div>
+        <img src="assets/pattern-studio-four-strands-four-animations.webp" alt="Pattern Studio with four LED strands, each running a different animation: Rainbow, Bitscroll, Pulse and Twinkle" />
+        <figcaption>Four strands running Rainbow, Bitscroll, Pulse and Twinkle at once.</figcaption>
+      </figure>
 
-  <div class="module reveal" id="led-kits">
-    <div class="panel-bar">
-      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-      <span class="slug">// led-kits</span>
+      <ol class="deploy-steps">
+        <li>
+          <h3>Point it at your project</h3>
+          <p>Drag the project folder onto the window, or use Export &gt; Choose Robot Project...</p>
+        </li>
+        <li>
+          <h3>Deploy</h3>
+          <p>The whole design lands in <code>include/</code> as one header: ports, lengths, brightness, profiles and a named constant for every mode.</p>
+        </li>
+        <li>
+          <h3>Paste two lines, once</h3>
+          <div class="seg-toggle platform-toggle" role="group" aria-label="Platform">
+            <button type="button" class="seg-btn active" data-platform="pros" aria-pressed="true">PROS</button>
+            <button type="button" class="seg-btn" data-platform="vexcode" aria-pressed="false">VEXcode</button>
+          </div>
+<pre class="code code-compact" data-platform-pane="pros"><code><span class="t-pp">#include</span> <span class="t-str">"hitlib_studio.hpp"</span>
+
+<span class="t-kw">namespace</span> myRobot = hitlib::profiles::myRobot;
+
+<span class="t-kw">void</span> initialize() {
+    hitlib::studio::begin();
+}
+
+<span class="t-kw">void</span> opcontrol() {
+    myRobot::strand.activateModeTimed(myRobot::mode::endgame, <span class="t-num">30000</span>);
+}</code></pre>
+<pre class="code code-compact" data-platform-pane="vexcode" hidden><code><span class="t-pp">#include</span> <span class="t-str">"hitlib_studio.h"</span>
+
+<span class="t-kw">namespace</span> myRobot = hitlib::profiles::myRobot;
+
+<span class="t-kw">void</span> pre_auton() {
+    hitlib::studio::begin();
+}
+
+<span class="t-kw">void</span> usercontrol() {
+    myRobot::strand.activateModeTimed(myRobot::mode::endgame, <span class="t-num">30000</span>);
+}</code></pre>
+          <p>After that, changing a port or adding a mode is Deploy, then rebuild. <code>main.cpp</code> stays as it is.</p>
+        </li>
+      </ol>
     </div>
-    <h2>Test kits are in. Orders are open.</h2>
-    <p>
-      The test kit shipment has arrived, and it held up. LED kits are open for order
-      right now: pick a kit below, set each strand's density, and check out. The
-      launch sale takes $5 off every kit, already applied to the prices.
+
+    <div class="ps-tiles">
+      <div class="ps-tile">
+        <h3>Edit strands as a group</h3>
+        <p>Select several strands and change a field once. Only the fields you touch are copied, so each strand keeps its own look.</p>
+      </div>
+      <div class="ps-tile">
+        <h3>Divide into gauges</h3>
+        <p>Set one region as a gauge, press Divide, and get up to 32 equal segments, with an optional dark pixel between them.</p>
+      </div>
+      <div class="ps-tile">
+        <h3>Caught before compile</h3>
+        <p>Duplicate mode names, out-of-range ports and empty palettes are flagged in the app, not by your compiler.</p>
+      </div>
+      <div class="ps-tile">
+        <h3>One file for the team</h3>
+        <p>A <code>.hlprofile</code> design holds every strand and the song's analysis, so a teammate opens exactly what you built.</p>
+      </div>
+    </div>
+
+    <p class="download-line">
+      <span class="chip-led" style="--c: var(--green)"></span>
+      The Windows build, <code>HitLibPatternStudio-1.1.0-windows.zip</code>, is on the
+      <a href="https://github.com/advisorylabs/HitLib/releases">Releases page</a>.
+      On macOS or Linux, run it from source with Python 3.10 or later.
     </p>
+  </section>
 
-    <div class="photo-frame">
-      <img src="assets/a-ws2812b-led-strip-lit-red-wired-straight-into-a-.png" alt="A WS2812B LED strip lit red, wired straight into a VEX Brain on a desk at night" />
-    </div>
-    <p class="photo-caption">Test kit strip, driven straight off a VEX Brain.</p>
+  <!-- ===================== kits ===================== -->
 
-    <div class="stat-callout">
-      <span class="label">Orders</span>
-      <span class="value">Open now</span>
-    </div>
-    <ul>
-      <li>Pay by card at checkout, or choose "Contact me later" to arrange Zelle or Venmo.</li>
-      <li>Opt into <code>#opt-in-notifications</code> on Discord for build and shipping updates.</li>
-    </ul>
-    <div class="cta-row">
-      <a class="btn primary" href="#/order">Buy the Kit</a>
-    </div>
-  </div>
+  <section class="section reveal" id="kits">
+    <div class="kits-top">
+      <figure class="kits-photo">
+        <div class="photo-frame">
+          <img src="assets/a-ws2812b-led-strip-lit-red-wired-straight-into-a-.png" alt="A WS2812B LED strip lit red, wired straight into a VEX Brain on a desk at night" />
+        </div>
+        <figcaption class="photo-caption">A WS2812B strip lit red, wired straight into a VEX Brain.</figcaption>
+      </figure>
 
-  <div class="module reveal" id="choose-kit">
-    <div class="panel-bar">
-      <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-      <span class="slug">// choose-a-kit</span>
+      <div class="kits-copy">
+        <span class="eyebrow">// led kits</span>
+        <h2>Get the strips</h2>
+        <p>LED strip kits from 96671H, built to plug straight into a VEX Brain. Kits are sized by strand count, and you pick a density for every strand when you configure it: 30, 60 or 74 LEDs per meter.</p>
+        <ul class="spec-row">
+          <li style="--c: var(--blue)">WS2812B-compatible</li>
+          <li style="--c: var(--purple)">One 3-wire port per strand</li>
+          <li style="--c: var(--pink)">Mix densities in one kit</li>
+        </ul>
+        <ul class="kits-notes">
+          <li>Pay by card at checkout, or choose "Contact me later" to arrange Zelle or Venmo.</li>
+          <li>Shipping is a live carrier rate for your address, added at checkout.</li>
+          <li>Care, use and installation guides are in <code>#resources</code> on Discord. Opt into <code>#opt-in-notifications</code> for build and shipping updates.</li>
+        </ul>
+        <div class="cta-row">
+          <a class="btn primary" href="#/order">Buy the Kit</a>
+        </div>
+      </div>
     </div>
-    <h2>Choose a kit</h2>
-    <p>Three kits, by strand count: Single, Regular, and Extended, for $20, $35, and $65 during the launch sale ($5 off each, already applied below). Configure each strand's density on its own page, mix and match freely.</p>
+
     <div class="kit-grid" id="kit-grid"></div>
-  </div>
+    <noscript><p class="kits-noscript">Single $25 (1 strand) · Regular $40 (2 strands) · Extended $70 (4 strands)</p></noscript>
+  </section>
+
+  <!-- ===================== reference ===================== -->
 
   <div class="footer reveal" id="reference">
     <div class="footer-label">Reference</div>
@@ -256,31 +671,27 @@
         <span class="name">Discord</span>
         <span class="url">discord.gg/Y3XxxCm6Y</span>
       </a>
-      <a href="https://youtu.be/DKvakzxzZ_k">
-        <span class="name">Pattern Studio · launch video</span>
-        <span class="url">youtu.be/DKvakzxzZ_k</span>
+      <a href="https://advisorylabs.github.io/HitLib/">
+        <span class="name">Documentation</span>
+        <span class="url">advisorylabs.github.io/HitLib</span>
       </a>
       <a href="https://github.com/advisorylabs/HitLib">
         <span class="name">HitLib repository</span>
         <span class="url">github.com/advisorylabs/HitLib</span>
       </a>
-      <a href="https://advisorylabs.github.io/HitLib/">
-        <span class="name">Documentation</span>
-        <span class="url">advisorylabs.github.io/HitLib</span>
-      </a>
-      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.3.0">
-        <span class="name">v1.3.0 release · HitLib · Pattern Studio 1.0.0</span>
-        <span class="url">.../releases/tag/1.3.0</span>
+      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">
+        <span class="name">HitLib 1.4.0 · Pattern Studio 1.1.0 release</span>
+        <span class="url">.../releases/tag/1.4.0</span>
       </a>
       <a href="#/order">
         <span class="name">Buy the Kit</span>
         <span class="url">this page</span>
       </a>
     </div>
+    <p class="feedback">Found a bug or have an idea? File it as a GitHub issue, or drop feature suggestions in <code>#suggestions</code> on Discord.</p>
     <p class="credit">
-      HitLib is a PROS-based, modernized LED library for WS2812B and Neopixel strip
-      control on VEX Brains, built by 96671H: Hitmen.
-      HitLib is endorsed by Crashtest alliance.
+      HitLib and Pattern Studio are built by 96671H: Hitmen, and open source under the
+      Mozilla Public License 2.0. HitLib is endorsed by Crashtest alliance.
     </p>
   </div>
 
@@ -319,11 +730,6 @@
     <div class="stat-callout">
       <span class="label">Orders</span>
       <span class="value">Open now</span>
-    </div>
-
-    <div class="sale-banner">
-      <span class="label">Launch sale</span>
-      <span class="value">$5 off every kit, already applied to the totals below.</span>
     </div>
 
     <div id="buy-cart-summary"></div>
