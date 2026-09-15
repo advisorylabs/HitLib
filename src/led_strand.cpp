@@ -4,13 +4,13 @@
 #include <cmath>
 #include <cstdlib>
 
+namespace hitlib {
+
 // Shared across every LedStrand instance (all groups). The V5 ADI/Smart Port
-// link can't keep up with back-to-back or concurrent led->update() calls from
+// link can't keep up with back-to-back or concurrent led->write() calls from
 // multiple strands/tasks, serializing them here and pacing each one gives
 // the ADI LED driver breathing room so updates don't queue up and lag behind.
-static pros::Mutex s_adiMutex;
-
-namespace hitlib {
+static platform::Mutex s_adiMutex;
 
 namespace {
 
@@ -65,8 +65,7 @@ LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint
 
 void LedStrand::init() {
     if (led != nullptr) return;
-    if (smartPort == 0) led = new pros::adi::Led(adiPort, length);
-    else                led = new pros::adi::Led(pros::adi::ext_adi_port_pair_t{smartPort, adiPort}, length);
+    led = new platform::AdiLed(smartPort, adiPort, length);
 }
 
 // ============================================================================
@@ -77,7 +76,7 @@ void LedStrand::tick() {
     if (!led) return;
     mutex.take();
 
-    uint32_t now = pros::millis();
+    uint32_t now = platform::millis();
     pruneExpired(now);
 
     if (pulseRunLen > 0)                    advancePulseBounce();
@@ -267,7 +266,7 @@ void LedStrand::TwinkleState::reset(uint8_t width, const std::vector<uint32_t>& 
     bgColor = bg;
 
     static bool seeded = false;
-    if (!seeded) { std::srand(pros::millis()); seeded = true; }
+    if (!seeded) { std::srand(platform::millis()); seeded = true; }
 }
 
 // Repaints `buf` from `t` every tick. The buffer is passed in rather than read
@@ -506,7 +505,7 @@ void LedStrand::musicSync(const MusicTrack& track, uint32_t color, uint32_t colo
     musicSensitivity = sensitivity;
     musicLoop        = loop;
     musicPaused      = false;
-    musicAnchorMs    = pros::millis();
+    musicAnchorMs    = platform::millis();
     musicPausedAt    = 0;
     levelValue       = sampleMusicNL(0);
     mutex.give();
@@ -516,7 +515,7 @@ void LedStrand::musicSeek(uint32_t positionMs) {
     mutex.take();
     // Move the anchor rather than a position counter, so a seek while playing
     // resumes from the new spot at real-time speed with no further bookkeeping.
-    musicAnchorMs = pros::millis() - positionMs;
+    musicAnchorMs = platform::millis() - positionMs;
     musicPausedAt = positionMs;
     levelValue    = sampleMusicNL(positionMs);
     mutex.give();
@@ -524,7 +523,7 @@ void LedStrand::musicSeek(uint32_t positionMs) {
 
 void LedStrand::musicPause(bool paused) {
     mutex.take();
-    uint32_t now = pros::millis();
+    uint32_t now = platform::millis();
     if (paused && !musicPaused) {
         musicPausedAt = now - musicAnchorMs;
         musicPaused   = true;
@@ -536,7 +535,7 @@ void LedStrand::musicPause(bool paused) {
 }
 
 uint32_t LedStrand::musicPositionMs() const {
-    return musicPaused ? musicPausedAt : (pros::millis() - musicAnchorMs);
+    return musicPaused ? musicPausedAt : (platform::millis() - musicAnchorMs);
 }
 
 void LedStrand::setSensitivity(uint8_t pct) {
@@ -547,7 +546,7 @@ void LedStrand::setSensitivity(uint8_t pct) {
 
 void LedStrand::advanceLevel() {
     if (musicTrack) {
-        levelValue = sampleMusicNL(musicPaused ? musicPausedAt : (pros::millis() - musicAnchorMs));
+        levelValue = sampleMusicNL(musicPaused ? musicPausedAt : (platform::millis() - musicAnchorMs));
         return;
     }
     if (!levelRead) return;
@@ -681,7 +680,7 @@ void LedStrand::spliceMask(uint8_t sections, bool invert, bool alternating, uint
     spliceUseOverlay = useOverlay;
     spliceActive = (sections != 0);
     spliceAltPhase = false;
-    spliceLastToggleMs = pros::millis();
+    spliceLastToggleMs = platform::millis();
     rebuildSpliceMask();
     mutex.give();
 }
@@ -1187,7 +1186,7 @@ void LedStrand::activateMode(uint8_t modeIdx) {
 
 void LedStrand::activateModeTimed(uint8_t modeIdx, uint32_t durationMs) {
     mutex.take();
-    uint32_t now = pros::millis();
+    uint32_t now = platform::millis();
     for (auto& e : modeStack) {
         if (e.modeIdx == modeIdx) {
             if (!e.persistent) e.endMs = now + durationMs; // extend deadline, don't downgrade persistent
@@ -1244,7 +1243,7 @@ void LedStrand::flushBuffer() {
     uint32_t levelFull = litQ8 / 255;
     uint8_t  levelFrac = (uint8_t)(litQ8 % 255);
 
-    s_adiMutex.take();
+    uint32_t frame[MAX_LEDS];
     for (uint8_t i = 0; i < length; ++i) {
         uint32_t baseColor;
         if (animMode == AnimMode::LEVEL) {
@@ -1284,11 +1283,13 @@ void LedStrand::flushBuffer() {
             }
         }
 
-        led->set_pixel(applyBrightness(color), i);
+        frame[i] = applyBrightness(color);
     }
-    led->update();
+
+    s_adiMutex.take();
+    led->write(frame, length);
     // Give the ADI LED driver some breathing room between updates.
-    pros::delay(12);
+    platform::delay(12);
     s_adiMutex.give();
 }
 

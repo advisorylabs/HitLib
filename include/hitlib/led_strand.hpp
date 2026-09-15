@@ -1,7 +1,7 @@
 #pragma once
 #include "led_profile.hpp"
-#include "pros/adi.hpp"
-#include "pros/rtos.hpp"
+#include "platform.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -18,7 +18,7 @@ namespace hitlib {
 /**
  * @brief Driver for a single WS2812B-compatible LED strip on a VEX ADI port.
  *
- * LedStrand owns one hardware `pros::adi::Led` and drives it from a
+ * LedStrand owns one addressable-LED ADI port and drives it from a
  * task-managed refresh loop via LedGroup.  All public animation methods are
  * **thread-safe**, they take effect on the next refresh tick.
  *
@@ -254,7 +254,8 @@ public:
     /**
      * @brief Initialize the hardware LED object.
      *
-     * Must be called from PROS `initialize()` (or before the first tick).
+     * Must be called from PROS `initialize()` or VEXcode's `main()` (or before
+     * the first tick).
      * Safe to call multiple times, subsequent calls are no-ops.
      */
     void init();
@@ -806,8 +807,8 @@ private:
     uint8_t  smartPort  = 0;
     uint8_t  length;
     uint32_t refreshMs;
-    pros::adi::Led* led = nullptr;
-    pros::Mutex mutex;
+    platform::AdiLed* led = nullptr;
+    platform::Mutex mutex;
 
     enum class AnimMode : uint8_t { STATIC, SHIFT, TWINKLE, FLASH, LEVEL };
 

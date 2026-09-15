@@ -1,13 +1,13 @@
 #include "hitlib/led_sequencer.hpp"
 #include "hitlib/led_strand.hpp"
-#include "pros/rtos.hpp"
+#include "hitlib/platform.hpp"
 
 namespace hitlib {
 
 void Sequencer::start(LedStrand& strand) {
     running      = true;
     currentPhase = 0;
-    phaseStartMs = pros::millis();
+    phaseStartMs = platform::millis();
     if (phaseCount > 0 && phases[0].startFn) phases[0].startFn(strand);
 }
 
@@ -18,7 +18,7 @@ void Sequencer::stop() {
 void Sequencer::update(LedStrand& strand) {
     if (!running || phaseCount == 0) return;
 
-    uint32_t now = pros::millis();
+    uint32_t now = platform::millis();
     if (now - phaseStartMs >= phases[currentPhase].durationMs) {
         currentPhase = (currentPhase + 1) % phaseCount;
         phaseStartMs = now;
