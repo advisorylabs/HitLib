@@ -2,7 +2,8 @@
 
 ## Requirements
 
-- [PROS](https://pros.cs.purdue.edu/) 4.x or later
+- [PROS](https://pros.cs.purdue.edu/) 4.x or later, **or** VEXcode (VEXcode V5,
+  VEXcode Pro V5, or the VEX VS Code extension)
 - VEX V5 brain
 - WS2812B-compatible LED strip wired to a VEX ADI port
 
@@ -19,6 +20,46 @@ Or paste the URL directly into the **Install Template** dialog in the PROS VS Co
 
 Check the [Releases page](https://github.com/advisorylabs/hitlib/releases) for the
 latest version and swap the version number above if a newer one is available.
+
+---
+
+## Install into a VEXcode project
+
+VEXcode has no template system, so HitLib ships as source for it. Download
+`hitlib-vexcode@1.3.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+and copy its two folders into your project:
+
+```
+your-project/
+├─ include/hitlib/     ← from the zip
+└─ src/hitlib/         ← from the zip
+```
+
+The VEXcode makefile already builds `src/*/*.cpp` and searches `include/`, so
+there is nothing to configure. HitLib notices it is building against the VEX
+SDK and uses it in place of PROS. Then, in `main.cpp`:
+
+```cpp
+#include "vex.h"
+#include "hitlib/hitapi.hpp"
+
+hitlib::LedStrand strand(1, 63);   // 3-wire port A, 63 LEDs
+hitlib::LedGroup  group;
+
+int main() {
+    vexcodeInit();
+    group.add(&strand);
+    group.init();
+    group.start();
+
+    group.rainbow(1);
+
+    while (true) vex::this_thread::sleep_for(100);   // keep main() from exiting
+}
+```
+
+Ports are numbered 1-8 for A-H. Don't also configure that port as a device in
+VEXcode's device menu; HitLib drives it directly.
 
 ---
 

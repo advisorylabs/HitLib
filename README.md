@@ -1,6 +1,6 @@
 # HitLib
 
-**LED animation and control library for VEX V5, built for [PROS](https://pros.cs.purdue.edu/).**
+**LED animation and control library for VEX V5, for [PROS](https://pros.cs.purdue.edu/) and VEXcode.**
 
 Drive WS2812B strips off the V5's ADI ports with animations: flow,
 rainbow, pulse, flash, twinkle, and bitscroll composed into named,
@@ -25,6 +25,11 @@ pros c apply hitlib
 ```
 
 Or paste that URL into **Install Template** in the PROS VS Code extension.
+
+**VEXcode** (V5, Pro V5, or the VS Code extension): download
+`hitlib-vexcode@1.3.0.zip` from the Releases page and copy its `include/hitlib/`
+and `src/hitlib/` folders into your project. See the
+[installation guide](https://advisorylabs.github.io/HitLib/install_page.html).
 
 ## Hello, strip
 
@@ -118,7 +123,7 @@ drops the strands and group entirely, leaving the profile and constants.
 
 ## Requirements
 
-- PROS 4.x or later
+- PROS 4.x or later, or VEXcode (V5, Pro V5, or the VEX VS Code extension)
 - VEX V5 brain
 - WS2812B-compatible strip on an ADI port (or an ADI expander), up to 64 LEDs
   per strand

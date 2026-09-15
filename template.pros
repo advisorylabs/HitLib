@@ -15,6 +15,7 @@
     "include/hitlib/led_profile.hpp",
     "include/hitlib/led_sequencer.hpp",
     "include/hitlib/led_strand.hpp",
+    "include/hitlib/platform.hpp",
     "include/hitlib/profiles/classic.hpp",
     "lib/hitlib.a"
   ]

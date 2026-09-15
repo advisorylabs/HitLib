@@ -1,6 +1,6 @@
 # HitLib {#mainpage}
 
-**HitLib** is a VEX V5 LED animation library for [PROS](https://pros.cs.purdue.edu/).
+**HitLib** is a VEX V5 LED animation library for [PROS](https://pros.cs.purdue.edu/) and VEXcode.
 It drives WS2812B-compatible LED strips connected to ADI ports, including strips on
 ADI expanders, with a fully thread-safe, task-driven animation engine.
 
@@ -19,7 +19,7 @@ New to HitLib? Start here:
 
 ## What is HitLib?
 
-HitLib gives you a two-layer animation engine on top of the PROS LED API.
+HitLib gives you a two-layer animation engine on top of the V5's addressable LED API.
 Every strip has a **base layer** and an **overlay layer**.
 Animations run continuously in a background task, you just call a method and it plays.
 
