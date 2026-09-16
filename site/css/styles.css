@@ -417,6 +417,53 @@
 
   .btn .arrow { opacity: 0.7; }
 
+  /* Buy buttons: the primary gradient mirrored into a 200% tile, so it rests
+     looking like --grad and rolls seamlessly on hover. Pausing rather than
+     removing the animation on mouse-out keeps it from snapping back. */
+  .btn.btn-buy {
+    background-image: linear-gradient(90deg, var(--blue), var(--purple), var(--pink), var(--purple), var(--blue));
+    background-size: 200% 100%;
+  }
+  .btn.btn-buy:hover { opacity: 1; }
+
+  /* Green button with a highlight that sweeps across while hovered. */
+  .btn.btn-green {
+    position: relative;
+    overflow: hidden;
+    background: var(--green);
+    border-color: transparent;
+    color: var(--bg);
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  .btn.btn-green:hover {
+    color: var(--bg);
+    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(47, 224, 160, 0.4);
+  }
+  .btn.btn-green:focus-visible { outline-color: var(--green); }
+  .btn.btn-green::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+    transform: translateX(-150%) skewX(-20deg);
+    pointer-events: none;
+  }
+
+  @keyframes btn-shine {
+    0% { transform: translateX(-150%) skewX(-20deg); }
+    55%, 100% { transform: translateX(260%) skewX(-20deg); }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .btn.btn-buy { animation: gradient-roll 3s linear infinite paused; }
+    .btn.btn-buy:hover { animation-play-state: running; }
+    .btn.btn-green:hover::after { animation: btn-shine 1.8s ease-in-out infinite; }
+  }
+
   /* ---------- hero meta row ---------- */
 
   .hero-meta {
