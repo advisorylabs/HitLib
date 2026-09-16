@@ -103,6 +103,7 @@
     </p>
 
     <div class="cta-row">
+      <a class="btn" href="https://youtu.be/4VNCsWwyhi0">See it in action! <span class="arrow">↗</span></a>
       <a class="btn primary" href="#/order">Buy the Kit</a>
       <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">1.4.0 release notes <span class="arrow">↗</span></a>
       <a class="btn" href="https://advisorylabs.github.io/HitLib/">Documentation <span class="arrow">↗</span></a>
@@ -351,14 +352,17 @@ strand.spliceMask(<span class="t-num">3</span>, <span class="t-kw">false</span>,
               <button type="button" class="seg-btn" data-gauge-style="bar" aria-pressed="false">Fill Bar</button>
             </div>
           </div>
-<pre class="code code-compact"><code>std::vector&lt;LedStrand::SpliceRegion&gt; segments;
-<span class="t-kw">for</span> (uint8_t i = <span class="t-num">0</span>; i &lt; <span class="t-num">6</span>; ++i) {
-    segments.push_back(
-        LedStrand::motorHeatGauge(i * <span class="t-num">10</span>, <span class="t-num">9</span>, readers[i]));
-}
-strand.off();   <span class="t-com">// dark base, so the gap between segments stays unlit</span>
-strand.spliceMaskCustom(segments);</code></pre>
+          <div class="gauge-control manual-control">
+            <span class="kind-label">Level</span>
+            <input type="range" id="meter-level" min="0" max="255" step="1" value="128" aria-label="Manual level, 0 to 255" />
+          </div>
+<pre class="code code-compact" id="gauge-code"><code></code></pre>
         </div>
+      </div>
+
+      <div class="single-meter">
+        <div class="leds" data-demo="meter" data-n="40"></div>
+        <p class="meter-readout" id="meter-readout" aria-live="polite"></p>
       </div>
 
       <div class="heat-strip" aria-hidden="true">
@@ -370,6 +374,12 @@ strand.spliceMaskCustom(segments);</code></pre>
         <div class="heat-seg"><div class="leds" data-demo="heat" data-seg="5" data-n="9"></div><span class="heat-label">R3 <b>-</b></span></div>
       </div>
 
+      <div class="scale-legend">
+        <span class="scale-end" id="scale-min">-</span>
+        <div class="leds" data-demo="scale" data-n="16" aria-hidden="true"></div>
+        <span class="scale-end" id="scale-max">-</span>
+      </div>
+
       <ul class="heat-legend">
         <li style="--c: #00ff00"><b>20 °C</b>full power</li>
         <li style="--c: #ffff00"><b>45 °C</b>first cut coming</li>
@@ -378,24 +388,24 @@ strand.spliceMaskCustom(segments);</code></pre>
         <li style="--c: #ff0000"><b>65 °C</b>12.5% current</li>
         <li style="--c: #ff00ff"><b>70 °C</b>shut down</li>
       </ul>
-      <p class="demo-caption">Simulated readings. <code>motorHeatGauge()</code> colors each segment at the temperatures where a V5 motor starts losing power.</p>
-    </div>
+      <p class="demo-caption" id="gauge-caption">Simulated readings.</p>
 
-    <div class="sources">
-      <p>In Pattern Studio, pick what a meter follows and the reader is written for you:</p>
-      <ul class="chip-list">
-        <li>Battery Capacity</li>
-        <li class="lit">Motor Temperature</li>
-        <li>Motor Position</li>
-        <li>Motor Velocity</li>
-        <li>Motor Efficiency</li>
-        <li>Rotation Sensor</li>
-        <li>IMU Heading</li>
-        <li>Distance Sensor</li>
-        <li>Potentiometer (ADI)</li>
-        <li>Manual (setLevel)</li>
-        <li>Custom (assign in code)</li>
-      </ul>
+      <div class="sources">
+        <p>In Pattern Studio, pick what a meter follows and the reader is written for you. Try one:</p>
+        <div class="chip-list" role="group" aria-label="What the meter follows">
+          <button type="button" class="chip-btn" data-source="battery" aria-pressed="false">Battery Capacity</button>
+          <button type="button" class="chip-btn lit" data-source="temp" aria-pressed="true">Motor Temperature</button>
+          <button type="button" class="chip-btn" data-source="position" aria-pressed="false">Motor Position</button>
+          <button type="button" class="chip-btn" data-source="velocity" aria-pressed="false">Motor Velocity</button>
+          <button type="button" class="chip-btn" data-source="efficiency" aria-pressed="false">Motor Efficiency</button>
+          <button type="button" class="chip-btn" data-source="rotation" aria-pressed="false">Rotation Sensor</button>
+          <button type="button" class="chip-btn" data-source="imu" aria-pressed="false">IMU Heading</button>
+          <button type="button" class="chip-btn" data-source="distance" aria-pressed="false">Distance Sensor</button>
+          <button type="button" class="chip-btn" data-source="pot" aria-pressed="false">Potentiometer (ADI)</button>
+          <button type="button" class="chip-btn" data-source="manual" aria-pressed="false">Manual (setLevel)</button>
+          <button type="button" class="chip-btn" data-source="custom" aria-pressed="false">Custom (assign in code)</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -542,10 +552,10 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
     </div>
 
     <figure class="video-card">
-      <video controls preload="metadata" playsinline poster="assets/launch-video-thumbnail.jpg">
-        <source src="assets/launch-video-630c72f57e.mp4" type="video/mp4">
-      </video>
-      <figcaption>Pattern Studio in a minute (1:01, 360p). <a href="https://youtu.be/DKvakzxzZ_k">Watch in full quality on YouTube ↗</a></figcaption>
+      <div class="video-embed">
+        <iframe src="https://www.youtube-nocookie.com/embed/4VNCsWwyhi0" title="HitLib and Pattern Studio in action" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      </div>
+      <figcaption>HitLib and Pattern Studio in action. <a href="https://youtu.be/4VNCsWwyhi0">Watch on YouTube ↗</a></figcaption>
     </figure>
 
     <div class="ps-grid">
@@ -621,10 +631,37 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
 
     <p class="download-line">
       <span class="chip-led" style="--c: var(--green)"></span>
-      The Windows build, <code>HitLibPatternStudio-1.1.0-windows.zip</code>, is on the
+      Windows: <code>HitLibPatternStudio-1.1.0-windows.zip</code> on the
       <a href="https://github.com/advisorylabs/HitLib/releases">Releases page</a>.
-      On macOS or Linux, run it from source with Python 3.10 or later.
     </p>
+    <p class="download-line">
+      <span class="chip-led" style="--c: var(--cyan)"></span>
+      macOS 13 or later, same page: <code>-macos-apple-silicon.zip</code> for
+      an M1 or newer, <code>-macos-intel.zip</code> for an Intel Mac. The
+      Apple menu &gt; About This Mac says which you have.
+    </p>
+    <p class="download-line">
+      <span class="chip-led" style="--c: var(--amber)"></span>
+      On Linux, run it from source with Python 3.10 or later.
+    </p>
+
+    <div class="mac-note">
+      <h4><span class="chip-led" style="--c: var(--cyan)"></span>First launch on a Mac</h4>
+      <p>The Mac build isn't signed with an Apple developer certificate, so
+      macOS stops the first launch. It only has to be allowed once.</p>
+      <ol>
+        <li>Unzip it and drag <strong>HitLib Pattern Studio</strong> into Applications.</li>
+        <li>Double-click it. macOS won't open it. Click <strong>Done</strong>
+        (<strong>Cancel</strong> on macOS 13 or 14), not Move to Trash.</li>
+        <li>Open <strong>System Settings &gt; Privacy &amp; Security</strong>, scroll to Security,
+        and click <strong>Open Anyway</strong> next to HitLib Pattern Studio.</li>
+        <li>When macOS asks again, click <strong>Open Anyway</strong> (<strong>Open</strong>
+        on macOS 13 or 14) and enter your Mac password. On a school-managed Mac
+        that takes an administrator.</li>
+      </ol>
+      <p>It opens on a normal double-click from then on. If step 3 shows no
+      button, the prompt timed out - do step 2 again and go straight to it.</p>
+    </div>
   </section>
 
   <!-- ===================== kits ===================== -->
@@ -641,10 +678,10 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
       <div class="kits-copy">
         <span class="eyebrow">// led kits</span>
         <h2>Get the strips</h2>
-        <p>LED strip kits from 96671H, built to plug straight into a VEX Brain. Kits are sized by strand count, and you pick a density for every strand when you configure it: 30, 60 or 74 LEDs per meter.</p>
+        <p>WS2812B strip kits from 96671H, built to plug straight into a VEX Brain. The kits differ only in how many strips you get: Single is one strip, Regular is two, and Extended is four.</p>
+        <p>Every strip carries the same 20 LEDs, so the density you pick for it sets how long it is. At 30 LEDs/m a strip is 26.2 inches, at 60 LEDs/m it is 13.1 inches, and at 74 LEDs/m it is 10.6 inches. You choose that per strip, so a multi-strip kit can mix lengths.</p>
         <ul class="spec-row">
-          <li style="--c: var(--blue)">WS2812B-compatible</li>
-          <li style="--c: var(--purple)">One 3-wire port per strand</li>
+          <li style="--c: var(--purple)">One 3-wire port per strip</li>
           <li style="--c: var(--pink)">Mix densities in one kit</li>
         </ul>
         <ul class="kits-notes">
@@ -690,8 +727,9 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
     </div>
     <p class="feedback">Found a bug or have an idea? File it as a GitHub issue, or drop feature suggestions in <code>#suggestions</code> on Discord.</p>
     <p class="credit">
-      HitLib and Pattern Studio are built by 96671H: Hitmen, and open source under the
-      Mozilla Public License 2.0. HitLib is endorsed by Crashtest alliance.
+      HitLib and Pattern Studio are built by 96671H: Hitmen based out of Grand Forks,
+      North Dakota. HitLib and Pattern Studio are open source under the Mozilla Public
+      License 2.0. HitLib and Pattern Studio are endorsed by the Crashtest alliance.
     </p>
   </div>
 

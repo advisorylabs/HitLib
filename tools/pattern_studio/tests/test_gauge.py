@@ -31,7 +31,7 @@ HEAT = {stop.at: stop.color for stop in MOTOR_HEAT_STOPS}
 
 def _strip(length: int = 60) -> Strand:
     s = Strand(adi_port=1, length=length, refresh_ms=25)
-    s.off()  # the base layer is fully masked; keep it black
+    s.off()  # uncovered pixels show the base layer; keep it black
     return s
 
 

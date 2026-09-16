@@ -436,7 +436,7 @@ void showDriveHeat(LedStrand& strand) {
         // temperatures read as one long one.
         segments.push_back(LedStrand::motorHeatGauge(i * 10, 9, readers[i]));
     }
-    strand.off();                      // the base layer is fully masked
+    strand.off();                      // the dividers show the base, so keep it dark
     strand.spliceMaskCustom(segments);
 }
 ```

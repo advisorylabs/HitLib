@@ -1,0 +1,152 @@
+# Look at the macOS build without owning a Mac.
+#
+# Run it from the Actions tab (Run workflow), wait a few minutes, then download
+# the "macos-smoke-<runner>" artifact from the run's summary page. Inside:
+#
+#   window.png         the window's content as Qt drew it on the real Mac
+#   window.txt         the checks behind it: platform, menu bar, safe area
+#   desktop.png        the runner's whole screen, if macOS allowed the capture
+#   gui-processes.txt  the apps macOS says have a real window open
+#   bundle.txt         what ended up inside the .app, and its Info.plist
+#
+# window.png comes from QWidget.grab() on the cocoa platform, so it needs no
+# screen recording permission - but it is the window's content only. The
+# traffic lights and the system's title text are drawn by macOS, outside what
+# Qt can grab, so they only show in desktop.png. That one is best-effort: a
+# black frame means the permission was refused, not that the app is broken,
+# and gui-processes.txt still proves a real window existed.
+#
+# Each step carries on past a failure in the one before, so a broken test or
+# build still leaves whatever evidence the rest could gather.
+#
+# What this cannot tell you: how anything feels. Drag latency, trackpad
+# gestures, audio playback and Retina rendering all need real hardware.
+#
+# Manual only, so it never runs on a push and never competes with the build.
+
+name: macOS smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Which Mac to run on"
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - macos-15-intel
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: tools/pattern_studio
+
+jobs:
+  smoke:
+    name: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,build]"
+
+      - name: Run tests
+        continue-on-error: true
+        run: pytest -q
+
+      # From source, on the runner's real window server rather than the
+      # offscreen platform the tests use. Offscreen has no screen menu bar and
+      # no title bar, so it would draw File and Export inside the window and
+      # report a safe area of zero - a layout no Mac ever shows.
+      - name: Grab the window Qt drew
+        continue-on-error: true
+        run: |
+          # pipefail so a crash in the grab is not reported as tee's success.
+          set -o pipefail
+          mkdir -p ../../artifacts
+          python - <<'PY' | tee ../../artifacts/window.txt
+          from PySide6.QtCore import Qt
+          from PySide6.QtWidgets import QApplication
+          from pattern_studio import theme, window_chrome
+          from pattern_studio.main_window import MainWindow
+
+          app = QApplication([])
+          theme.apply_theme(app)
+          window = MainWindow()
+          # A fixed size so two runs are comparable; roughly a 13" MacBook.
+          window.resize(1440, 900)
+          window.show()
+          # A few passes: the tree, the deferred layout, then the first paint.
+          for _ in range(5):
+              app.processEvents()
+          window.grab().save("../../artifacts/window.png")
+
+          bar = window.title_bar
+          margins = window.windowHandle().safeAreaMargins()
+          print("platform:", app.platformName())
+          print("unified title bar:", window_chrome.MAC_UNIFIED)
+          print("menu bar in the screen's menu bar:", bar.menu_bar.isNativeMenuBar())
+          print("resize grips built:", len(bar.resize_grips._grips))
+          print("system safe area (top, left):", margins.top(), margins.left())
+          print("window still respects it:",
+                window.testAttribute(Qt.WA_ContentsMarginsRespectsSafeArea))
+          print("title row at y:", bar.mapTo(window, bar.rect().topLeft()).y(),
+                "height:", bar.height())
+          print("logo at x:", bar.logo.x())
+          PY
+
+      - name: Build the app
+        continue-on-error: true
+        run: pyinstaller --noconfirm HitLibPatternStudio.spec
+
+      - name: Describe the bundle
+        continue-on-error: true
+        run: |
+          APP="dist/HitLib Pattern Studio.app"
+          {
+            echo "== bundle =="
+            du -sh "$APP"
+            echo
+            echo "== Info.plist =="
+            plutil -p "$APP/Contents/Info.plist"
+            echo
+            echo "== signature =="
+            codesign -dv --verbose=2 "$APP" 2>&1 || echo "codesign reported nothing"
+            echo
+            echo "== executable =="
+            file "$APP/Contents/MacOS/HitLibPatternStudio"
+            echo
+            echo "== is the icon there? =="
+            ls -l "$APP/Contents/Resources/"*.icns
+          } > ../../artifacts/bundle.txt
+          cat ../../artifacts/bundle.txt
+
+      # --no-splash so the capture lands on the real window rather than on the
+      # splash fade. Nothing here is quarantined - the bundle was built on this
+      # machine, not downloaded - so Gatekeeper is not in the way. That also
+      # means this step proves nothing about what a downloader will hit.
+      - name: Launch it and look
+        continue-on-error: true
+        run: |
+          open -a "dist/HitLib Pattern Studio.app" --args --no-splash
+          sleep 25
+          osascript -e 'tell application "System Events" to get name of every process whose background only is false' \
+            > ../../artifacts/gui-processes.txt 2>&1 || true
+          cat ../../artifacts/gui-processes.txt
+          screencapture -x ../../artifacts/desktop.png || echo "screencapture refused"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-smoke-${{ inputs.runner }}
+          path: artifacts/

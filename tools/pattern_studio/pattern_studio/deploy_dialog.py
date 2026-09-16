@@ -23,7 +23,20 @@ from PySide6.QtWidgets import (
 
 from . import theme
 
-_MONO = ["Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Courier New", "monospace"]
+#: The paste block is the one thing in this dialog anyone reads character by
+#: character, so it gets each platform's own modern mono face before the
+#: typewriter fallbacks. Menlo is the macOS entry that matters: SF Mono is not
+#: installed for arbitrary apps to ask for, and Menlo ships on every Mac.
+_MONO = [
+    "Cascadia Mono",
+    "Consolas",
+    "SF Mono",
+    "Menlo",
+    "Monaco",
+    "DejaVu Sans Mono",
+    "Courier New",
+    "monospace",
+]
 
 
 class DeployDialog(QDialog):

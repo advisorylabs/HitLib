@@ -1,5 +1,9 @@
 """Built-in window chrome: the app's own title bar, caption buttons and
-resize edges, for a frameless main window. See caption_message().
+resize edges. See caption_message().
+
+Windows goes frameless and this module draws the whole caption. macOS keeps
+its real window and borrows only the title bar's background, so the traffic
+lights, the edge resize and full screen stay the system's. See install().
 """
 
 from __future__ import annotations
@@ -26,6 +30,27 @@ TITLE_H = 36
 CAPTION_W = 46
 #: How close to the edge counts as a resize grab.
 GRIP_PX = 5
+
+IS_MAC = sys.platform == "darwin"
+
+#: macOS paints the traffic lights over the top-left of the client area, and
+#: they cannot be moved without reaching into NSWindow. This is how far in
+#: our own row has to start to clear the last of them.
+MAC_TRAFFIC_LIGHT_W = 78
+#: The height macOS centres those lights in. Matching it is the only way our
+#: logo and title end up on their centre line, since only ours can move. It
+#: fits because the menus leave the row there - see setNativeMenuBar below.
+MAC_TITLE_H = 28
+
+# Qt 6.9 is where a title bar stopped being all-or-nothing. These two keep a
+# real native window - traffic lights, edge resize, full screen, tiling - and
+# drop only the bar's background, so our own dark row paints straight through
+# it. getattr rather than a plain attribute because pyproject still allows
+# PySide6 6.6, where neither exists and macOS keeps its stock caption.
+_EXPANDED_CLIENT_AREA = getattr(Qt, "ExpandedClientAreaHint", None)
+_NO_TITLEBAR_BACKGROUND = getattr(Qt, "NoTitleBarBackgroundHint", None)
+#: True only where that unified look is actually available.
+MAC_UNIFIED = IS_MAC and _EXPANDED_CLIENT_AREA is not None
 
 # The slice of Win32 this file needs. Named here rather than inline so the
 # message handling below reads as intent instead of as hex.
@@ -130,10 +155,16 @@ class TitleBar(QWidget):
         super().__init__(parent)
         self._window = window
         self.setObjectName("titleBar")
-        self.setFixedHeight(TITLE_H)
+        self.setFixedHeight(MAC_TITLE_H if MAC_UNIFIED else TITLE_H)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 0, 0)
+        if MAC_UNIFIED:
+            # The left inset clears the traffic lights, which are painted
+            # over this row. The right one replaces the caption buttons that
+            # would otherwise have stood the content off that edge.
+            layout.setContentsMargins(MAC_TRAFFIC_LIGHT_W, 0, 10, 0)
+        else:
+            layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(0)
 
         self.logo = QLabel()
@@ -154,7 +185,13 @@ class TitleBar(QWidget):
         # would lay its own out in a strip of its own, which is the strip
         # this class exists to get rid of.
         self.menu_bar = QMenuBar(self)
-        self.menu_bar.setNativeMenuBar(False)
+        # macOS puts menus in the screen's menu bar, and that is also the only
+        # place they stay usable: with an expanded client area the top strip
+        # still belongs to the system, so menus drawn there would paint but
+        # never see a press. A promoted menu bar reports a zero size hint, so
+        # it collapses out of the layout below rather than leaving a hole.
+        # Everywhere else it stays in the row, which is the point of the row.
+        self.menu_bar.setNativeMenuBar(IS_MAC)
         # Height-hugging and centered, not stretched: a QMenuBar lays its
         # items out from its top edge, so stretching it to the full bar left
         # "File" and "Export" sitting 5px above the title's baseline. The
@@ -171,6 +208,14 @@ class TitleBar(QWidget):
         self.subtitle_label = QLabel()
         self.subtitle_label.setObjectName("appSubtitle")
         layout.addWidget(self.subtitle_label, 0, Qt.AlignVCenter)
+        if IS_MAC:
+            # macOS keeps drawing the window title in the strip itself -
+            # dropping the bar's background leaves its text alone - so these
+            # would put the same name and version on the row twice. Hidden
+            # rather than removed: set_title still writes to them, and the
+            # system's copy comes from the same setWindowTitle() call.
+            self.title_label.hide()
+            self.subtitle_label.hide()
 
         layout.addStretch(1)
 
@@ -178,7 +223,14 @@ class TitleBar(QWidget):
         self.maximize_btn = _CaptionButton("maximize", self)
         self.close_btn = _CaptionButton("close", self)
         for button in (self.minimize_btn, self.maximize_btn, self.close_btn):
-            layout.addWidget(button)
+            if IS_MAC:
+                # The traffic lights already are these three, at the other
+                # end of the row. Built anyway, so everything that reaches
+                # for them - sync_window_state, maximize_hit - stays a total
+                # function instead of growing a platform check of its own.
+                button.hide()
+            else:
+                layout.addWidget(button)
 
         self.minimize_btn.clicked.connect(self._window.showMinimized)
         self.maximize_btn.clicked.connect(self.toggle_maximized)
@@ -229,16 +281,22 @@ class TitleBar(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         # Only reached for parts of the bar no child claimed, the menus and
-        # the caption buttons handle their own presses.
+        # the caption buttons handle their own presses. On macOS the strip
+        # the system still owns never gets here - it drags the window itself.
         if event.button() == Qt.LeftButton:
             handle = self._window.windowHandle()
-            if handle is not None:
-                handle.startSystemMove()
+            # The answer matters: a platform with no drag of its own says so,
+            # and swallowing the press then loses it for nothing.
+            if handle is not None and handle.startSystemMove():
                 return
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.LeftButton:
+        # macOS already honours the user's "double-click a window's title bar
+        # to" setting on the strip it owns, and that can be set to minimize,
+        # or to nothing at all. Zooming here anyway would either override the
+        # choice or fire on top of it.
+        if not IS_MAC and event.button() == Qt.LeftButton:
             self.toggle_maximized()
             return
         super().mouseDoubleClickEvent(event)
@@ -256,8 +314,10 @@ class _Grip(QWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.LeftButton:
             handle = self._window.windowHandle()
-            if handle is not None:
-                handle.startSystemResize(self._edges)
+            # False where the platform has no resize of its own to hand off
+            # to, and swallowing the press then strands it. macOS is one,
+            # which is why the window keeps its native frame there instead.
+            if handle is not None and handle.startSystemResize(self._edges):
                 return
         super().mousePressEvent(event)
 
@@ -276,6 +336,13 @@ class ResizeGrips(QObject):
         super().__init__(window)
         self._window = window
         self._grips: list[tuple[_Grip, str]] = []
+        if IS_MAC:
+            # A real window resizes from every edge on its own, and there is
+            # no system resize behind startSystemResize there to fall back
+            # on - these would be eight widgets sitting on a working border,
+            # doing nothing but swallowing the drag. reposition() below
+            # iterates the empty list, so no caller learns about this.
+            return
         for edges, cursor, where in (
             (Qt.LeftEdge, Qt.SizeHorCursor, "left"),
             (Qt.RightEdge, Qt.SizeHorCursor, "right"),
@@ -439,9 +506,48 @@ def round_corners(window: QWidget) -> None:
         pass
 
 
+def release_safe_area(window: QWidget) -> None:
+    """Let `window` lay its content out under the macOS title bar.
+
+    Qt keeps a top-level widget's layout inside the platform's safe area, and
+    with an expanded client area that area starts below the title bar - so
+    left alone, our row would sit in a strip of its own under an empty system
+    bar, the doubled caption this whole arrangement exists to avoid. Qt turns
+    that on whenever a widget gets a native handle while it is top-level, and
+    it survives reparenting: on macOS the menu bar makes handles for the
+    window and for the title bar while they are still being built. So every
+    widget in the window is cleared, not just the window. Separate windows
+    parented to it, like dialogs, are left as they are.
+    """
+    attribute = getattr(Qt, "WA_ContentsMarginsRespectsSafeArea", None)
+    if not MAC_UNIFIED or attribute is None:
+        return
+    for widget in [window, *window.findChildren(QWidget)]:
+        if widget is window or not widget.isWindow():
+            widget.setAttribute(attribute, False)
+    layout = window.layout()
+    if layout is not None:
+        layout.invalidate()
+
+
 def install(window: QWidget) -> TitleBar:
-    """Make `window` frameless and return the title bar to put at its top."""
-    window.setWindowFlag(Qt.FramelessWindowHint, True)
+    """Give `window` our own title bar and return it to put at its top.
+
+    Windows goes frameless and everything above draws the caption by hand.
+    macOS keeps its real window and drops only the title bar's *background*,
+    so this row paints through it while the traffic lights stay the system's,
+    with the hover glyphs, the inactive-grey state, Option-click zoom, native
+    full screen and edge resize that a hand-painted copy never gets. Going
+    frameless there would cost all of that, resizing included: there is no
+    system resize to hand a drag off to, and a borderless window has no
+    border of its own. Qt before 6.9 has no flag for this, so there macOS is
+    left with its stock caption rather than a window that cannot be resized.
+    """
+    if MAC_UNIFIED:
+        window.setWindowFlag(_EXPANDED_CLIENT_AREA, True)
+        window.setWindowFlag(_NO_TITLEBAR_BACKGROUND, True)
+    elif not IS_MAC:
+        window.setWindowFlag(Qt.FramelessWindowHint, True)
     title_bar = TitleBar(window)
     # Parked on the title bar rather than dropped: a QObject that only the C++
     # parent holds can have its Python half collected, and the next event

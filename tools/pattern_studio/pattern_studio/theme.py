@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from string import Template
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation
-from PySide6.QtGui import QColor, QFont, QIcon, QPalette, QPixmap
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QWidget
 
 # ----------------------------------------------------------------------
@@ -89,7 +89,11 @@ CANVAS_EMPTY_TEXT = TEXT_DIM
 
 #: Font stack. Inter is the docs site's face; the rest are the best native
 #: fallbacks so an alpha user without Inter installed still gets a modern UI
-#: font rather than Qt's default.
+#: font rather than Qt's default. macOS has none of the first four, and would
+#: otherwise land on Helvetica Neue - the pre-Yosemite system face - so _font()
+#: splices that platform's real UI font in behind Inter at runtime. It cannot
+#: be named here: macOS does not install SF Pro under a family name a stack
+#: can ask for.
 FONT_STACK = [
     "Inter",
     "Segoe UI Variable Text",
@@ -98,7 +102,13 @@ FONT_STACK = [
     "Helvetica Neue",
     "sans-serif",
 ]
-FONT_POINT_SIZE = 9
+#: Points, so it varies with the platform's idea of a logical inch: Windows
+#: calls that 96 DPI and macOS 72, which renders the same number a quarter
+#: smaller there. 12 on macOS is 9 on Windows to the pixel, which is what the
+#: hand-measured field widths in inspector.py and music_panel.py were fitted
+#: against. It reads one notch under the 13pt macOS uses for its own apps -
+#: right for a dense tool, and the alternative is refitting those widths.
+FONT_POINT_SIZE = 12 if sys.platform == "darwin" else 9
 
 # ----------------------------------------------------------------------
 # Resources
@@ -751,7 +761,13 @@ def _palette() -> QPalette:
 
 def _font() -> QFont:
     font = QFont()
-    font.setFamilies(FONT_STACK)
+    families = list(FONT_STACK)
+    if sys.platform == "darwin":
+        # Whatever this macOS calls its UI face, asked for rather than named:
+        # see FONT_STACK. Behind Inter, so a Mac with Inter installed still
+        # matches the docs site.
+        families.insert(1, QFontDatabase.systemFont(QFontDatabase.GeneralFont).family())
+    font.setFamilies(families)
     font.setPointSize(FONT_POINT_SIZE)
     return font
 
@@ -762,9 +778,21 @@ def apply_theme(app: QApplication) -> None:
     Fusion first: the native Windows style ignores large parts of a stylesheet
     (it hands those controls to the OS theme engine), so spin buttons and
     check indicators would keep their stock light-mode chrome. Fusion honours
-    QSS everywhere and renders identically on every platform.
+    QSS everywhere and renders identically on every platform. That is what
+    carries the whole look onto macOS, where the native style would otherwise
+    hand back light-mode Aqua controls under a dark palette.
     """
     app.setStyle("Fusion")
+    # On macOS, tell the platform the app is dark rather than only painting
+    # it that way. The palette below covers everything Qt draws; this covers
+    # what it does not - the window's own title bar and the screen menu bar,
+    # which sit right against our chrome and would otherwise come up in light
+    # Aqua over a near-black window. Not on Windows: there the same request
+    # also darkens the caption of every dialog for a user in light mode, which
+    # the shipping build never did. Qt 6.8 and up.
+    hints = app.styleHints()
+    if sys.platform == "darwin" and hasattr(hints, "setColorScheme"):
+        hints.setColorScheme(Qt.ColorScheme.Dark)
     app.setPalette(_palette())
     app.setFont(_font())
     app.setStyleSheet(stylesheet())

@@ -10,6 +10,8 @@ Click (or press a key) to skip, and pass --no-splash to bypass it entirely.
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import (
     QEasingCurve,
     QPoint,
@@ -73,9 +75,14 @@ class SplashScreen(QWidget):
         # briefly show two entries. FramelessWindowHint plus a translucent
         # background lets the backdrop be a circle rather than a
         # square with rounded art painted on it.
-        self.setWindowFlags(
-            Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-        )
+        flags = Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if sys.platform == "darwin":
+            # macOS works a borderless window's shadow out from the content
+            # the first time it is shown, and start() shows this one fully
+            # transparent - so the shadow it settles on is either missing or
+            # a rectangle standing behind a circle. Nothing here wants one.
+            flags |= Qt.NoDropShadowWindowHint
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setFixedSize(self.SIZE, self.SIZE)
         self.setCursor(Qt.PointingHandCursor)

@@ -1,18 +1,24 @@
-"""Rebuild pattern_studio/resources/hitliblogo.ico from hitliblogo.png.
+"""Rebuild the app icons in pattern_studio/resources/ from hitliblogo.png.
 
-Run after the logo art changes:
+Writes hitliblogo.ico for Windows and hitliblogo.icns for macOS. Run after
+the logo art changes:
 
     python tools/make_icon.py
 
+Both are built here, on any platform, rather than the .icns being left to
+macOS's own iconutil in CI: that would make the Mac icon a CI-only artifact
+no one could rebuild or eyeball locally, and it would skip the crop below.
+
 The art is 1414x1067, wider than it is tall. Scaling that straight into the
-square frames an .ico is made of squeezes it horizontally, which is exactly
+square frames an icon is made of squeezes it horizontally, which is exactly
 what the taskbar was showing. So this crops the PNG to its opaque bounds
 (the source has wide transparent side margins), fits that into each frame
 *preserving aspect*, and centers it on transparency.
 
-Frame encoding matches what the previous icon shipped, and what Windows
+.ico frame encoding matches what the previous icon shipped, and what Windows
 expects: 32-bit BMP/DIB for everything up to 128px, PNG for the 256px frame
-(a DIB that large is a quarter-megabyte on its own).
+(a DIB that large is a quarter-megabyte on its own). .icns frames are all
+PNG, in the same ten type/size pairs iconutil emits from an .iconset.
 """
 
 from __future__ import annotations
@@ -31,12 +37,37 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 RESOURCES = Path(__file__).resolve().parent.parent / "pattern_studio" / "resources"
 SOURCE = RESOURCES / "hitliblogo.png"
 TARGET = RESOURCES / "hitliblogo.ico"
+ICNS_TARGET = RESOURCES / "hitliblogo.icns"
 
 #: Frame sizes, smallest first. The set Windows picks from for the taskbar,
 #: the title bar, Explorer's various view modes and Alt-Tab.
 SIZES = (16, 24, 32, 48, 64, 72, 96, 128, 256)
 #: Sizes at or above this are stored as PNG rather than as a raw DIB.
 PNG_FROM = 256
+
+#: (OSType, pixels) for an .icns, in the order and pairing iconutil uses when
+#: it converts an .iconset. The duplicated pixel sizes are the @2x entries -
+#: ic11 is 16@2x and icp5 is a plain 32, same bitmap, different slot - and
+#: macOS wants both, because it picks by slot and not by size.
+ICNS_FRAMES = (
+    ("icp4", 16),
+    ("ic11", 32),
+    ("icp5", 32),
+    ("ic12", 64),
+    ("ic07", 128),
+    ("ic13", 256),
+    ("ic08", 256),
+    ("ic14", 512),
+    ("ic09", 512),
+    ("ic10", 1024),
+)
+
+#: How much of a macOS frame the art is allowed to fill. Apple lays app icons
+#: out on a grid where a square mark reaches about 80% of the canvas and the
+#: rest is margin, so a full-bleed icon - which is what Windows wants, and
+#: what SIZES above produces - stands visibly larger than everything around
+#: it in the Dock. Windows keeps 1.0; only the .icns is inset.
+ICNS_FILL = 0.82
 
 
 def opaque_bounds(image: QImage) -> tuple[int, int, int, int]:
@@ -69,9 +100,14 @@ def opaque_bounds(image: QImage) -> tuple[int, int, int, int]:
     return left, top, right, bottom
 
 
-def frame(art: QImage, size: int) -> QImage:
-    """`art` fitted into a size x size frame, aspect intact, centered."""
-    scaled = art.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+def frame(art: QImage, size: int, fill: float = 1.0) -> QImage:
+    """`art` fitted into a size x size frame, aspect intact, centered.
+
+    `fill` is the fraction of the frame the art may occupy; the remainder is
+    transparent margin. See ICNS_FILL for why macOS wants less than all of it.
+    """
+    box = max(1, round(size * fill))
+    scaled = art.scaled(box, box, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     canvas = QImage(size, size, QImage.Format_ARGB32)
     canvas.fill(Qt.transparent)
     painter = QPainter(canvas)
@@ -83,10 +119,15 @@ def frame(art: QImage, size: int) -> QImage:
 
 
 def as_png(image: QImage) -> bytes:
-    buffer = QBuffer(QByteArray())
+    # The QByteArray is named rather than passed inline: QBuffer borrows it
+    # rather than owning it, so an unnamed one is free to be collected while
+    # the buffer is still writing into it. With a single PNG frame that races
+    # and usually wins; called once per .icns frame it reliably crashes.
+    data = QByteArray()
+    buffer = QBuffer(data)
     buffer.open(QIODevice.WriteOnly)
     image.save(buffer, "PNG")
-    return bytes(buffer.data())
+    return bytes(data)
 
 
 def as_dib(image: QImage) -> bytes:
@@ -151,6 +192,22 @@ def build(frames: list[tuple[int, bytes]]) -> bytes:
     return bytes(out)
 
 
+def build_icns(frames: list[tuple[str, bytes]]) -> bytes:
+    """Wrap PNG frames as an .icns.
+
+    The container is as simple as it looks: the magic, the total length
+    including itself, then one chunk per frame of OSType, chunk length
+    including its own 8-byte header, and the PNG. Everything is big-endian.
+    macOS has read PNG chunks since 10.7, which is far below anything this
+    app could run on, so there is no reason to emit the older raw formats.
+    """
+    chunks = b"".join(
+        struct.pack(">4sI", kind.encode("ascii"), 8 + len(blob)) + blob
+        for kind, blob in frames
+    )
+    return struct.pack(">4sI", b"icns", 8 + len(chunks)) + chunks
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication([])  # noqa: F841 - QImage needs one
     source = QImage(str(SOURCE))
@@ -172,6 +229,16 @@ def main() -> int:
 
     TARGET.write_bytes(build(frames))
     print(f"wrote {TARGET.name}: {len(SIZES)} frames, {TARGET.stat().st_size:,} bytes")
+
+    # The cropped art is ~982px on its short side and ICNS_FILL holds even
+    # the 1024 frame's render down to ~840, so every frame here is a
+    # downscale of the real artwork rather than invented detail.
+    icns = [(kind, as_png(frame(art, size, ICNS_FILL))) for kind, size in ICNS_FRAMES]
+    ICNS_TARGET.write_bytes(build_icns(icns))
+    print(
+        f"wrote {ICNS_TARGET.name}: {len(ICNS_FRAMES)} frames, "
+        f"{ICNS_TARGET.stat().st_size:,} bytes"
+    )
     return 0
 
 

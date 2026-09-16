@@ -14,8 +14,19 @@ def test_wheel_known_points():
     # directly-computed values rather than assumed R/G/B boundaries.
     assert wheel(0) == 0xFF0000
     assert wheel(255) == 0xFF0000
-    assert wheel(85) == 0x0000FF
+    assert wheel(85) == 0x00FF00
     assert wheel(128) == 0x007E81
+    assert wheel(170) == 0x0000FF
+
+
+def test_wheel_has_no_seam():
+    # One step around the wheel never moves a channel by more than one 3-unit
+    # step. The last third once blended blue to red instead of red to green,
+    # which skipped yellow and jumped straight from blue to green.
+    for pos in range(256):
+        a, b = wheel(pos), wheel((pos + 1) % 256)
+        for shift in (16, 8, 0):
+            assert abs(((a >> shift) & 0xFF) - ((b >> shift) & 0xFF)) <= 3, pos
 
 
 def test_gen_rainbow_starts_red():

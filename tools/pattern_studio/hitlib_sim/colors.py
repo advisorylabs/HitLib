@@ -43,7 +43,7 @@ def wheel(pos: int) -> int:
         pos -= 85
         return pack_rgb(0, pos * 3, 255 - pos * 3)
     pos -= 170
-    return pack_rgb(pos * 3, 0, 255 - pos * 3)
+    return pack_rgb(pos * 3, 255 - pos * 3, 0)
 
 
 def gen_gradient(c1: int, c2: int, length: int, seamless: bool = False) -> list[int]:

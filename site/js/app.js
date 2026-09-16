@@ -105,14 +105,13 @@
     var x = rgbOf(c);
     return packRgb(Math.floor(x[0] * pct / 100), Math.floor(x[1] * pct / 100), Math.floor(x[2] * pct / 100));
   }
-  // The integer color wheel rainbow() uses, exactly as led_strand.cpp ships it
-  // (its last third blends blue back to red, so there is no yellow).
+  // NeoPixel-style integer color wheel, as rainbow() uses.
   function wheel(pos) {
     pos = 255 - (pos & 255);
     if (pos < 85) return packRgb(255 - pos * 3, 0, pos * 3);
     if (pos < 170) { pos -= 85; return packRgb(0, pos * 3, 255 - pos * 3); }
     pos -= 170;
-    return packRgb(pos * 3, 0, 255 - pos * 3);
+    return packRgb(pos * 3, 255 - pos * 3, 0);
   }
   function msToTicks(ms) { return Math.max(1, Math.round(ms / DEMO_TICK_MS)); }
   function fillFrame(frame, color) {
@@ -398,50 +397,217 @@
     }
     return HEAT_STOPS[HEAT_STOPS.length - 1][1];
   }
-  function motorTemp(i, tick) {
-    var m = HEAT_MOTORS[i];
-    var t = m.mid + m.amp * Math.sin(tick * m.rate + m.phase) + 1.5 * Math.sin(tick * 0.11 + m.phase * 3);
-    return Math.max(20, Math.min(70, t));
-  }
   function cssColor(c) {
     var x = rgbOf(c);
     return 'rgb(' + x[0] + ',' + x[1] + ',' + x[2] + ')';
   }
 
-  var heatDemos = [];
-  document.querySelectorAll('.leds[data-demo="heat"]').forEach(function (el) {
-    var seg = parseInt(el.getAttribute('data-seg'), 10) || 0;
-    heatDemos.push(addDemo(el, function (tick, frame) {
-      var temp = motorTemp(seg, tick), color = heatColor(temp), n = frame.length;
-      if (gaugeStyle === 'heat') {
-        fillFrame(frame, color);
+  // Pattern Studio's Fill sources, with its own default ranges and units.
+  // `motors: true` means one reading per drive motor, so the demo shows six
+  // gauge regions; the rest drive a single strand-wide meter.
+  var SOURCES = [
+    { id: 'battery', label: 'Battery Capacity', unit: '%', empty: 0, full: 100, motors: false, colors: [0xFF2000, 0x00FF00], reader: 'readBattery' },
+    { id: 'temp', label: 'Motor Temperature', unit: '°C', empty: 20, full: 70, motors: true, stops: HEAT_STOPS, reader: 'readTemp' },
+    { id: 'position', label: 'Motor Position', unit: '°', empty: 0, full: 360, wrap: true, motors: true, colors: [0x3AA8FF, 0xFF3FAE], reader: 'readPosition' },
+    { id: 'velocity', label: 'Motor Velocity', unit: ' rpm', empty: 0, full: 200, motors: true, colors: [0x2FD0E0, 0x9B4DFF], reader: 'readVelocity' },
+    { id: 'efficiency', label: 'Motor Efficiency', unit: '%', empty: 0, full: 100, motors: true, colors: [0xFF2000, 0x00FF00], reader: 'readEfficiency' },
+    { id: 'rotation', label: 'Rotation Sensor', unit: ' c°', empty: 0, full: 36000, wrap: true, motors: false, colors: [0x3AA8FF, 0xFF3FAE], reader: 'readRotation' },
+    { id: 'imu', label: 'IMU Heading', unit: '°', empty: 0, full: 360, wrap: true, motors: false, colors: [0x9B4DFF, 0x2FD0E0], reader: 'readHeading' },
+    { id: 'distance', label: 'Distance Sensor', unit: ' mm', empty: 0, full: 2000, motors: false, colors: [0xFFB648, 0x2FD0E0], reader: 'readDistance' },
+    { id: 'pot', label: 'Potentiometer (ADI)', unit: '°', empty: 0, full: 250, motors: false, colors: [0x9B4DFF, 0xFF3FAE], reader: 'readPot' },
+    { id: 'manual', label: 'Manual (setLevel)', unit: '', empty: 0, full: 255, motors: false, manual: true, colors: [0xFFFFFF, 0x0000FF] },
+    { id: 'custom', label: 'Custom (assign in code)', unit: '', empty: 0, full: 100, motors: false, colors: [0xFFFFFF, 0x0000FF], reader: 'myReader' }
+  ];
+  function sourceById(id) {
+    for (var i = 0; i < SOURCES.length; i++) if (SOURCES[i].id === id) return SOURCES[i];
+    return SOURCES[1];
+  }
+
+  var gaugeSource = sourceById('temp');
+  var manualLevel = 128;
+
+  // A color from the source's scale, `ratio` being 0 at Empty At and 1 at Full At.
+  function scaleAt(src, ratio) {
+    ratio = Math.max(0, Math.min(1, ratio));
+    if (src.stops) return heatColor(src.empty + ratio * (src.full - src.empty));
+    return lerpColor(src.colors[0], src.colors[1], ratio);
+  }
+  function sourceValue(src, i, tick) {
+    if (src.manual) return manualLevel;
+    var m = HEAT_MOTORS[i % HEAT_MOTORS.length];
+    var span = src.full - src.empty;
+    if (src.id === 'temp') {
+      var t = m.mid + m.amp * Math.sin(tick * m.rate + m.phase) + 1.5 * Math.sin(tick * 0.11 + m.phase * 3);
+      return Math.max(20, Math.min(70, t));
+    }
+    // Wrapping sources sweep past the end and come back round, the way an
+    // angle does; the rest drift inside the range.
+    if (src.wrap) return src.empty + mod(tick * span / 160 * (1 + i * 0.1) + i * span / 6, span);
+    var mid = src.empty + span * (0.45 + 0.08 * (i % 3));
+    return Math.max(src.empty, Math.min(src.full, mid + span * 0.33 * Math.sin(tick * m.rate + m.phase)));
+  }
+  function sourceRatio(src, value) {
+    var span = src.full - src.empty || 1;
+    var ratio = (value - src.empty) / span;
+    return src.wrap ? mod(ratio, 1) : Math.max(0, Math.min(1, ratio));
+  }
+  function formatValue(src, value) {
+    var digits = src.full - src.empty > 400 ? 0 : src.full - src.empty > 5 ? 0 : 1;
+    return value.toFixed(digits) + src.unit;
+  }
+
+  // One gauge segment (a GAUGE splice region) or the strand-wide meter.
+  function meterStep(index) {
+    return function (tick, frame) {
+      var src = gaugeSource, n = frame.length;
+      var ratio = sourceRatio(src, sourceValue(src, index, tick));
+      // Whole Segment paints one color; Fill Bar fills proportionally, each
+      // pixel carrying its own place on the scale. A strand-wide meter is
+      // always a bar.
+      if (gaugeStyle === 'heat' && src.motors) {
+        fillFrame(frame, scaleAt(src, ratio));
         return;
       }
-      // Fill Bar: proportional fill with a partly lit edge pixel, each pixel
-      // colored by its own place on the scale.
-      var fill = (temp - 20) / 50 * n, full = Math.floor(fill);
+      var fill = ratio * n, full = Math.floor(fill);
       for (var i = 0; i < n; i++) {
-        var pc = heatColor(20 + 50 * (n > 1 ? i / (n - 1) : 1));
+        var pc = scaleAt(src, n > 1 ? i / (n - 1) : 1);
         frame[i] = i < full ? pc : i === full ? scaleColor(pc, Math.round((fill - full) * 100)) : 0;
       }
-    }));
+    };
+  }
+
+  var gaugeDemos = [];
+  document.querySelectorAll('.leds[data-demo="heat"]').forEach(function (el) {
+    gaugeDemos.push(addDemo(el, meterStep(parseInt(el.getAttribute('data-seg'), 10) || 0)));
   });
+  var meterEl = document.querySelector('.leds[data-demo="meter"]');
+  if (meterEl) gaugeDemos.push(addDemo(meterEl, meterStep(0)));
+
+  // The scale strip under the demo: the whole range, Empty At to Full At.
+  var scaleEl = document.querySelector('.leds[data-demo="scale"]');
+  if (scaleEl) {
+    gaugeDemos.push(addDemo(scaleEl, function (tick, frame) {
+      for (var i = 0; i < frame.length; i++) {
+        frame[i] = scaleAt(gaugeSource, frame.length > 1 ? i / (frame.length - 1) : 1);
+      }
+    }));
+  }
 
   var gaugeRoot = document.getElementById('gauge-demo');
+
   function updateGaugeReadouts(tick) {
     if (!gaugeRoot) return;
-    var labels = gaugeRoot.querySelectorAll('.heat-label b');
-    gaugeRoot.querySelectorAll('.motor').forEach(function (g) {
-      var i = parseInt(g.getAttribute('data-motor'), 10);
-      var temp = motorTemp(i, tick);
-      var fill = cssColor(heatColor(temp));
-      var text = Math.round(temp) + ' °C';
-      g.querySelector('.motor-body').style.fill = fill;
-      g.querySelector('.motor-halo').style.fill = fill;
-      g.querySelector('.motor-temp').textContent = text;
-      if (labels[i]) labels[i].textContent = Math.round(temp) + '°';
+    var src = gaugeSource;
+    if (src.motors) {
+      var labels = gaugeRoot.querySelectorAll('.heat-label b');
+      gaugeRoot.querySelectorAll('.motor').forEach(function (g) {
+        var i = parseInt(g.getAttribute('data-motor'), 10);
+        var value = sourceValue(src, i, tick);
+        var fill = cssColor(scaleAt(src, sourceRatio(src, value)));
+        g.querySelector('.motor-body').style.fill = fill;
+        g.querySelector('.motor-halo').style.fill = fill;
+        g.querySelector('.motor-temp').textContent = formatValue(src, value);
+        if (labels[i]) labels[i].textContent = formatValue(src, value);
+      });
+    } else {
+      var readout = document.getElementById('meter-readout');
+      if (readout) {
+        readout.textContent = src.label + ' · ' + formatValue(src, sourceValue(src, 0, tick)) +
+          ' · range ' + src.empty + ' to ' + src.full + src.unit + (src.wrap ? ' (wraps)' : '');
+      }
+    }
+  }
+
+  // Builds a colored code block from [text, className] pairs.
+  function renderCode(el, tokens) {
+    if (!el) return;
+    var code = el.querySelector('code') || el;
+    while (code.firstChild) code.removeChild(code.firstChild);
+    tokens.forEach(function (tok) {
+      var text = typeof tok === 'string' ? tok : tok[0];
+      var cls = typeof tok === 'string' ? '' : tok[1];
+      var node = document.createTextNode(text);
+      if (!cls) { code.appendChild(node); return; }
+      var span = document.createElement('span');
+      span.className = cls;
+      span.appendChild(node);
+      code.appendChild(span);
     });
   }
+
+  function gaugeCodeTokens(src) {
+    var hex = function (c) { return '0x' + ('000000' + c.toString(16).toUpperCase()).slice(-6); };
+    if (src.id === 'temp') {
+      return [
+        'std::vector<LedStrand::SpliceRegion> segments;\n',
+        ['for', 't-kw'], ' (uint8_t i = ', ['0', 't-num'], '; i < ', ['6', 't-num'], '; ++i) {\n',
+        '    segments.push_back(\n        LedStrand::motorHeatGauge(i * ', ['10', 't-num'], ', ', ['9', 't-num'], ', readers[i]));\n',
+        '}\nstrand.off();   ', ['// dark base, so the gap between segments stays unlit', 't-com'],
+        '\nstrand.spliceMaskCustom(segments);'
+      ];
+    }
+    if (src.motors) {
+      return [
+        'std::vector<LedStrand::SpliceRegion> segments;\n',
+        ['for', 't-kw'], ' (uint8_t i = ', ['0', 't-num'], '; i < ', ['6', 't-num'], '; ++i) {\n',
+        '    LedStrand::SpliceRegion g;\n',
+        '    g.start = i * ', ['10', 't-num'], '; g.width = ', ['9', 't-num'], ';\n',
+        '    g.kind = LedStrand::SpliceRegionAnimKind::GAUGE;\n',
+        '    g.read = readers[i];   ', ['// one reader per motor', 't-com'], '\n',
+        '    g.emptyAt = ', [src.empty.toFixed(1), 't-num'], '; g.fullAt = ', [src.full.toFixed(1), 't-num'], ';',
+        src.wrap ? '\n    g.wrap = ' : '', src.wrap ? ['true', 't-kw'] : '', src.wrap ? ';' : '',
+        '\n    g.color = ', [hex(src.colors ? src.colors[0] : 0xFFFFFF), 't-num'], '; g.color2 = ', [hex(src.colors ? src.colors[1] : 0x0000FF), 't-num'], ';\n',
+        '    segments.push_back(g);\n}\n',
+        'strand.off();\nstrand.spliceMaskCustom(segments);'
+      ];
+    }
+    if (src.manual) {
+      return [
+        'strand.levelFill(', [hex(src.colors[0]), 't-num'], ', ', [hex(src.colors[1]), 't-num'], ', ',
+        ['/*gradient*/', 't-com'], ' ', ['true', 't-kw'], ');\n',
+        'strand.setLevel(', [String(Math.round(manualLevel)), 't-num'], ');', '   ', ['// 0-255, whenever you like', 't-com']
+      ];
+    }
+    return [
+      'strand.levelFill(', [hex(src.colors[0]), 't-num'], ', ', [hex(src.colors[1]), 't-num'], ', ',
+      ['/*gradient*/', 't-com'], ' ', ['true', 't-kw'], ');\n',
+      'strand.levelSource(', src.reader, ', ', [src.empty.toFixed(1), 't-num'], ', ', [src.full.toFixed(1), 't-num'],
+      src.wrap ? ', ' : '', src.wrap ? ['/*wrap*/', 't-com'] : '', src.wrap ? ' ' : '', src.wrap ? ['true', 't-kw'] : '', ');',
+      src.id === 'custom' ? ['\n// myReader is any double() of your own.', 't-com'] : ''
+    ];
+  }
+
+  function selectSource(id) {
+    gaugeSource = sourceById(id);
+    var src = gaugeSource;
+    if (!gaugeRoot) return;
+    gaugeRoot.classList.toggle('is-single', !src.motors);
+    gaugeRoot.classList.toggle('is-manual', !!src.manual);
+    // The motor-heat legend only describes Motor Temperature's stops; every
+    // other source gets its own Empty At -> Full At scale instead.
+    gaugeRoot.classList.toggle('is-temp', src.id === 'temp');
+    var scaleMin = document.getElementById('scale-min');
+    var scaleMax = document.getElementById('scale-max');
+    if (scaleMin) scaleMin.textContent = src.empty + src.unit;
+    if (scaleMax) scaleMax.textContent = src.full + src.unit;
+    gaugeRoot.querySelectorAll('[data-source]').forEach(function (btn) {
+      var on = btn.getAttribute('data-source') === src.id;
+      btn.classList.toggle('lit', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    renderCode(document.getElementById('gauge-code'), gaugeCodeTokens(src));
+    var caption = document.getElementById('gauge-caption');
+    if (caption) {
+      caption.textContent = src.id === 'temp'
+        ? 'Simulated readings. motorHeatGauge() colors each segment at the temperatures where a V5 motor starts losing power.'
+        : src.manual
+          ? 'Drag the slider: setLevel() is the meter with no reader attached.'
+          : 'Simulated readings. The range is Pattern Studio’s default for this source, not a limit.';
+    }
+    updateGaugeReadouts(demoTick);
+    gaugeDemos.forEach(refreshDemo);
+  }
+
   if (gaugeRoot) {
     demoHooks.push(function (tick) { if (tick % 4 === 0) updateGaugeReadouts(tick); });
     gaugeRoot.querySelectorAll('[data-gauge-style]').forEach(function (btn) {
@@ -452,9 +618,22 @@
           b.classList.toggle('active', on);
           b.setAttribute('aria-pressed', on ? 'true' : 'false');
         });
-        heatDemos.forEach(refreshDemo);
+        gaugeDemos.forEach(refreshDemo);
       });
     });
+    gaugeRoot.querySelectorAll('[data-source]').forEach(function (btn) {
+      btn.addEventListener('click', function () { selectSource(btn.getAttribute('data-source')); });
+    });
+    var manualRange = document.getElementById('meter-level');
+    if (manualRange) {
+      manualRange.addEventListener('input', function () {
+        manualLevel = Math.max(0, Math.min(255, parseInt(manualRange.value, 10) || 0));
+        renderCode(document.getElementById('gauge-code'), gaugeCodeTokens(gaugeSource));
+        updateGaugeReadouts(demoTick);
+        gaugeDemos.forEach(refreshDemo);
+      });
+    }
+    selectSource('temp');
   }
 
   /* profile modes */

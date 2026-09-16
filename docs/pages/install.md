@@ -77,9 +77,11 @@ void opcontrol() {
 is a desktop GUI for designing and live-previewing LED profiles without flashing a
 brain, then exporting them as ready-to-include HitLib C++.
 
-Download the prebuilt Windows build from the
-[Releases page](https://github.com/advisorylabs/hitlib/releases)
-(`HitLibPatternStudio-*-windows.zip`), or run it from source on any platform:
+Download a prebuilt build from the
+[Releases page](https://github.com/advisorylabs/hitlib/releases) -
+`HitLibPatternStudio-*-windows.zip` for Windows, `-macos-apple-silicon.zip`
+or `-macos-intel.zip` for macOS 13 or later - or run it from source on any
+platform:
 
 ```bash
 git clone https://github.com/advisorylabs/hitlib.git
@@ -87,6 +89,12 @@ cd hitlib/tools/pattern_studio
 pip install -e .
 pattern-studio
 ```
+
+The Mac build is not signed with an Apple developer certificate, so macOS
+blocks the first launch. Drag the app into Applications, double-click it and
+dismiss the warning, then open **System Settings > Privacy & Security**,
+scroll to Security and click **Open Anyway**. Confirm when macOS asks again and
+enter your Mac password. It opens normally after that.
 
 ### Getting a design onto the robot
 

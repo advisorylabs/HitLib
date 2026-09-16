@@ -18,7 +18,32 @@ defaults:
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # A break on one platform must not cancel the others. On a release that
+      # would mean one bad runner silently dropping every other download.
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            slug: windows
+            label: Windows (x64)
+          # Pinned rather than macos-latest, which now rolls forward on its
+          # own. Two legs because there is no universal2 build to be had here:
+          # the Python these runners provide is single-architecture, and
+          # PyInstaller refuses to make a fat binary out of a thin one. Nearly
+          # every Mac bought since late 2020 is Apple silicon, but school carts
+          # still run Intel MacBooks, and an Apple silicon .app gives those a
+          # "bad CPU type" error with nothing to act on.
+          - runner: macos-15
+            slug: macos-apple-silicon
+            label: macOS (Apple silicon)
+          # The last Intel image Actions offers; it goes away around Aug 2027,
+          # and this leg goes with it.
+          - runner: macos-15-intel
+            slug: macos-intel
+            label: macOS (Intel)
     steps:
       - uses: actions/checkout@v4
 
@@ -31,23 +56,51 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,build]"
 
+      # tests/conftest.py forces QT_QPA_PLATFORM=offscreen before PySide6 is
+      # imported, so this is headless on every runner with no display to set up.
       - name: Run tests
         run: pytest -q
 
-      - name: Build executable
+      - name: Build
         run: pyinstaller --noconfirm HitLibPatternStudio.spec
 
-      - name: Package artifact
+      # One reader for both platforms rather than a PowerShell parser and a sed
+      # one to keep in step. pattern_studio/__init__.py is three lines and
+      # imports nothing, so this costs nothing and cannot drift from the
+      # version the spec file stamps into the build.
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python -c 'import pattern_studio; print(pattern_studio.__version__)')
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = (Select-String -Path pattern_studio/__init__.py -Pattern '__version__ = "(.*)"').Matches.Groups[1].Value
-          Compress-Archive -Path dist/HitLibPatternStudio.exe -DestinationPath "HitLibPatternStudio-$version-windows.zip"
+          Compress-Archive -Path dist/HitLibPatternStudio.exe -DestinationPath "HitLibPatternStudio-${{ steps.version.outputs.value }}-${{ matrix.slug }}.zip"
+
+      # ditto, not zip: a .app is a directory of symlinks (Qt's framework
+      # Versions/Current) and executable Mach-O files. ditto is the archiver
+      # Finder's own Compress uses, and keeps symlinks as symlinks and the
+      # executable bit set. A plain zip flattens both and the download will not
+      # launch - on Apple silicon it refuses outright, because breaking the
+      # bundle breaks the signature it insists on.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --keepParent "dist/HitLib Pattern Studio.app" "HitLibPatternStudio-${{ steps.version.outputs.value }}-${{ matrix.slug }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hitlib-pattern-studio-windows
+          # Per leg: upload-artifact rejects a name it has already seen.
+          name: hitlib-pattern-studio-${{ matrix.slug }}
           path: tools/pattern_studio/HitLibPatternStudio-*.zip
 
+      # Each leg uploads only its own zip - the glob runs in that runner's own
+      # working directory - and every asset name is distinct, so the three
+      # uploads do not race.
       - name: Attach to GitHub Release
         if: github.event_name == 'release'
         env:

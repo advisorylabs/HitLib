@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSettings, QSize, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -271,6 +271,7 @@ class MainWindow(QMainWindow):
         # both fit in the center column at default size, without falling back
         # to controls_scroll's horizontal scrollbar.
         self.resize(1500, 800)
+        window_chrome.release_safe_area(self)
 
     # ------------------------------------------------------------------
     # File menu
@@ -278,13 +279,15 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         menu = self.title_bar.menu_bar.addMenu("&File")
-        menu.addAction("&New", self._file_new)
-        menu.addAction("&Open...", self._file_open)
+        new_action = menu.addAction("&New", self._file_new)
+        open_action = menu.addAction("&Open...", self._file_open)
         menu.addSeparator()
-        menu.addAction("&Save", self._file_save)
-        menu.addAction("Save &As...", self._file_save_as)
+        save_action = menu.addAction("&Save", self._file_save)
+        save_as_action = menu.addAction("Save &As...", self._file_save_as)
         menu.addSeparator()
         menu.addAction("&Import...", self._file_import)
+        if window_chrome.IS_MAC:
+            self._add_mac_file_keys(menu, new_action, open_action, save_action, save_as_action)
 
         export_menu = self.title_bar.menu_bar.addMenu("&Export")
         export_menu.addAction("Export Current Strand as C++...", self._export_save)
@@ -296,6 +299,50 @@ class MainWindow(QMainWindow):
         self._deploy_action = export_menu.addAction("", self._deploy)
         export_menu.addAction("Choose PROS Project...", self._choose_project)
         self._refresh_deploy_action()
+
+    def _add_mac_file_keys(self, menu, new_action, open_action, save_action, save_as_action) -> None:
+        """What the File menu needs on macOS and nowhere else.
+
+        The menus live in the screen's menu bar there, where Alt mnemonics do
+        not exist, so without Cmd shortcuts File has no keyboard route at all.
+        Windows deliberately gets none of this: nothing in File asks before it
+        acts, and a new Ctrl+N or Ctrl+W there would throw the open design
+        away on a stray keypress where today it takes a click.
+
+        There is no View menu with a full-screen item either. AppKit adds its
+        own "Enter Full Screen" to any menu titled View, so one of ours would
+        stand next to it as a second copy; the green button and Globe+F
+        already cover it.
+        """
+        for action, key in (
+            (new_action, QKeySequence.StandardKey.New),
+            (open_action, QKeySequence.StandardKey.Open),
+            (save_action, QKeySequence.StandardKey.Save),
+            (save_as_action, QKeySequence.StandardKey.SaveAs),
+        ):
+            action.setShortcut(key)
+        menu.addSeparator()
+        close_action = menu.addAction("Close Window", self.close)
+        close_action.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Close))
+
+        about = QAction("About HitLib Pattern Studio", self)
+        # AboutRole moves it out of File into the application menu, where the
+        # About slot already exists and would otherwise sit empty.
+        about.setMenuRole(QAction.MenuRole.AboutRole)
+        about.triggered.connect(self._show_about)
+        menu.addAction(about)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About HitLib Pattern Studio",
+            f"<b>HitLib Pattern Studio</b> {__version__}<br><br>"
+            "Designs LED profiles for HitLib and exports them as C++ "
+            "you include in a VEX V5 project.<br><br>"
+            "Advisory Labs - 96671H Hitmen. MPL-2.0 licensed.<br>"
+            '<a href="https://github.com/advisorylabs/HitLib">'
+            "github.com/advisorylabs/HitLib</a>",
+        )
 
     def _file_new(self) -> None:
         self._clear_sessions()
@@ -381,6 +428,7 @@ class MainWindow(QMainWindow):
             # the window has been shown.
             window_chrome.round_corners(self)
             window_chrome.enable_native_snap(self)
+            window_chrome.release_safe_area(self)
             self._chrome_hooked = True
 
     def nativeEvent(self, event_type, message):  # noqa: N802 (Qt override)
@@ -454,7 +502,9 @@ class MainWindow(QMainWindow):
         if not p.suffix:
             p = p.with_suffix(".hpp")
         try:
-            p.write_text(code_for(p.name), encoding="utf-8")
+            # newline="" for the same reason deploy.Project.deploy() does it:
+            # the same design has to export the same bytes on every platform.
+            p.write_text(code_for(p.name), encoding="utf-8", newline="")
         except OSError as exc:
             QMessageBox.critical(self, "Export Failed", f"Couldn't write {p}:\n{exc}")
 

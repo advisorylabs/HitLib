@@ -8,7 +8,14 @@ dynamic = ["version"]
 description = "Desktop pattern designer/previewer for HitLib LED profiles"
 license = "MPL-2.0"
 requires-python = ">=3.10"
-dependencies = ["PySide6>=6.6"]
+# 6.9 on macOS is where the window flags the unified title bar needs exist -
+# see window_chrome.install(). Below that the app still runs there, it just
+# falls back to a stock light caption, so the floor is raised only for the
+# platform that cares.
+dependencies = [
+  "PySide6>=6.6; sys_platform != 'darwin'",
+  "PySide6>=6.9; sys_platform == 'darwin'",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

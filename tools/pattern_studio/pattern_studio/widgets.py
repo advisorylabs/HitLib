@@ -62,7 +62,13 @@ class ColorButton(QPushButton):
 
     def _pick(self) -> None:
         r, g, b = (self._color >> 16) & 0xFF, (self._color >> 8) & 0xFF, self._color & 0xFF
-        picked = QColorDialog.getColor(QColor(r, g, b), self, "Pick Color")
+        # Qt's own dialog, not the platform's: macOS would open the system
+        # colour panel, a floating window that follows the OS appearance and
+        # ignores the dark palette this whole app is painted in. Qt's honours
+        # the stylesheet, so the swatch grid looks the same everywhere.
+        picked = QColorDialog.getColor(
+            QColor(r, g, b), self, "Pick Color", QColorDialog.DontUseNativeDialog
+        )
         if picked.isValid():
             self._color = (picked.red() << 16) | (picked.green() << 8) | picked.blue()
             self._refresh_style()

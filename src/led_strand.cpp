@@ -32,7 +32,7 @@ uint32_t wheel(uint8_t pos) {
         return ((uint32_t)(pos * 3) << 8) | (uint32_t)(255 - pos * 3);
     }
     pos -= 170;
-    return ((uint32_t)(pos * 3) << 16) | (uint32_t)(255 - pos * 3);
+    return ((uint32_t)(pos * 3) << 16) | ((uint32_t)(255 - pos * 3) << 8);
 }
 
 } // namespace

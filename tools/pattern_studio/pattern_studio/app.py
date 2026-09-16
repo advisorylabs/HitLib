@@ -51,7 +51,12 @@ def main() -> None:
     # and then restyles itself a frame later.
     theme.apply_theme(app)
     icon = QIcon(str(_icon_path()))
-    app.setWindowIcon(icon)
+    # Not in the macOS bundle: there the application icon *is* the Dock tile,
+    # and this .ico is full-bleed Windows art that would replace the .icns -
+    # inset to Apple's icon grid - the moment the app finished launching. Run
+    # from source on a Mac there is no bundle icon, so it still applies.
+    if not (sys.platform == "darwin" and getattr(sys, "frozen", False)):
+        app.setWindowIcon(icon)
 
     if "--no-splash" in sys.argv:
         window = MainWindow()

@@ -85,9 +85,14 @@ pip install -e .
 pattern-studio
 ```
 
-Prebuilt Windows binaries are on the
-[Releases page](https://github.com/advisorylabs/HitLib/releases)
-(`HitLibPatternStudio-*-windows.zip`).
+Prebuilt builds are on the
+[Releases page](https://github.com/advisorylabs/HitLib/releases):
+`HitLibPatternStudio-*-windows.zip` for Windows, and
+`-macos-apple-silicon.zip` or `-macos-intel.zip` for macOS 13 or later.
+
+The Mac build is unsigned, so macOS blocks the first launch. Try to open it
+once, then click **Open Anyway** in **System Settings > Privacy & Security**,
+confirm, and enter your password.
 
 Show it your PROS project once - drag the project folder onto the window, or
 **Export > Choose PROS Project...** - and **Deploy** writes the header straight
