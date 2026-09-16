@@ -159,6 +159,14 @@ def test_deploying_writes_the_header_where_the_compiler_looks(project):
     assert written.read_text(encoding="utf-8") == "// code\n"
 
 
+def test_deploying_writes_exactly_the_generated_text(project):
+    # Not Windows' CRLF: the same design has to deploy the same bytes on every
+    # platform.
+    written = deploy.open_project(project).deploy("hitlib_studio.hpp", "// one\n// two\n")
+
+    assert written.read_bytes() == b"// one\n// two\n"
+
+
 def test_deploying_again_overwrites_rather_than_piling_up(project):
     target = deploy.open_project(project)
     target.deploy("hitlib_studio.hpp", "// first\n")
@@ -195,6 +203,25 @@ def test_deploy_writes_the_design_into_the_project(qapp, project, isolated_setti
     body = header.read_text(encoding="utf-8")
     assert "namespace hitlib::studio {" in body
     assert "inline LedStrand strand{adiPort, length, refreshMs};" in body
+
+
+def test_deploy_and_export_all_write_the_same_bytes(qapp, project, isolated_settings, tmp_path, monkeypatch):
+    # Two routes to the same header. Saved under the same name they must be
+    # identical files, line endings included, or a team comparing them sees a
+    # whole-file diff that isn't a change.
+    win = MainWindow()
+    win._set_project(deploy.open_project(project))
+    win._deploy()
+    win._deploy_dialog.close()
+
+    exported = tmp_path / "exported" / "hitlib_studio.hpp"
+    exported.parent.mkdir()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(exported), ""))
+    win._export_all_save()
+
+    deployed = (project / "include" / "hitlib_studio.hpp").read_bytes()
+    assert b"\r\n" not in deployed
+    assert deployed == exported.read_bytes()
 
 
 def test_deploying_into_a_vexcode_project_writes_a_vexcode_export(

@@ -162,10 +162,14 @@ class Project:
         already includes, rather than beside it as a second copy. In a VEXcode
         Pro V5 project the header is also listed in the `.v5code`, after it is
         written, so a VEXcode that reloads on seeing the list change finds it.
+
+        Written with newline="" so the file holds exactly the generated text:
+        otherwise Windows turns every line ending into CRLF, and the same design
+        deploys different bytes there than on a Mac, or than Export writes.
         """
         self.include_dir.mkdir(parents=True, exist_ok=True)
         destination = self.header_path(header_name)
-        destination.write_text(code, encoding="utf-8")
+        destination.write_text(code, encoding="utf-8", newline="")
         if self.platform is Platform.VEXCODE:
             _list_in_v5code(self.root, f"{INCLUDE_DIR}/{header_name}")
         return destination

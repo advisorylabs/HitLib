@@ -81,6 +81,8 @@ def test_export_save_writes_file(qapp, monkeypatch, tmp_path):
     assert out_path.exists()
     text = out_path.read_text(encoding="utf-8")
     assert "s.setColor(0x123456);" in text
+    # LF on every platform, so the same design exports the same bytes.
+    assert b"\r\n" not in out_path.read_bytes()
 
 
 def test_export_save_names_the_header_after_the_chosen_filename(qapp, monkeypatch, tmp_path):
