@@ -7,7 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSettings, QSize, Qt
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
