@@ -1,6 +1,6 @@
 {
   "name": "HitLib",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "target": "v5",
   "description": "HITLIB LED animation and control library for VEX V5",
   "keywords": ["led", "animation", "control", "vex"],
@@ -15,6 +15,7 @@
     "include/hitlib/led_profile.hpp",
     "include/hitlib/led_sequencer.hpp",
     "include/hitlib/led_strand.hpp",
+    "include/hitlib/platform.hpp",
     "include/hitlib/profiles/classic.hpp",
     "lib/hitlib.a"
   ]

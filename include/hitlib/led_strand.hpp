@@ -1,7 +1,7 @@
 #pragma once
 #include "led_profile.hpp"
-#include "pros/adi.hpp"
-#include "pros/rtos.hpp"
+#include "platform.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -18,7 +18,7 @@ namespace hitlib {
 /**
  * @brief Driver for a single WS2812B-compatible LED strip on a VEX ADI port.
  *
- * LedStrand owns one hardware `pros::adi::Led` and drives it from a
+ * LedStrand owns one addressable-LED ADI port and drives it from a
  * task-managed refresh loop via LedGroup.  All public animation methods are
  * **thread-safe**, they take effect on the next refresh tick.
  *
@@ -56,6 +56,21 @@ public:
     // ========================================================================
     /// @name Types
     /// @{
+
+    /**
+     * @brief A port on an ADI expander: the Smart Port the expander is plugged
+     *        into, and the ADI port on it.
+     *
+     * Written as a braced pair, the same way PROS writes its own expander
+     * ports:
+     * @code{.cpp}
+     * hitlib::LedStrand strand({2, 1}, 63);   // expander on Smart Port 2, ADI port A
+     * @endcode
+     */
+    struct ExpanderPort {
+        uint8_t smartPort; ///< Smart Port the expander is connected to (1–21).
+        uint8_t adiPort;   ///< ADI port on the expander (1–8).
+    };
 
     /**
      * @brief One colored segment in a bitscroll pattern.
@@ -238,12 +253,30 @@ public:
     /**
      * @brief Construct a strand on an ADI expander port.
      *
-     * @param smartPort  Smart port the expander is connected to (1–21).
-     * @param adiPort    ADI port on the expander (1–8).
+     * @code{.cpp}
+     * hitlib::LedStrand strand({2, 1}, 63);   // Smart Port 2, ADI port A, 63 LEDs
+     * @endcode
+     *
+     * @param port       Smart Port of the expander, and ADI port on it.
      * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
      * @param refreshMs  Refresh interval in milliseconds (default 20 ms).
      */
-    LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs = 20);
+    LedStrand(ExpanderPort port, uint8_t length, uint32_t refreshMs = 20);
+
+    /**
+     * @brief Construct a strand on an ADI expander port, from four numbers.
+     *
+     * Same as `LedStrand({smartPort, adiPort}, length, refreshMs)`.  The
+     * interval has no default here: three bare numbers always mean
+     * `(adiPort, length, refreshMs)`, since nothing else could tell
+     * `(2, 1, 63)` the expander apart from `(2, 1, 63)` the brain port.
+     *
+     * @param smartPort  Smart port the expander is connected to (1–21).
+     * @param adiPort    ADI port on the expander (1–8).
+     * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
+     * @param refreshMs  Refresh interval in milliseconds.
+     */
+    LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs);
 
     /// @}
 
@@ -254,7 +287,8 @@ public:
     /**
      * @brief Initialize the hardware LED object.
      *
-     * Must be called from PROS `initialize()` (or before the first tick).
+     * Must be called from PROS `initialize()` or VEXcode's `main()` (or before
+     * the first tick).
      * Safe to call multiple times, subsequent calls are no-ops.
      */
     void init();
@@ -806,8 +840,8 @@ private:
     uint8_t  smartPort  = 0;
     uint8_t  length;
     uint32_t refreshMs;
-    pros::adi::Led* led = nullptr;
-    pros::Mutex mutex;
+    platform::AdiLed* led = nullptr;
+    platform::Mutex mutex;
 
     enum class AnimMode : uint8_t { STATIC, SHIFT, TWINKLE, FLASH, LEVEL };
 

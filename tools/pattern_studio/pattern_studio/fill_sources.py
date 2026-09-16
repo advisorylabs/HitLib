@@ -16,8 +16,12 @@ Two entries are not devices:
     code that the next export would overwrite.
 
 Everything downstream reads this table rather than hard-coding source names:
-the inspector builds its dropdown from ORDER, codegen renders `expr`/`device`,
-and the preview uses the ranges to sweep something plausible.
+the inspector builds its dropdown from ORDER, codegen renders `expr`/`device`
+(or `vex_setup`/`vex_read` for a VEXcode export), and the preview uses the
+ranges to sweep something plausible.
+
+A source reads the same units on both platforms, so one design's Empty/Full
+range means the same thing whichever one it is exported for.
 """
 
 from __future__ import annotations
@@ -28,6 +32,10 @@ from hitlib_sim import MOTOR_HEAT_STOPS
 
 MANUAL = "manual"
 CUSTOM = "custom"
+
+#: SDK headers every VEXcode reader needs. The VEX device classes all come in
+#: through v5_vcs.h, and the battery call through v5.h.
+VEX_INCLUDES = ("v5.h", "v5_vcs.h")
 
 #: Port spaces a source can want. Smart ports are 1-21 on the brain, ADI ports
 #: 1-8 ('A'-'H'), and "" means the source needs no port at all.
@@ -62,6 +70,13 @@ class FillSource:
     expr: str = ""
     #: PROS header the generated reader needs, added to the export's includes.
     include: str = ""
+    #: The VEXcode reader, as statements that set a device up (formatted with
+    #: `port`, the number the GUI shows, and `index`, that port counted from
+    #: 0) and the expression that reads it. VEX device objects take a port
+    #: constant rather than a number, and an ADI device needs a triport first,
+    #: so a single device/call pair does not fit.
+    vex_setup: str = ""
+    vex_read: str = ""
     #: One line shown under the dropdown - what this bar ends up showing.
     hint: str = ""
     #: Default color scale for a Gauge region on this source, in its own units.
@@ -86,6 +101,7 @@ _SOURCES: tuple[FillSource, ...] = (
         full_default=100,
         expr="pros::battery::get_capacity()",
         include="pros/misc.hpp",
+        vex_read="vexBatteryCapacityGet()",
         hint="A fuel gauge - the bar empties as the battery does.",
     ),
     FillSource(
@@ -100,6 +116,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Motor",
         call="get_temperature()",
         include="pros/motors.hpp",
+        vex_setup="static vex::motor device(vex::PORT{port});",
+        vex_read="device.temperature(vex::temperatureUnits::celsius)",
         hint="Fills as a motor heats up - full is roughly where it shuts down.",
         # The V5's own derating schedule, shared with LedStrand::motorHeatGauge()
         # rather than restated, so the GUI preset and the C++ one cannot drift.
@@ -116,6 +134,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Motor",
         call="get_position()",
         include="pros/motors.hpp",
+        vex_setup="static vex::motor device(vex::PORT{port});",
+        vex_read="device.position(vex::rotationUnits::deg)",
         hint="Fills as a motor turns. With Wrap on, one bar per revolution.",
     ),
     FillSource(
@@ -128,6 +148,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Motor",
         call="get_actual_velocity()",
         include="pros/motors.hpp",
+        vex_setup="static vex::motor device(vex::PORT{port});",
+        vex_read="device.velocity(vex::velocityUnits::rpm)",
         hint="A speedometer. Worth some smoothing - the reading is noisy.",
     ),
     FillSource(
@@ -140,6 +162,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Motor",
         call="get_efficiency()",
         include="pros/motors.hpp",
+        vex_setup="static vex::motor device(vex::PORT{port});",
+        vex_read="device.efficiency(vex::percentUnits::pct)",
         hint="Drops as a motor works against a load - a stall warning bar.",
     ),
     FillSource(
@@ -154,6 +178,9 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Rotation",
         call="get_angle()",
         include="pros/rotation.hpp",
+        vex_setup="static vex::rotation device(vex::PORT{port});",
+        # VEX reads whole degrees; scaled so the range stays in centidegrees.
+        vex_read="device.angle(vex::rotationUnits::deg) * 100.0",
         hint="Absolute shaft angle in centidegrees - 36000 is one full turn.",
     ),
     FillSource(
@@ -167,6 +194,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Imu",
         call="get_heading()",
         include="pros/imu.hpp",
+        vex_setup="static vex::inertial device(vex::PORT{port});",
+        vex_read="device.heading(vex::rotationUnits::deg)",
         hint="Which way the robot faces, as a bar that goes round with it.",
     ),
     FillSource(
@@ -179,6 +208,8 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::Distance",
         call="get()",
         include="pros/distance.hpp",
+        vex_setup="static vex::distance device(vex::PORT{port});",
+        vex_read="device.objectDistance(vex::distanceUnits::mm)",
         hint="How far away something is. Swap Empty/Full for a proximity bar.",
     ),
     FillSource(
@@ -191,6 +222,12 @@ _SOURCES: tuple[FillSource, ...] = (
         device="pros::adi::Potentiometer",
         call="get_angle()",
         include="pros/adi.hpp",
+        # The brain's own 3-wire ports are the internal device on PORT22.
+        vex_setup=(
+            "static vex::triport ports(vex::PORT22); "
+            "static vex::pot device(ports.Port[{index}]);"
+        ),
+        vex_read="device.angle(vex::rotationUnits::deg)",
         hint="An analog angle - a lift or arm's position on an ADI port.",
     ),
     FillSource(

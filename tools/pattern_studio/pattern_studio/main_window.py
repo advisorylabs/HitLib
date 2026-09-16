@@ -28,6 +28,7 @@ from .codegen import (
     generate_cpp,
     generate_document_cpp,
     paste_block,
+    document_header_name,
     suggested_header_name,
     validate_document_for_export,
     validate_for_export,
@@ -39,6 +40,7 @@ from .group_edit import apply_changes, diff_config
 from .inspector import InspectorPanel
 from .models import AnimationKind, Document, MusicConfig, StrandConfig
 from .music_panel import MusicPanel
+from .platforms import Platform
 from .serialization import load_document, save_document
 from .session import StrandSession
 from .strand_list import StrandListPanel
@@ -47,17 +49,7 @@ from . import window_chrome
 
 _FILE_FILTER = "HitLib Pattern Studio Profile (*.hlprofile);;JSON (*.json);;All Files (*)"
 _DEFAULT_SUFFIX = ".hlprofile"
-_CPP_FILE_FILTER = "C++ Header (*.hpp);;All Files (*)"
-#: Default filename offered by the Export All save dialog.
-_DOCUMENT_HEADER_NAME = "led_profiles.hpp"
-
-#: What Deploy always writes, whatever the design is called.
-#:
-#: Fixed, not derived from the design name: renaming a strand would otherwise
-#: deploy under a new name and leave the previous header in place, still
-#: included by main.cpp. The file also defines hitlib::studio, so a project can
-#: only carry one.
-_STUDIO_HEADER_NAME = "hitlib_studio.hpp"
+_CPP_FILE_FILTER = "C++ Header (*.hpp *.h);;All Files (*)"
 
 #: Where the remembered deploy target lives. Named explicitly rather than left
 #: to QApplication, so a MainWindow built outside app.main() reads the same
@@ -65,6 +57,7 @@ _STUDIO_HEADER_NAME = "hitlib_studio.hpp"
 _SETTINGS_ORG = "AdvisoryLabs"
 _SETTINGS_APP = "HitLib Pattern Studio"
 _SETTINGS_PROJECT_KEY = "deploy/project_root"
+_SETTINGS_PLATFORM_KEY = "export/platform"
 
 
 def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
@@ -122,11 +115,18 @@ class MainWindow(QMainWindow):
         self._baseline_index = -1
         self._running = True
         self._current_file_path: Path | None = None
-        # The PROS project Deploy writes into, remembered across runs.
+        # The robot project Deploy writes into, remembered across runs.
         # _deploy_action is held so its label can name that destination.
         self._deploy_action = None
         self._deploy_dialog: DeployDialog | None = None
         self._project = self._remembered_project()
+        # What file and clipboard exports are generated for. Follows the
+        # project whenever one is picked, since that is almost always the
+        # robot the export is headed to; Deploy always uses the project's own.
+        self._platform_actions = {}
+        self._platform = (
+            self._project.platform if self._project is not None else self._remembered_platform()
+        )
         self.setAcceptDrops(True)
         # The document's one song. Held here rather than on any strand: see
         # models.MusicConfig and the Song bar under the preview.
@@ -295,9 +295,19 @@ class MainWindow(QMainWindow):
         export_menu.addSeparator()
         export_menu.addAction("Copy Current Strand C++ to Clipboard", self._export_clipboard)
         export_menu.addSeparator()
+        platform_menu = export_menu.addMenu("Target &Platform")
+        platform_group = QActionGroup(platform_menu)
+        for platform in Platform:
+            action = platform_menu.addAction(platform.label)
+            action.setCheckable(True)
+            action.setChecked(platform is self._platform)
+            action.triggered.connect(lambda _checked, p=platform: self._set_platform(p))
+            platform_group.addAction(action)
+            self._platform_actions[platform] = action
+        export_menu.addSeparator()
         # Label is filled in by _refresh_deploy_action(), which names the project.
         self._deploy_action = export_menu.addAction("", self._deploy)
-        export_menu.addAction("Choose PROS Project...", self._choose_project)
+        export_menu.addAction("Choose Robot Project...", self._choose_project)
         self._refresh_deploy_action()
 
     def _add_mac_file_keys(self, menu, new_action, open_action, save_action, save_as_action) -> None:
@@ -490,7 +500,7 @@ class MainWindow(QMainWindow):
         config = self._current_config_or_warn()
         if config is None:
             return None
-        return generate_cpp(config, header_name, self.music)
+        return generate_cpp(config, header_name, self.music, self._platform)
 
     def _write_export(self, code_for: Callable[[str], str], title: str, suggested: str) -> None:
         """Ask for a path, then generate. The chosen filename goes into the
@@ -500,7 +510,7 @@ class MainWindow(QMainWindow):
             return
         p = Path(path)
         if not p.suffix:
-            p = p.with_suffix(".hpp")
+            p = p.with_suffix(self._platform.header_suffix)
         try:
             # newline="" for the same reason deploy.Project.deploy() does it:
             # the same design has to export the same bytes on every platform.
@@ -513,9 +523,9 @@ class MainWindow(QMainWindow):
         if config is None:
             return
         self._write_export(
-            lambda name: generate_cpp(config, name, self.music),
+            lambda name: generate_cpp(config, name, self.music, self._platform),
             "Export C++ Profile",
-            suggested_header_name(config.name),
+            suggested_header_name(config.name, self._platform),
         )
 
     def _export_all_save(self) -> None:
@@ -523,9 +533,9 @@ class MainWindow(QMainWindow):
         if configs is None:
             return
         self._write_export(
-            lambda name: generate_document_cpp(configs, name, self.music),
+            lambda name: generate_document_cpp(configs, name, self.music, self._platform),
             "Export All Strands as C++",
-            _DOCUMENT_HEADER_NAME,
+            document_header_name(self._platform),
         )
 
     def _export_clipboard(self) -> None:
@@ -535,7 +545,7 @@ class MainWindow(QMainWindow):
         QGuiApplication.clipboard().setText(code)
 
     # ------------------------------------------------------------------
-    # Deploying into a PROS project
+    # Deploying into a robot project
     # ------------------------------------------------------------------
 
     def _settings(self) -> QSettings:
@@ -556,7 +566,19 @@ class MainWindow(QMainWindow):
     def _set_project(self, project: deploy.Project) -> None:
         self._project = project
         self._settings().setValue(_SETTINGS_PROJECT_KEY, str(project.root))
+        self._set_platform(project.platform)
         self._refresh_deploy_action()
+
+    def _remembered_platform(self) -> Platform:
+        return Platform.parse(self._settings().value(_SETTINGS_PLATFORM_KEY, "", type=str))
+
+    def _set_platform(self, platform: Platform) -> None:
+        """Make @p platform what exports are generated for, and tick it."""
+        self._platform = platform
+        self._settings().setValue(_SETTINGS_PLATFORM_KEY, platform.value)
+        action = self._platform_actions.get(platform)
+        if action is not None:
+            action.setChecked(True)
 
     def _refresh_deploy_action(self) -> None:
         """Name the destination in the menu item.
@@ -567,24 +589,29 @@ class MainWindow(QMainWindow):
         if self._deploy_action is None:
             return
         if self._project is None:
-            self._deploy_action.setText("&Deploy to PROS Project...")
-            self._deploy_action.setToolTip("Pick a project, then write the export into it")
+            self._deploy_action.setText("&Deploy to Robot Project...")
+            self._deploy_action.setToolTip("Pick a PROS or VEXcode project, then write the export into it")
         else:
             self._deploy_action.setText(f'&Deploy to "{self._project.root.name}"')
-            self._deploy_action.setToolTip(str(self._project.include_dir))
+            self._deploy_action.setToolTip(
+                f"{self._project.platform.label} project - {self._project.include_dir}"
+            )
 
     def _choose_project(self) -> deploy.Project | None:
         start = str(self._project.root) if self._project else ""
-        path = QFileDialog.getExistingDirectory(self, "Choose PROS Project Folder", start)
+        path = QFileDialog.getExistingDirectory(self, "Choose Robot Project Folder", start)
         if not path:
             return None
         project = deploy.open_project(Path(path))
         if project is None:
             QMessageBox.warning(
                 self,
-                "Not a PROS Project",
-                f"No {deploy.MANIFEST} in {path}, or in the folders above it.\n\n"
-                "Pick the folder that holds your project.pros.",
+                "Not a Robot Project",
+                f"{path} isn't a PROS or VEXcode V5 C++ project, and neither is any "
+                "folder above it.\n\n"
+                f"Pick the folder that holds your {deploy.MANIFEST} (PROS), "
+                f"your {deploy.V5CODE_SUFFIX} file (VEXcode), or the .vscode "
+                "folder a VS Code VEX project keeps its settings in.",
             )
             return None
         self._set_project(project)
@@ -606,10 +633,11 @@ class MainWindow(QMainWindow):
 
         # Asked before the write, since afterwards every deploy looks like a
         # repeat one.
-        first_time = not project.header_path(_STUDIO_HEADER_NAME).exists()
-        code = generate_document_cpp(configs, _STUDIO_HEADER_NAME, self.music)
+        header_name = project.studio_header_name
+        first_time = not project.header_path(header_name).exists()
+        code = generate_document_cpp(configs, header_name, self.music, project.platform)
         try:
-            written = project.deploy(_STUDIO_HEADER_NAME, code)
+            written = project.deploy(header_name, code)
         except OSError as exc:
             QMessageBox.critical(
                 self, "Deploy Failed", f"Couldn't write into {project.include_dir}:\n{exc}"
@@ -623,7 +651,7 @@ class MainWindow(QMainWindow):
             self._deploy_dialog = DeployDialog(
                 written,
                 paste_block(code),
-                () if project.has_hitlib else deploy.INSTALL_HINT_LINES,
+                () if project.has_hitlib else project.install_hint_lines,
                 self,
             )
             self._deploy_dialog.open()
@@ -662,7 +690,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Project Set",
-            f'Deploy now writes into "{project.root.name}".\n\n{project.include_dir}',
+            f'Deploy now writes a {project.platform.label} export into "{project.root.name}".'
+            f"\n\n{project.include_dir}",
         )
 
     # ------------------------------------------------------------------

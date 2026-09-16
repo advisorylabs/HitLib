@@ -36,6 +36,23 @@ def themed(qapp):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_settings(tmp_path, monkeypatch):
+    """Keep every MainWindow off the real, machine-wide settings.
+
+    The app remembers the last project and target platform there, and the
+    platform decides what an export looks like, so a test reading them would
+    pass or fail by whatever the developer last clicked. A test writing them
+    would change what the installed app opens with.
+    """
+    from PySide6.QtCore import QSettings
+
+    from pattern_studio.main_window import MainWindow
+
+    ini = tmp_path / "pattern_studio_settings.ini"
+    monkeypatch.setattr(MainWindow, "_settings", lambda self: QSettings(str(ini), QSettings.IniFormat))
+
+
+@pytest.fixture(autouse=True)
 def _close_windows(qapp):
     """Destroy the windows a test opened before the next one starts.
 

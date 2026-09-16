@@ -16,6 +16,14 @@ A Music Sync design also emits a `music::` namespace of baked `uint8_t`
 envelope tables, one per band any strand uses. It sits outside the strand
 namespaces because the song belongs to the document, not to one strand.
 
+Every generator takes a Platform. PROS gets C++17/20 (inline variables,
+designated initializers, nested namespace names). VEXcode compiles C++11, so
+its export says the same things the long way round: each object the header
+shares between files is a static member of a class template reached through a
+reference of the same name (see _variable()), splice regions are filled in
+field by field, and namespaces nest one level per line. Robot code written
+against either export reads identically.
+
 Call validate_for_export() (or validate_document_for_export()) first and show
 its errors: the generators assume a validated config and do not re-check
 ranges.
@@ -28,6 +36,7 @@ from dataclasses import dataclass, field
 
 from . import fill_sources
 from .envelope import BAND_LABELS
+from .platforms import Platform
 from .models import (
     AnimationConfig,
     AnimationKind,
@@ -335,6 +344,53 @@ def _palette_literal(colors: list[int]) -> str:
 
 
 # ============================================================================
+# Dialect
+# ============================================================================
+
+
+def _variable(platform: Platform, type_: str, name: str, init: str = "", count: int | None = None) -> str:
+    """A namespace-scope object defined in the header, and shared by every
+    file that includes it.
+
+    @p init is everything after the declarator - `" = {...}"`, `"{a, b}"`,
+    `"(a, b)"` - or empty for default construction. @p count makes it an
+    array of that many elements.
+
+    PROS has inline variables. C++11 does not, and a plain definition in a
+    header is a duplicate symbol in every file past the first. The C++11 form
+    defines the object as a static data member of a class template instead,
+    which the linker keeps one copy of, and binds a same-named reference to it
+    so everything else in the file, and the robot's own code, spells it the
+    same way on both platforms. A reference to an array needs its bound, so
+    VEXcode arrays always carry one.
+    """
+    if platform is Platform.PROS:
+        bound = "" if count is None else ("[]" if init else f"[{count}]")
+        return f"inline {type_} {name}{bound}{init};"
+
+    bound = "" if count is None else f"[{count}]"
+    holder = f"{name}_"
+    alias = f" (&{name}){bound}" if count is not None else f"& {name}"
+    return (
+        f"template <typename = void> struct {holder} {{ static {type_} value{bound}; }};\n"
+        f"template <typename T> {type_} {holder}<T>::value{bound}{init};\n"
+        f"static {type_}{alias} = {holder}<>::value;"
+    )
+
+
+def _namespace_open(platform: Platform, name: str) -> str:
+    """`namespace a::b {`, which C++11 has to write one level at a time."""
+    if platform is Platform.PROS:
+        return f"namespace {name} {{"
+    return " ".join(f"namespace {part} {{" for part in name.split("::"))
+
+
+def _namespace_close(platform: Platform, name: str) -> str:
+    braces = "}" if platform is Platform.PROS else "}" * len(name.split("::"))
+    return f"{braces}  // namespace {name}"
+
+
+# ============================================================================
 # Animation / splice call generation
 # ============================================================================
 
@@ -368,12 +424,13 @@ class _FillSourceSet:
     the exception - each is assigned separately, so each gets its own.
     """
 
+    platform: Platform = Platform.PROS
     namer: _UniqueNamer = field(default_factory=_UniqueNamer)
     #: (source id, port) -> generated function name, for the shared ones.
     _shared: dict[tuple[str, int], str] = field(default_factory=dict)
     #: Rendered body of the `source::` namespace, in emission order.
     lines: list[str] = field(default_factory=list)
-    #: PROS headers the emitted readers need.
+    #: PROS or VEX SDK headers the emitted readers need.
     includes: set[str] = field(default_factory=set)
     #: Hooks the user has to assign, as (qualified name, what it feeds) - the
     #: usage banner spells out the assignment for each.
@@ -402,7 +459,7 @@ class _FillSourceSet:
                 f'/// Fill source for "{label}". Assign it before that mode runs -'
             )
             self.lines.append("/// the banner at the top of this file spells out how.")
-            self.lines.append(f"inline LedStrand::LevelFn {name} = nullptr;")
+            self.lines.append(_variable(self.platform, "LedStrand::LevelFn", name, " = nullptr"))
             self.hooks.append((name, label))
             return f"source::{name}"
 
@@ -413,11 +470,19 @@ class _FillSourceSet:
         suffix = str(a.source_port) if source.port_kind else ""
         name = self.namer.make(f"{source.label} {suffix}", "fillSource")
         self._shared[key] = name
-        if source.include:
-            self.includes.add(source.include)
 
         where = f" on port {a.source_port}" if source.port_kind else ""
         self.lines.append(f"/// {source.label}{where}.")
+        if self.platform is Platform.VEXCODE:
+            self.includes.update(fill_sources.VEX_INCLUDES)
+            # Set up in function-local statics, for the same reason as below.
+            setup = source.vex_setup.format(port=a.source_port, index=a.source_port - 1)
+            body = f"{setup} return {source.vex_read};" if setup else f"return {source.vex_read};"
+            self.lines.append(f"inline double {name}() {{ {body} }}")
+            return f"source::{name}"
+
+        if source.include:
+            self.includes.add(source.include)
         if source.device:
             # The device is a function-local static so it is constructed once,
             # on the first tick that reads it, rather than per call or during
@@ -540,59 +605,74 @@ def _stops_literal(stops: list[GaugeStopConfig]) -> str:
     return "{" + ", ".join(f"{{{_double(stop.at)}, {_hex(stop.color)}}}" for stop in stops) + "}"
 
 
-def _region_literal(r: SpliceRegionConfig, reader: str | None = None) -> str:
-    """One SpliceRegion aggregate. Designated initializers, so the fields have
-    to stay in LedStrand::SpliceRegion's declaration order - and so a kind that
-    ignores a field can simply leave it out."""
+def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tuple[str, str]]:
+    """The SpliceRegion fields one region sets, as (field, value), in
+    LedStrand::SpliceRegion's declaration order - which designated initializers
+    require. A kind that ignores a field simply leaves it out."""
     a = r.animation
     kind = f"LedStrand::SpliceRegionAnimKind::{a.kind.value.upper()}"
-    head = f".start = {r.start}, .width = {r.width}, .kind = {kind}"
+    fields = [("start", str(r.start)), ("width", str(r.width)), ("kind", kind)]
 
     if a.kind == OverlayAnimationKind.GAUGE:
-        parts = [head]
         if not a.stops:
             # Only meaningful as the fallback scale; with stops they are noise.
-            parts.append(f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}")
-        parts.append(f".bgColor = {_hex(a.bg_color)}, .invert = {_bool(a.invert)}")
+            fields += [("color", _hex(a.color)), ("color2", _hex(a.color2))]
+        fields += [("bgColor", _hex(a.bg_color)), ("invert", _bool(a.invert))]
         if reader is not None:
-            parts.append(f".read = {reader}")
-        parts.append(
-            f".emptyAt = {_double(a.source_empty)}, .fullAt = {_double(a.source_full)}, "
-            f".wrap = {_bool(a.source_wrap)}, .smoothing = {a.smoothing}, "
-            f".style = LedStrand::GaugeStyle::{a.style.value.upper()}, "
-            f".blend = LedStrand::GaugeBlend::{a.blend.value.upper()}"
-        )
+            fields.append(("read", reader))
+        fields += [
+            ("emptyAt", _double(a.source_empty)),
+            ("fullAt", _double(a.source_full)),
+            ("wrap", _bool(a.source_wrap)),
+            ("smoothing", str(a.smoothing)),
+            ("style", f"LedStrand::GaugeStyle::{a.style.value.upper()}"),
+            ("blend", f"LedStrand::GaugeBlend::{a.blend.value.upper()}"),
+        ]
         if a.stops:
-            parts.append(f".stops = {_stops_literal(a.stops)}")
-        return "{" + ", ".join(parts) + "}"
+            fields.append(("stops", _stops_literal(a.stops)))
+        return fields
 
     if a.kind == OverlayAnimationKind.TWINKLE:
-        return (
-            f"{{{head}, .bgColor = {_hex(a.bg_color)}, "
-            f".palette = {_palette_literal(a.palette)}, "
-            f".densityPct = {a.density_pct}, .fadeStep = {a.fade_step}}}"
-        )
+        return fields + [
+            ("bgColor", _hex(a.bg_color)),
+            ("palette", _palette_literal(a.palette)),
+            ("densityPct", str(a.density_pct)),
+            ("fadeStep", str(a.fade_step)),
+        ]
 
     if a.kind == OverlayAnimationKind.BITSCROLL:
-        return (
-            f"{{{head}, .color = {_hex(a.color)}, .bgColor = {_hex(a.bg_color)}, "
-            f".speed = {a.speed}, .invert = {_bool(a.invert)}, "
-            f".segmentWidth = {a.segment_width}, .spacing = {a.spacing}, "
-            f".repeating = {_bool(a.repeating)}}}"
-        )
+        return fields + [
+            ("color", _hex(a.color)),
+            ("bgColor", _hex(a.bg_color)),
+            ("speed", str(a.speed)),
+            ("invert", _bool(a.invert)),
+            ("segmentWidth", str(a.segment_width)),
+            ("spacing", str(a.spacing)),
+            ("repeating", _bool(a.repeating)),
+        ]
 
-    return (
-        f"{{{head}, "
-        f".color = {_hex(a.color)}, .color2 = {_hex(a.color2)}, .bgColor = {_hex(a.bg_color)}, "
-        f".runLength = {a.run_length}, .speed = {a.speed}, "
-        f".onMs = {a.on_ms}, .offMs = {a.off_ms}, .seamless = {_bool(a.seamless)}}}"
-    )
+    return fields + [
+        ("color", _hex(a.color)),
+        ("color2", _hex(a.color2)),
+        ("bgColor", _hex(a.bg_color)),
+        ("runLength", str(a.run_length)),
+        ("speed", str(a.speed)),
+        ("onMs", str(a.on_ms)),
+        ("offMs", str(a.off_ms)),
+        ("seamless", _bool(a.seamless)),
+    ]
+
+
+def _region_literal(r: SpliceRegionConfig, reader: str | None = None) -> str:
+    """One SpliceRegion aggregate, with designated initializers."""
+    return "{" + ", ".join(f".{name} = {value}" for name, value in _region_fields(r, reader)) + "}"
 
 
 def _splice_statements(
     s: SpliceMaskConfig,
     sources: _FillSourceSet | None = None,
     label: str = "",
+    platform: Platform = Platform.PROS,
 ) -> list[str]:
     if not s.enabled:
         return []
@@ -606,14 +686,25 @@ def _splice_statements(
         )
         return lines
 
-    literals = []
+    readers: list[str | None] = []
     for i, r in enumerate(s.regions):
         reader = None
         if r.animation.kind == OverlayAnimationKind.GAUGE and sources is not None:
             # Named after the segment rather than the mode, so a Custom hook in
             # the usage banner says which of six gauges it belongs to.
             reader = sources.reader_for(r.animation, f"{label} segment {i + 1}".strip())
-        literals.append(_region_literal(r, reader))
+        readers.append(reader)
+
+    if platform is Platform.VEXCODE:
+        # SpliceRegion has default member values, which in C++11 means it is
+        # not an aggregate, so no brace form constructs one. Fill each in.
+        lines = [f"std::vector<LedStrand::SpliceRegion> regions({len(s.regions)});"]
+        for i, (r, reader) in enumerate(zip(s.regions, readers)):
+            lines += [f"regions[{i}].{name} = {value};" for name, value in _region_fields(r, reader)]
+        lines.append("s.spliceMaskCustom(regions);")
+        return lines
+
+    literals = [_region_literal(r, reader) for r, reader in zip(s.regions, readers)]
     # One region per line. A single-line call was fine for two solid regions,
     # but a row of six gauges with a color scale each runs to thousands of
     # characters, and a generated file still has to be readable.
@@ -626,8 +717,12 @@ def _leaf_body(
     music: _MusicRef | None = None,
     sources: _FillSourceSet | None = None,
     label: str = "",
+    platform: Platform = Platform.PROS,
 ) -> list[str]:
-    return [*_animation_statements(a, music, sources, label), *_splice_statements(splice, sources, label)]
+    return [
+        *_animation_statements(a, music, sources, label),
+        *_splice_statements(splice, sources, label, platform),
+    ]
 
 
 @dataclass
@@ -688,7 +783,10 @@ def paste_block(code: str) -> str:
 
 
 def _usage_banner(
-    entries: list[_StrandRender], header_name: str, music: _MusicRef | None = None
+    entries: list[_StrandRender],
+    header_name: str,
+    music: _MusicRef | None = None,
+    platform: Platform = Platform.PROS,
 ) -> list[str]:
     """The comment block at the top of every export: what to paste into
     main.cpp, with this design's real identifiers and mode names.
@@ -696,9 +794,15 @@ def _usage_banner(
     Two indents. `PASTE` lines form one contiguous compilable block, which
     paste_block() harvests and the tests compile. `NOTE` lines are asides (the
     escape hatches, the macro) that would not compile if pasted.
+
+    The paste uses each platform's own entry points: PROS's initialize() and
+    opcontrol(), and the pre_auton() and usercontrol() of VEXcode's
+    competition template.
     """
     PASTE = _PASTE_PREFIX
     NOTE = "//    "
+    vexcode = platform is Platform.VEXCODE
+    setup_fn, control_fn = ("pre_auton", "usercontrol") if vexcode else ("initialize", "opcontrol")
 
     hooks = [(e, name, label) for e in entries for name, label in e.sources.hooks]
     manual = [e for e in entries if e.sources.has_manual]
@@ -706,7 +810,7 @@ def _usage_banner(
     lines = [
         "// Generated by HitLib Pattern Studio - edit the source design, not this file.",
         "//",
-        "// 1. Drop this file into your PROS project's include/ directory.",
+        f"// 1. Drop this file into your {platform.label} project's include/ directory.",
         "// 2. Paste this into main.cpp. Ports, lengths, refresh intervals,",
         "//    brightness and modes all come from the design.",
         "//",
@@ -717,7 +821,7 @@ def _usage_banner(
     for e in entries:
         lines.append(f"{PASTE}namespace {e.ns:<{width}} = hitlib::profiles::{e.ns};")
     lines.append(PASTE.rstrip())
-    lines.append(f"{PASTE}void initialize() {{")
+    lines.append(f"{PASTE}void {setup_fn}() {{")
     # A custom Fill source can only be supplied by the robot's own code, so the
     # paste block leaves an assignment to fill in. Placed before begin(), which
     # is when the modes that read them start running.
@@ -732,10 +836,14 @@ def _usage_banner(
     lines.append("// begin() registers every strand below, starts its refresh task, attaches")
     lines.append("// its profile and activates its first mode. Calling it twice does nothing,")
     lines.append("// so a re-init path is safe.")
+    if vexcode:
+        lines.append("//")
+        lines.append("// Not using the competition template? Call begin() at the top of main(),")
+        lines.append("// after vexcodeInit(), and keep main() from returning.")
     lines.append("//")
     lines.append("// Switch modes from anywhere - these are ordinary LedStrand objects:")
     lines.append("//")
-    lines.append(f"{PASTE}void opcontrol() {{")
+    lines.append(f"{PASTE}void {control_fn}() {{")
     for e in entries:
         lines.append(
             f"{PASTE}    {e.ns}::strand.activateMode({e.ns}::mode::{e.mode_names[0]});"
@@ -774,7 +882,10 @@ def _usage_banner(
 
 
 def _render_strand(
-    config: StrandConfig, ns_namer: _UniqueNamer, music: _MusicRef | None = None
+    config: StrandConfig,
+    ns_namer: _UniqueNamer,
+    music: _MusicRef | None = None,
+    platform: Platform = Platform.PROS,
 ) -> _StrandRender:
     modes = _effective_modes(config)
     display_name = config.name or "Profile"
@@ -785,13 +896,13 @@ def _render_strand(
     for reserved in sorted(_RESERVED_MEMBERS):
         mode_namer.make(reserved, "mode")
 
-    sources = _FillSourceSet()
+    sources = _FillSourceSet(platform=platform)
     function_blocks: list[str] = []
     mode_entries: list[str] = []
     mode_names: list[str] = []
 
     for mode in modes:
-        activate_fn, tick_fn, blocks = _generate_mode(mode, fn_namer, music, sources)
+        activate_fn, tick_fn, blocks = _generate_mode(mode, fn_namer, music, sources, platform)
         function_blocks.extend(blocks)
         tick_arg = f"detail::{tick_fn}" if tick_fn else "nullptr"
         mode_entries.append(
@@ -832,11 +943,11 @@ def _render_strand(
         lines.append("")
     lines.append("}  // namespace detail")
     lines.append("")
-    lines.append("inline const ProfileMode modeTable[] = {")
-    lines.extend(mode_entries)
-    lines.append("};")
+    table = " = {\n" + "\n".join(mode_entries) + "\n}"
+    lines.append(_variable(platform, "const ProfileMode", "modeTable", table, len(modes)))
     lines.append("")
-    lines.append(f'inline const Profile profile = {{"{_escape(display_name)}", modeTable, {len(modes)}}};')
+    profile = f' = {{"{_escape(display_name)}", modeTable, {len(modes)}}}'
+    lines.append(_variable(platform, "const Profile", "profile", profile))
     lines.append("")
     lines.append("/// Sets this design's brightness and attaches its profile. Call after")
     lines.append("/// init()/start(), then activateMode() with a mode:: constant above.")
@@ -847,7 +958,7 @@ def _render_strand(
     lines.append("/// The strand itself, built from the hardware constants above. An")
     lines.append("/// ordinary LedStrand: hitlib::studio::begin() starts it, and every API")
     lines.append("/// call works on it directly.")
-    lines.append(f"inline LedStrand strand{{{_constructor_args(config)}}};")
+    lines.append(_variable(platform, "LedStrand", "strand", f"{{{_constructor_args(config)}}}"))
     lines.append("#endif")
     lines.append("")
     lines.append(f"}}  // namespace {ns}")
@@ -862,7 +973,7 @@ def _render_strand(
     )
 
 
-def _render_studio(entries: list[_StrandRender]) -> list[str]:
+def _render_studio(entries: list[_StrandRender], platform: Platform = Platform.PROS) -> list[str]:
     """The `hitlib::studio` namespace: the groups this design runs on and the
     begin() that starts them.
 
@@ -894,7 +1005,7 @@ def _render_studio(entries: list[_StrandRender]) -> list[str]:
         "#ifndef HITLIB_STUDIO_NO_AUTOWIRE",
         "",
         "/// This design, ready to run - see the banner at the top of this file.",
-        "namespace hitlib::studio {",
+        _namespace_open(platform, "hitlib::studio"),
         "",
     ]
     if split:
@@ -903,15 +1014,17 @@ def _render_studio(entries: list[_StrandRender]) -> list[str]:
         lines.append("// ones. They are still one begin() call.")
     else:
         lines.append(f"// The refresh task this design's strands run on, at {intervals[0]} ms.")
-    lines.append(f"inline LedGroup groups[{len(intervals)}];")
+    lines.append(_variable(platform, "LedGroup", "groups", count=len(intervals)))
     lines.append("")
     lines.append("/// The first group, and the only one when every strand in the design")
     lines.append("/// shares a refresh interval.")
-    lines.append("inline LedGroup& group = groups[0];")
+    # Already a reference, so C++11 needs no holder for it.
+    lines.append(("inline" if platform is Platform.PROS else "static") + " LedGroup& group = groups[0];")
     lines.append("")
     lines.append("/// Registers every strand in this design, initializes and starts it,")
     lines.append("/// attaches its profile and activates its first mode. Call once from")
-    lines.append("/// initialize(); a second call does nothing, so a re-init path is safe.")
+    setup_fn = "pre_auton()" if platform is Platform.VEXCODE else "initialize()"
+    lines.append(f"/// {setup_fn}; a second call does nothing, so a re-init path is safe.")
     lines.append("inline void begin() {")
     lines.append("    static bool started = false;")
     lines.append("    if (started) return;")
@@ -942,7 +1055,7 @@ def _render_studio(entries: list[_StrandRender]) -> list[str]:
         lines.extend(wire(e))
     lines.append("}")
     lines.append("")
-    lines.append("}  // namespace hitlib::studio")
+    lines.append(_namespace_close(platform, "hitlib::studio"))
     lines.append("")
     lines.append("#endif  // HITLIB_STUDIO_NO_AUTOWIRE")
     return lines
@@ -969,7 +1082,9 @@ def _music_bands_used(configs: list[StrandConfig]) -> list[str]:
     return used
 
 
-def _render_music(music: MusicConfig, bands: list[str]) -> tuple[_MusicRef, list[str]]:
+def _render_music(
+    music: MusicConfig, bands: list[str], platform: Platform = Platform.PROS
+) -> tuple[_MusicRef, list[str]]:
     """The `music::` namespace holding one baked envelope per band in use, and
     the references animations use to reach them."""
     namer = _UniqueNamer()
@@ -998,22 +1113,24 @@ def _render_music(music: MusicConfig, bands: list[str]) -> tuple[_MusicRef, list
     for band, var, samples_var, table in tables:
         lines.append("")
         lines.append(f"// --- {BAND_LABELS.get(band, band)} ---")
-        lines.append(f"inline const uint8_t {samples_var}[] = {{")
-        for start in range(0, len(table), _SAMPLES_PER_LINE):
-            row = table[start : start + _SAMPLES_PER_LINE]
-            lines.append("    " + " ".join(f"{v:3d}," for v in row))
-        lines.append("};")
-        lines.append(
-            f"inline const LedStrand::MusicTrack {var} = "
-            f"{{{samples_var}, {len(table)}, {music.frame_ms}}};"
-        )
+        rows = [
+            "    " + " ".join(f"{v:3d}," for v in table[start : start + _SAMPLES_PER_LINE])
+            for start in range(0, len(table), _SAMPLES_PER_LINE)
+        ]
+        samples = " = {\n" + "\n".join(rows) + "\n}"
+        lines.append(_variable(platform, "const uint8_t", samples_var, samples, len(table)))
+        track = f" = {{{samples_var}, {len(table)}, {music.frame_ms}}}"
+        lines.append(_variable(platform, "const LedStrand::MusicTrack", var, track))
     lines.append("")
     lines.append("}  // namespace music")
     return _MusicRef(exprs=exprs, loop=music.loop), lines
 
 
 def _render_file(
-    configs: list[StrandConfig], header_name: str | None, music: MusicConfig | None = None
+    configs: list[StrandConfig],
+    header_name: str | None,
+    music: MusicConfig | None = None,
+    platform: Platform = Platform.PROS,
 ) -> str:
     single = len(configs) == 1
     ns_namer = _UniqueNamer()
@@ -1022,21 +1139,22 @@ def _render_file(
     music_lines: list[str] = []
     bands_used = _music_bands_used(configs)
     if music is not None and music.loaded and bands_used:
-        music_ref, music_lines = _render_music(music, bands_used)
+        music_ref, music_lines = _render_music(music, bands_used, platform)
         if not music_ref.exprs:
             music_ref, music_lines = None, []
 
-    entries = [_render_strand(cfg, ns_namer, music_ref) for cfg in configs]
+    entries = [_render_strand(cfg, ns_namer, music_ref, platform) for cfg in configs]
 
-    default_name = suggested_header_name(configs[0].name) if single else "led_profiles.hpp"
+    default_name = (
+        suggested_header_name(configs[0].name, platform) if single else document_header_name(platform)
+    )
 
     lines: list[str] = ["#pragma once", ""]
-    lines.extend(_usage_banner(entries, header_name or default_name, music_ref))
+    lines.extend(_usage_banner(entries, header_name or default_name, music_ref, platform))
     lines.append("")
-    lines.append('#include "hitlib/led_group.hpp"')
-    lines.append('#include "hitlib/led_profile.hpp"')
-    lines.append('#include "hitlib/led_sequencer.hpp"')
-    lines.append('#include "hitlib/led_strand.hpp"')
+    # HitLib's headers are .h in its VEXcode download.
+    for library_header in ("led_group", "led_profile", "led_sequencer", "led_strand"):
+        lines.append(f'#include "hitlib/{library_header}{platform.header_suffix}"')
     device_includes = sorted({inc for e in entries for inc in e.sources.includes})
     if device_includes:
         lines.append("")
@@ -1044,7 +1162,13 @@ def _render_file(
         for include in device_includes:
             lines.append(f'#include "{include}"')
     lines.append("")
-    lines.append("namespace hitlib::profiles {")
+    if platform is Platform.VEXCODE:
+        lines.append("// VEXcode compiles C++11, which has no inline variables. Each object below")
+        lines.append("// that every file including this header shares is a static member of a")
+        lines.append("// class template (the NAME_ structs), reached through a reference named")
+        lines.append("// NAME. Use the reference; the struct is only where the object lives.")
+        lines.append("")
+    lines.append(_namespace_open(platform, "hitlib::profiles"))
     lines.append("")
     if music_lines:
         lines.extend(music_lines)
@@ -1052,34 +1176,44 @@ def _render_file(
     for entry in entries:
         lines.extend(entry.lines)
         lines.append("")
-    lines.append("}  // namespace hitlib::profiles")
+    lines.append(_namespace_close(platform, "hitlib::profiles"))
     lines.append("")
-    lines.extend(_render_studio(entries))
+    lines.extend(_render_studio(entries, platform))
     lines.append("")
     return "\n".join(lines)
 
 
-def suggested_header_name(strand_name: str) -> str:
+def suggested_header_name(strand_name: str, platform: Platform = Platform.PROS) -> str:
     """Default filename to offer for a single-strand export: "My Robot" ->
-    my_robot.hpp."""
-    return _snake_case(strand_name or "profile", "profile") + ".hpp"
+    my_robot.hpp (my_robot.h for VEXcode)."""
+    return _snake_case(strand_name or "profile", "profile") + platform.header_suffix
+
+
+def document_header_name(platform: Platform = Platform.PROS) -> str:
+    """Default filename to offer for a whole-document export."""
+    return "led_profiles" + platform.header_suffix
 
 
 def generate_cpp(
-    config: StrandConfig, header_name: str | None = None, music: MusicConfig | None = None
+    config: StrandConfig,
+    header_name: str | None = None,
+    music: MusicConfig | None = None,
+    platform: Platform = Platform.PROS,
 ) -> str:
     """Render one strand as a standalone header.
 
     @p header_name is the filename the export will be saved as, it only
     feeds the #include line in the usage banner. @p music is the design's
     song, needed only when the strand actually has a Music Sync animation.
+    @p platform is the environment the robot's code is built in.
     """
-    return _render_file([config], header_name, music)
+    return _render_file([config], header_name, music, platform)
 
 
 def generate_document_cpp(
     configs: list[StrandConfig], header_name: str | None = None,
     music: MusicConfig | None = None,
+    platform: Platform = Platform.PROS,
 ) -> str:
     """Render every strand in the document into a single header, each in its
     own namespace.
@@ -1090,7 +1224,7 @@ def generate_document_cpp(
     """
     if not configs:
         raise ValueError("no strands to export")
-    return _render_file(configs, header_name, music)
+    return _render_file(configs, header_name, music, platform)
 
 
 def _generate_mode(
@@ -1098,6 +1232,7 @@ def _generate_mode(
     namer: _UniqueNamer,
     music: _MusicRef | None = None,
     sources: _FillSourceSet | None = None,
+    platform: Platform = Platform.PROS,
 ) -> tuple[str, str | None, list[str]]:
     blocks: list[str] = []
 
@@ -1105,7 +1240,7 @@ def _generate_mode(
         activate_fn = namer.make(mode.name, "mode")
         body = "\n".join(
             f"    {line}"
-            for line in _leaf_body(mode.animation, mode.splice, music, sources, mode.name)
+            for line in _leaf_body(mode.animation, mode.splice, music, sources, mode.name, platform)
         )
         blocks.append(f"inline void {activate_fn}(LedStrand& s) {{\n{body}\n}}")
         return activate_fn, None, blocks
@@ -1116,19 +1251,18 @@ def _generate_mode(
         label = f"{mode.name} {phase.name}"
         body = "\n".join(
             f"    {line}"
-            for line in _leaf_body(phase.animation, phase.splice, music, sources, label)
+            for line in _leaf_body(phase.animation, phase.splice, music, sources, label, platform)
         )
         blocks.append(f"inline void {fn_name}(LedStrand& s) {{\n{body}\n}}")
         phase_fn_names.append((fn_name, phase.duration_ms))
 
     phases_array_name = namer.make(f"{mode.name} Phases", "phases")
     phase_entries = "\n".join(f"    {{{dur}, {fn}}}," for fn, dur in phase_fn_names)
-    blocks.append(
-        f"inline const Sequencer::Phase {phases_array_name}[] = {{\n{phase_entries}\n}};"
-    )
+    phases = f" = {{\n{phase_entries}\n}}"
+    blocks.append(_variable(platform, "const Sequencer::Phase", phases_array_name, phases, len(phase_fn_names)))
 
     seq_name = namer.make(f"{mode.name} Seq", "seq")
-    blocks.append(f"inline Sequencer {seq_name}({phases_array_name}, {len(phase_fn_names)});")
+    blocks.append(_variable(platform, "Sequencer", seq_name, f"({phases_array_name}, {len(phase_fn_names)})"))
 
     activate_fn = namer.make(f"{mode.name} Activate", "modeActivate")
     blocks.append(f"inline void {activate_fn}(LedStrand& s) {{ {seq_name}.start(s); }}")

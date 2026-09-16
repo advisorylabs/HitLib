@@ -1,5 +1,4 @@
 #include "hitlib/led_group.hpp"
-#include "pros/rtos.hpp"
 
 namespace hitlib {
 
@@ -14,14 +13,18 @@ void LedGroup::init(uint32_t refreshMsArg) {
 
 void LedGroup::start() {
     if (strands.empty()) return;
-    pros::Task([this] { groupTask(); }, TASK_PRIORITY_DEFAULT, TASK_STACK_DEPTH_DEFAULT, "LedGroup");
+    platform::startTask(&LedGroup::taskEntry, this, "LedGroup");
+}
+
+void LedGroup::taskEntry(void* group) {
+    static_cast<LedGroup*>(group)->groupTask();
 }
 
 void LedGroup::groupTask() {
-    uint32_t prevTime = pros::millis();
+    uint32_t prevTime = platform::millis();
     while (true) {
         for (LedStrand* s : strands) s->tick();
-        pros::Task::delay_until(&prevTime, refreshMs);
+        platform::delayUntil(prevTime, refreshMs);
     }
 }
 

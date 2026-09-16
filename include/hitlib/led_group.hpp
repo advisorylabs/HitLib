@@ -1,6 +1,7 @@
 #pragma once
 #include "led_strand.hpp"
 #include "led_profile.hpp"
+#include <cstddef>
 #include <vector>
 
 /**
@@ -16,7 +17,7 @@ namespace hitlib {
  * @brief Owns a set of LedStrand pointers and fans all animation commands out
  *        to each strand simultaneously.
  *
- * LedGroup starts a single PROS task that calls LedStrand::tick() on every
+ * LedGroup starts a single background task that calls LedStrand::tick() on every
  * strand it owns at the configured refresh interval.  Multiple independent
  * groups are fully supported, each runs its own task with no shared state.
  *
@@ -57,7 +58,7 @@ public:
      * @brief Initialize hardware on all registered strands.
      *
      * Calls LedStrand::init() on each strand.  Safe to call from PROS
-     * `initialize()`.
+     * `initialize()` or the start of VEXcode's `main()`.
      *
      * @param refreshMs  Refresh interval passed to the group task in milliseconds
      *                   (default 20 ms = 50 Hz).  Pass 0 to use each strand's
@@ -222,6 +223,7 @@ private:
     std::vector<LedStrand*> strands;
     uint32_t refreshMs = 20;
     void groupTask();
+    static void taskEntry(void* group);
 };
 
 } // namespace hitlib
