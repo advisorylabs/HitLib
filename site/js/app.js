@@ -298,9 +298,9 @@
         });
       };
     },
-    // spliceMask(3, false, true, 400, 0x000000, true): 4 bins trading base and overlay.
+    // spliceMask(3, false, true, 400, 0x000000, true): 4 bins trading a white base and the overlay.
     split: function () {
-      var base = ANIM.flow(0x9B4DFF, 0x000000, 1, true);
+      var base = ANIM.solid(0xFFFFFF);
       var overlay = ANIM.rainbow(1);
       var over = [];
       var period = msToTicks(400);
