@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HitLib 1.4.0 · Pattern Studio 1.1.0</title>
-<meta name="description" content="HitLib is an LED animation library for VEX V5 robots, now for PROS and VEXcode. Pattern Studio designs the looks and deploys them into your robot project.">
+<title>HitLib 1.5.0 · Pattern Studio 1.2.0</title>
+<meta name="description" content="HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode. Build your own animations out of layers, design them in Pattern Studio, and deploy them into your robot project.">
 <link rel="canonical" href="https://www.hitlib.org/">
 <meta name="theme-color" content="#9b4dff">
 
@@ -13,7 +13,7 @@
 <meta property="og:site_name" content="HitLib">
 <meta property="og:url" content="https://www.hitlib.org/">
 <meta property="og:title" content="HitLib · LED animation for VEX V5">
-<meta property="og:description" content="HitLib is an LED animation library for VEX V5 robots, now for PROS and VEXcode. Pattern Studio designs the looks and deploys them into your robot project.">
+<meta property="og:description" content="HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode. Build your own animations out of layers, design them in Pattern Studio, and deploy them into your robot project.">
 <meta property="og:image" content="https://www.hitlib.org/og-image.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
@@ -59,6 +59,7 @@
 
 <nav class="rail" id="rail" aria-label="Page sections">
   <a class="rail-item" href="#whats-new" data-target="whats-new">What's new</a>
+  <a class="rail-item" href="#start" data-target="start">Get started</a>
   <a class="rail-item" href="#animations" data-target="animations" data-also="zones">Animations</a>
   <a class="rail-item" href="#gauges" data-target="gauges">Gauges</a>
   <a class="rail-item" href="#modes" data-target="modes">Modes</a>
@@ -108,19 +109,20 @@
 
     <div class="hero-meta">
       <span class="team-id">96671H · Hitmen</span>
-      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.4.0</a>
-      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.1.0</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.0</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.2.0</a>
     </div>
-    <h1>HitLib comes to <span class="grad-text">VEXcode</span>.</h1>
+    <h1>Build your own <span class="grad-text">animations</span>.</h1>
     <p class="lede">
-      HitLib is an LED animation library for VEX V5 robots, and Pattern Studio is
-      the desktop app that designs for it. This release brings both to VEXcode.
+      HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode,
+      and Pattern Studio is the desktop app that designs for it. This release
+      lets you stack the looks into layers and build animations of your own.
     </p>
 
     <div class="cta-row">
       <a class="btn btn-green" href="#in-action">See it in action!</a>
       <a class="btn primary btn-buy" href="#/order">Buy the Kit</a>
-      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">1.4.0 release notes <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">1.5.0 release notes <span class="arrow">↗</span></a>
       <a class="btn" href="https://advisorylabs.github.io/HitLib/">Documentation <span class="arrow">↗</span></a>
       <a class="btn" href="https://github.com/advisorylabs/HitLib">HitLib on GitHub <span class="arrow">↗</span></a>
     </div>
@@ -131,12 +133,129 @@
   <section class="section reveal" id="whats-new">
     <div class="section-head">
       <span class="eyebrow">// what's new</span>
+      <h2>Animations, built from layers</h2>
+      <p>
+        HitLib 1.5 plays custom animations: up to eight layers, each one a look you
+        already know, blended onto the layers below it and moved by a sensor, a song,
+        an oscillator or your own code. Pattern Studio 1.2 builds them in its new
+        Animate tab. Take this one apart: switch layers off, change how they blend,
+        and drag the alert driver.
+      </p>
+    </div>
+
+    <div class="stack-lab" id="stack-lab">
+      <div class="code-window-bar">
+        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+        <span class="code-window-title">animate · underglow</span>
+        <div class="seg-toggle" role="group" aria-label="View">
+          <button type="button" class="seg-btn active" data-stack-view="exploded" aria-pressed="true">Exploded</button>
+          <button type="button" class="seg-btn" data-stack-view="stacked" aria-pressed="false">On the strip</button>
+        </div>
+      </div>
+
+      <div class="stack-body">
+        <div class="stack-scene" aria-hidden="true">
+          <div class="stack-world">
+            <div class="stack-sheet" data-layer="alert" style="--depth: 4; --c: #ffb000"><span class="stack-tag"><b>Alert</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="sparkle" style="--depth: 3; --c: #fff1c2"><span class="stack-tag"><b>Sparkle</b> <span class="stack-tag-blend">ADD</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="scanner" style="--depth: 2; --c: #ff2d6e"><span class="stack-tag"><b>Scanner</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="wash" style="--depth: 1; --c: #6a3bff"><span class="stack-tag"><b>Wash</b> <span class="stack-tag-blend">OVER</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet stack-result" style="--depth: 0"><span class="stack-tag"><b>On the strip</b></span><div class="leds" data-demo="stack" data-n="20"></div></div>
+          </div>
+        </div>
+
+        <div class="stack-panel">
+          <div class="stack-panel-head"><span>Layers</span><span class="mode-hint">top draws last</span></div>
+          <div class="stack-layers">
+            <div class="stack-row" data-layer="alert" style="--c: #ffb000">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Alert layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Alert<span class="stack-kind">FLASH</span></span>
+              <select class="stack-blend" aria-label="Alert blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="sparkle" style="--c: #fff1c2">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Sparkle layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Sparkle<span class="stack-kind">TWINKLE</span></span>
+              <select class="stack-blend" aria-label="Sparkle blend"><option>OVER</option><option>KEY</option><option selected>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="scanner" style="--c: #ff2d6e">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Scanner layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Scanner<span class="stack-kind">PULSE</span></span>
+              <select class="stack-blend" aria-label="Scanner blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="wash" style="--c: #6a3bff">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Wash layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Wash<span class="stack-kind">FLOW</span></span>
+              <select class="stack-blend" aria-label="Wash blend"><option selected>OVER</option><option>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+          </div>
+          <p class="stack-blend-note" id="stack-blend-note" aria-live="polite"></p>
+
+          <div class="stack-panel-head"><span>Drivers</span><span class="mode-hint">one byte each, every tick</span></div>
+          <label class="stack-driver">
+            <span class="stack-driver-name">alert<span class="stack-kind">CONSTANT</span></span>
+            <span class="stack-driver-target">Alert opacity</span>
+            <input type="range" id="stack-alert" min="0" max="255" step="1" value="0" aria-label="Alert driver, 0 to 255" />
+          </label>
+          <div class="stack-driver">
+            <span class="stack-driver-name">breathe<span class="stack-kind">LFO · SINE · 4 S</span></span>
+            <span class="stack-driver-target">Wash opacity</span>
+            <span class="stack-meter" aria-hidden="true"><span class="stack-meter-fill" id="stack-breathe"></span></span>
+          </div>
+        </div>
+      </div>
+<pre class="code stack-code" id="stack-code"><code></code></pre>
+    </div>
+    <p class="demo-caption">A browser port of the layer blending in HitLib's own evaluator, slowed down like the other demos. Each layer is a look from the animation reference below.</p>
+
+    <div class="new-grid">
+      <div class="new-col">
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.0</div>
+        <div class="new-item">
+          <h3>Custom animations</h3>
+          <p><code>strand.compose()</code> plays a layer stack exported from Pattern Studio, and <code>setDriverLevel()</code> moves it from your code. Brightness, overlays, splice masks and profiles all keep working on top.</p>
+        </div>
+        <div class="new-item">
+          <h3>Slower than a pixel a tick</h3>
+          <p>A bare speed still means pixels per tick. <code>Speed::everyMs(100)</code> moves one pixel every 100 ms instead, for any animation that moves.</p>
+        </div>
+        <div class="new-item">
+          <h3>Profiles on a whole group</h3>
+          <p>One Sequencer now runs every strand in a group, each at its own phase, so the built-in endgames light every strip. Strands can also join a group after <code>init()</code>.</p>
+        </div>
+        <div class="new-item">
+          <h3>Lighter on the ADI link</h3>
+          <p>A strand whose frame hasn't changed sends nothing, calls from your control loop never wait for a frame to go out, and PROS sends each frame in one transfer.</p>
+        </div>
+      </div>
+      <div class="new-col">
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.2.0</div>
+        <div class="new-item">
+          <h3>The Animate tab</h3>
+          <p>Stack layers, drag their spans and timing along the strip, draw frames pixel by pixel, and bind any of it to a sensor, the song or an oscillator. It opens on a gallery of starting points.</p>
+        </div>
+        <div class="new-item">
+          <h3>Open as Custom</h3>
+          <p>Turns whatever preset a strand is playing into a one-layer custom animation, one Add Layer away from something the presets can't do.</p>
+        </div>
+        <div class="new-item">
+          <h3>Undo and redo</h3>
+          <p>Every edit to every strand and custom animation can be undone, and a held-down spin box or a dragged color is one step, not fifty.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== get started ===================== -->
+
+  <section class="section reveal" id="start">
+    <div class="section-head">
+      <span class="eyebrow">// get started</span>
       <h2>Same calls, PROS or VEXcode</h2>
       <p>
-        HitLib now builds in VEXcode V5, VEXcode Pro V5 and the VEX VS Code extension
-        as well as PROS 4.x. The lines that drive your strips don't change, only the
-        includes and entry points do. Pick your platform here and every code sample
-        on this page follows it.
+        HitLib builds in PROS 4.x, VEXcode V5, VEXcode Pro V5 and the VEX VS Code
+        extension. The lines that drive your strips are the same everywhere, only
+        the includes and entry points change. Pick your platform here and every
+        code sample on this page follows it.
       </p>
     </div>
 
@@ -186,50 +305,17 @@ hitlib::LedGroup  group;
       </div>
       <div class="install-line" data-platform-pane="pros">
         <span class="install-label">Install</span>
-        <pre><code>pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
+        <pre><code>pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
 pros c apply hitlib</code></pre>
       </div>
       <div class="install-line" data-platform-pane="vexcode" hidden>
         <span class="install-label">Install</span>
         <p>
-          Download <code>hitlib-vexcode@1.4.0.zip</code> from the
-          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">release</a>
+          Download <code>hitlib-vexcode@1.5.0.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">release</a>
           and copy its <code>include/hitlib/</code> and <code>src/hitlib/</code> folders
           into your project. Don't also add the LED port in VEXcode's device menu.
         </p>
-      </div>
-    </div>
-
-    <div class="new-grid">
-      <div class="new-col">
-        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.4.0</div>
-        <div class="new-item">
-          <h3>Finds its platform</h3>
-          <p>HitLib looks for PROS or the VEX SDK on your include path and builds for whichever it finds, so there's nothing to set.</p>
-        </div>
-        <div class="new-item">
-          <h3>Headers VEXcode can list</h3>
-          <p>The VEXcode download renames every header to <code>.h</code>, since VEXcode Pro V5 only shows <code>.h</code> files in its project tree.</p>
-        </div>
-        <div class="new-item">
-          <h3>Expander ports in braces</h3>
-          <p><code>LedStrand({2, 1}, 63)</code> is Smart Port 2, ADI port A. Three bare numbers now always mean a brain port, so add the braces when upgrading expander code from 1.3.0.</p>
-        </div>
-      </div>
-      <div class="new-col">
-        <div class="new-col-head"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.1.0</div>
-        <div class="new-item">
-          <h3>Deploys into VEXcode projects</h3>
-          <p>Show it a PROS, VEXcode or VS Code VEX extension project. For VEXcode it writes <code>hitlib_studio.h</code> in C++11 and adds it to VEXcode Pro V5's file list.</p>
-        </div>
-        <div class="new-item">
-          <h3>Sensor readers for the VEX SDK</h3>
-          <p>Meters that follow a motor, the battery or a sensor export as VEX SDK calls, reading the same units as on PROS.</p>
-        </div>
-        <div class="new-item">
-          <h3>Export &gt; Target Platform</h3>
-          <p>Save or copy a PROS or VEXcode header for a project that isn't on this computer. Deploying to a project without HitLib shows that platform's install steps.</p>
-        </div>
       </div>
     </div>
   </section>
@@ -240,7 +326,7 @@ pros c apply hitlib</code></pre>
     <div class="section-head">
       <span class="eyebrow">// animations</span>
       <h2>Seven looks, one call each</h2>
-      <p>Colors are <code>0xRRGGBB</code> and speed is whole pixels per tick. Each strip below runs the call beside it, slowed down so you can watch.</p>
+      <p>Colors are <code>0xRRGGBB</code> and speed is whole pixels per tick, or <code>Speed::everyMs()</code> for slower. Each strip below runs the call beside it, slowed down so you can watch.</p>
     </div>
 
     <div class="specimen">
@@ -480,7 +566,7 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
       </div>
       <div class="duo-item">
         <h3>Loops on its own</h3>
-        <p>Classic's endgame is a Sequencer: a small table of timed phases that repeats for as long as that mode is winning.</p>
+        <p>Classic's endgame is a Sequencer: a small table of timed phases that repeats for as long as that mode is winning, on every strand of a group.</p>
       </div>
     </div>
   </section>
@@ -533,11 +619,11 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
     <div class="hood-grid">
       <div class="hood-tile">
         <h3>Its own task</h3>
-        <p>Start a group once and a background task animates every strand in it. Calls are thread-safe from any task and take effect on the next tick.</p>
+        <p>Start a group once and a background task animates every strand in it. Calls are thread-safe from any task, take effect on the next tick, and never wait for a frame to go out.</p>
       </div>
       <div class="hood-tile">
         <h3>One call, every strip</h3>
-        <p>A group call reaches all of its strands, and <code>group[i]</code> still gets you one. Hardware writes take turns, so a robot with several strips doesn't fall behind.</p>
+        <p>A group call reaches all of its strands, and <code>group[i]</code> still gets you one. Strips take turns on the ADI link, and one whose frame hasn't changed skips its turn, so static colors cost nothing.</p>
       </div>
       <div class="hood-tile hood-tile-wide">
         <h3>Brightness that leaves the look alone</h3>
@@ -561,7 +647,7 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
 
   <section class="section reveal" id="pattern-studio">
     <div class="section-head">
-      <span class="eyebrow">// pattern studio 1.1.0</span>
+      <span class="eyebrow">// pattern studio 1.2.0</span>
       <h2>Design against a live preview, not the robot</h2>
       <p>Pattern Studio draws every strand as a row of glowing LEDs and animates it with a Python port of HitLib's own engine. Get the look right on a laptop, then send it to your robot as one header.</p>
     </div>
@@ -590,7 +676,7 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
         </li>
         <li>
           <h3>Deploy</h3>
-          <p>The whole design lands in <code>include/</code> as one header: ports, lengths, brightness, profiles and a named constant for every mode.</p>
+          <p>The whole design lands in <code>include/</code> as one header: ports, lengths, brightness, profiles, custom animations and a named constant for every mode.</p>
         </li>
         <li>
           <h3>Paste two lines, once</h3>
@@ -636,17 +722,17 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
       </div>
       <div class="ps-tile">
         <h3>Caught before compile</h3>
-        <p>Duplicate mode names, out-of-range ports and empty palettes are flagged in the app, not by your compiler.</p>
+        <p>Duplicate mode names, two strands on one port and songs too long for a header are flagged in the app, not by your compiler.</p>
       </div>
       <div class="ps-tile">
         <h3>One file for the team</h3>
-        <p>A <code>.hlprofile</code> design holds every strand and the song's analysis, so a teammate opens exactly what you built.</p>
+        <p>A <code>.hlprofile</code> design holds every strand, every custom animation and the song's analysis, so a teammate opens exactly what you built.</p>
       </div>
     </div>
 
     <p class="download-line">
       <span class="chip-led" style="--c: var(--green)"></span>
-      Windows: <code>HitLibPatternStudio-1.1.0-windows.zip</code> on the
+      Windows: <code>HitLibPatternStudio-1.2.0-windows.zip</code> on the
       <a href="https://github.com/advisorylabs/HitLib/releases">Releases page</a>.
     </p>
     <p class="download-line">
@@ -748,9 +834,9 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
         <span class="name">HitLib repository</span>
         <span class="url">github.com/advisorylabs/HitLib</span>
       </a>
-      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.4.0">
-        <span class="name">HitLib 1.4.0 · Pattern Studio 1.1.0 release</span>
-        <span class="url">.../releases/tag/1.4.0</span>
+      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">
+        <span class="name">HitLib 1.5.0 · Pattern Studio 1.2.0 release</span>
+        <span class="url">.../releases/tag/1.5.0</span>
       </a>
       <a href="#/order">
         <span class="name">Buy the Kit</span>
@@ -758,11 +844,14 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
       </a>
     </div>
     <p class="feedback">Found a bug or have an idea? File it as a GitHub issue, or drop feature suggestions in <code>#suggestions</code> on Discord.</p>
-    <p class="credit">
-      HitLib and Pattern Studio are built by 96671H: Hitmen based out of Grand Forks,
-      North Dakota. HitLib and Pattern Studio are open source under the Mozilla Public
-      License 2.0. HitLib and Pattern Studio are endorsed by the Crashtest alliance.
-    </p>
+    <div class="credit-row">
+      <p class="credit">
+        HitLib and Pattern Studio are built by 96671H: Hitmen based out of Grand Forks,
+        North Dakota. HitLib and Pattern Studio are open source under the Mozilla Public
+        License 2.0. HitLib and Pattern Studio are endorsed by the Crashtest alliance.
+      </p>
+      <img class="credit-logo" src="assets/crashtest-logo.png" width="480" height="325" alt="Crashtest alliance logo" loading="lazy" />
+    </div>
   </div>
 
 </div>
@@ -911,7 +1000,11 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
       <svg class="buy-confirm-check" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 12.5l2.5 2.5L16 9"></path></svg>
       <h3 id="buy-confirm-title">Order placed</h3>
       <p id="buy-confirm-subtitle">A team member will be with you shortly.</p>
-      <a class="btn primary" id="buy-confirm-back" href="#/">Back home</a>
+      <p class="buy-confirm-discord">Questions about your order? The team answers them on Discord.</p>
+      <div class="cta-row buy-confirm-actions">
+        <a class="btn" href="https://discord.gg/Y3XxxCm6Y" target="_blank" rel="noopener">Join the Discord <span class="arrow">↗</span></a>
+        <a class="btn primary" id="buy-confirm-back" href="#/">Back home</a>
+      </div>
     </div>
   </div>
 
@@ -989,6 +1082,24 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
 
 </div>
 </div>
+
+<dialog class="discord-dialog" id="discord-dialog" aria-labelledby="discord-dialog-title" aria-describedby="discord-dialog-desc">
+  <div class="panel-bar">
+    <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+    <span class="slug">// before you pay</span>
+  </div>
+  <h2 id="discord-dialog-title">Questions? Join the Discord</h2>
+  <p id="discord-dialog-desc">
+    It's where the team answers kit questions and posts build and shipping
+    updates. Care, use and installation guides are in <code>#resources</code>,
+    and <code>#opt-in-notifications</code> pings you as your kit moves along.
+  </p>
+  <div class="cta-row">
+    <a class="btn" href="https://discord.gg/Y3XxxCm6Y" target="_blank" rel="noopener">Join the Discord <span class="arrow">↗</span></a>
+    <button type="button" class="btn primary" id="discord-dialog-ok">Okay, continue to payment</button>
+  </div>
+  <p class="discord-dialog-note">Discord opens in a new tab, so your checkout stays right here.</p>
+</dialog>
 
 <script src="js/app.js"></script>
 

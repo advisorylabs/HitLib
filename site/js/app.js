@@ -785,6 +785,308 @@
     renderModes();
   }
 
+  /* custom animation layer stack */
+
+  // How LedStrand::compose() lands one layer on the layers below it (see
+  // src/led_custom.cpp): the same integer lerp, the same six blends, and the
+  // same rule for which blends read a layer's coverage.
+  function lerp8(bg, fg, level) {
+    var a = rgbOf(bg), b = rgbOf(fg);
+    return packRgb(
+      a[0] + Math.trunc((b[0] - a[0]) * level / 255),
+      a[1] + Math.trunc((b[1] - a[1]) * level / 255),
+      a[2] + Math.trunc((b[2] - a[2]) * level / 255)
+    );
+  }
+  function luma(c) {
+    var x = rgbOf(c);
+    return (x[0] * 77 + x[1] * 150 + x[2] * 29) >> 8;
+  }
+  function blendPixel(mode, dst, src, a) {
+    if (mode === 'MASK') return lerp8(dst, lerp8(0, dst, luma(src)), a);
+    if (a === 0) return dst;
+    var out = src;
+    if (mode === 'ADD' || mode === 'SCREEN' || mode === 'MULTIPLY') {
+      var d = rgbOf(dst), s = rgbOf(src), o = [0, 0, 0];
+      for (var k = 0; k < 3; k++) {
+        o[k] = mode === 'ADD' ? Math.min(255, d[k] + s[k])
+          : mode === 'SCREEN' ? 255 - Math.floor((255 - d[k]) * (255 - s[k]) / 255)
+          : Math.floor(d[k] * s[k] / 255);
+      }
+      out = packRgb(o[0], o[1], o[2]);
+    }
+    return a === 255 ? out : lerp8(dst, out, a);
+  }
+  // KEY, ADD and SCREEN let the layers below show through wherever a layer
+  // doesn't draw. OVER, MULTIPLY and MASK get the layer resolved against its
+  // own background first, the way the preset would paint it.
+  function readsCoverage(mode) { return mode === 'KEY' || mode === 'ADD' || mode === 'SCREEN'; }
+
+  // Each returns step(tick, col, cov): a color per pixel, and how much of
+  // that pixel the layer covers (0-255).
+  var STACK_GEN = {
+    flow: function (c1, c2, everyTicks) {
+      var ramp = [];
+      return function (tick, col, cov) {
+        var n = col.length, i;
+        if (ramp.length !== n) {
+          ramp = [];
+          for (i = 0; i < n; i++) ramp.push(lerpColor(c1, c2, 1 - Math.abs((2 * i) / n - 1)));
+        }
+        var shift = Math.floor(tick / everyTicks);
+        for (i = 0; i < n; i++) { col[i] = ramp[mod(i + shift, n)]; cov[i] = 255; }
+      };
+    },
+    // Bouncing, a pixel a tick.
+    pulse: function (color, runLength) {
+      return function (tick, col, cov) {
+        var n = col.length, range = Math.max(1, n - runLength);
+        var p = mod(tick, 2 * range), start = p <= range ? p : 2 * range - p;
+        for (var i = 0; i < n; i++) {
+          var lit = i >= start && i < start + runLength;
+          col[i] = lit ? color : 0;
+          cov[i] = lit ? 255 : 0;
+        }
+      };
+    },
+    // A spark's brightness is its coverage, so under ADD a half-faded spark
+    // adds half its light.
+    twinkle: function (palette, densityPct, fadeStep) {
+      var HOLD_TICKS = 5;
+      var px = [];
+      return function (tick, col, cov) {
+        var n = col.length, i, active = 0;
+        if (px.length !== n) {
+          px = [];
+          for (i = 0; i < n; i++) px.push({ state: 0, level: 0, hold: 0, color: palette[0] });
+        }
+        for (i = 0; i < n; i++) if (px[i].state) active++;
+        if (active < Math.round(n * densityPct / 100)) {
+          for (var tries = 0; tries < 6; tries++) {
+            var cand = px[Math.floor(Math.random() * n)];
+            if (!cand.state) {
+              cand.state = 1;
+              cand.level = 0;
+              cand.color = palette[Math.floor(Math.random() * palette.length)];
+              break;
+            }
+          }
+        }
+        for (i = 0; i < n; i++) {
+          var s = px[i];
+          if (s.state === 1) {
+            s.level = Math.min(255, s.level + fadeStep);
+            if (s.level === 255) { s.state = 2; s.hold = HOLD_TICKS; }
+          } else if (s.state === 2) {
+            if (--s.hold <= 0) s.state = 3;
+          } else if (s.state === 3) {
+            s.level = Math.max(0, s.level - fadeStep);
+            if (s.level === 0) s.state = 0;
+          }
+          col[i] = s.color;
+          cov[i] = s.level;
+        }
+      };
+    },
+    flash: function (color, onMs, offMs) {
+      var on = msToTicks(onMs), off = msToTicks(offMs);
+      return function (tick, col, cov) {
+        var lit = mod(tick, on + off) < on;
+        for (var i = 0; i < col.length; i++) { col[i] = lit ? color : 0; cov[i] = lit ? 255 : 0; }
+      };
+    }
+  };
+
+  var STACK_LAYERS = {
+    wash: { name: 'Wash', blend: 'OVER', gen: STACK_GEN.flow(0x4B12C8, 0x0A3AB8, 2) },
+    scanner: { name: 'Scanner', blend: 'KEY', gen: STACK_GEN.pulse(0xFF2D6E, 4) },
+    sparkle: { name: 'Sparkle', blend: 'ADD', gen: STACK_GEN.twinkle([0xFFFFFF, 0xFFE08A], 20, 40) },
+    alert: { name: 'Alert', blend: 'KEY', gen: STACK_GEN.flash(0xFFB000, 280, 280) }
+  };
+  var STACK_ORDER = ['wash', 'scanner', 'sparkle', 'alert']; // layer 0 is the bottom
+
+  var STACK_NOTES = {
+    OVER: 'replaces everything below it, its own black background included.',
+    KEY: 'replaces where it draws and lets the layers below show through the gaps.',
+    ADD: 'adds its light to what is below, so it brightens instead of covering.',
+    SCREEN: 'brightens what is below, gentler than ADD near white.',
+    MULTIPLY: 'tints what is below by its own color, and goes dark where it is dark.',
+    MASK: 'keeps as much of what is below as it is bright, and darkens the rest.'
+  };
+
+  var stackLab = document.getElementById('stack-lab');
+  var stackResultEl = stackLab && stackLab.querySelector('.leds[data-demo="stack"]');
+  if (stackLab && stackResultEl) {
+    var stackAlert = 0;   // the alert driver: a CONSTANT, moved by setDriverLevel()
+    var stackBreathe = 0; // the breathe driver: a 4 s sine LFO
+    var stackNote = document.getElementById('stack-blend-note');
+    var stackCode = document.getElementById('stack-code');
+    var stackAlertRange = document.getElementById('stack-alert');
+    var breatheFill = document.getElementById('stack-breathe');
+
+    // A binding maps a driver's 0-255 onto a parameter between atZero and atFull.
+    var bindDriver = function (value, atZero, atFull) {
+      return atZero + Math.trunc((atFull - atZero) * value / 255);
+    };
+    var stackOpacity = function (id) {
+      if (id === 'alert') return bindDriver(stackAlert, 0, 255);
+      if (id === 'wash') return bindDriver(stackBreathe, 110, 255);
+      return 255;
+    };
+
+    STACK_ORDER.forEach(function (id) {
+      var L = STACK_LAYERS[id];
+      var sheet = stackLab.querySelector('.stack-sheet[data-layer="' + id + '"]');
+      var ledsEl = sheet.querySelector('.leds');
+      L.on = true;
+      L.lastTick = -1;
+      L.sheet = sheet;
+      L.row = stackLab.querySelector('.stack-row[data-layer="' + id + '"]');
+      L.tagBlend = sheet.querySelector('.stack-tag-blend');
+      L.strip = new LedStrip(ledsEl, parseInt(ledsEl.getAttribute('data-n'), 10) || 20);
+      L.col = [];
+      L.cov = [];
+    });
+
+    // What a layer draws on its own sheet. A pixel it doesn't cover is clear
+    // glass; under a blend that ignores coverage there's no such pixel, since
+    // the layer paints its background, so the sheet goes opaque.
+    var paintSheet = function (L) {
+      var strip = L.strip, keyed = readsCoverage(L.blend);
+      for (var i = 0; i < strip.dots.length; i++) {
+        var c = L.col[i] || 0, k = L.cov[i] || 0;
+        if (!keyed && k !== 255) { c = lerp8(0, c, k); k = 255; }
+        var key = k === 0 ? -2 : c * 256 + k;
+        if (key === strip.last[i]) continue;
+        strip.last[i] = key;
+        var dot = strip.dots[i];
+        if (k === 0) {
+          dot.classList.remove('on');
+          dot.classList.add('is-clear');
+          continue;
+        }
+        dot.classList.remove('is-clear');
+        var x = rgbOf(c);
+        if (x[0] + x[1] + x[2] < 3) {
+          dot.classList.remove('on');
+          continue;
+        }
+        var alpha = k / 255;
+        dot.style.setProperty('--c', 'rgba(' + Math.min(255, TRACK_RGB[0] + x[0]) + ',' +
+          Math.min(255, TRACK_RGB[1] + x[1]) + ',' + Math.min(255, TRACK_RGB[2] + x[2]) + ',' + alpha.toFixed(2) + ')');
+        dot.style.setProperty('--h', 'rgba(' + x[0] + ',' + x[1] + ',' + x[2] + ',' + (0.45 * alpha).toFixed(2) + ')');
+        dot.classList.add('on');
+      }
+    };
+
+    var stackDemo = addDemo(stackResultEl, function (tick, frame) {
+      var n = frame.length;
+      stackBreathe = Math.round(127.5 - 127.5 * Math.cos(2 * Math.PI * mod(tick * DEMO_TICK_MS, 4000) / 4000));
+      fillFrame(frame, 0);
+      STACK_ORDER.forEach(function (id) {
+        var L = STACK_LAYERS[id];
+        // A repaint from a control doesn't advance the animation.
+        if (L.lastTick !== tick || L.col.length !== n) {
+          if (L.col.length !== n) { L.col = new Array(n).fill(0); L.cov = new Array(n).fill(0); }
+          L.gen(tick, L.col, L.cov);
+          L.lastTick = tick;
+        }
+        paintSheet(L);
+        if (!L.on) return;
+        var alpha = stackOpacity(id), keyed = readsCoverage(L.blend);
+        for (var i = 0; i < n; i++) {
+          var c = L.col[i], k = L.cov[i], a;
+          if (keyed) {
+            a = Math.floor(k * alpha / 255);
+          } else {
+            if (k !== 255) c = lerp8(0, c, k);
+            a = alpha;
+          }
+          frame[i] = blendPixel(L.blend, frame[i], c, a);
+        }
+      });
+      if (breatheFill) breatheFill.style.width = (stackBreathe / 255 * 100).toFixed(1) + '%';
+    });
+
+    var renderStackCode = function () {
+      var live = STACK_ORDER.filter(function (id) { return STACK_LAYERS[id].on; }).map(function (id) {
+        return STACK_LAYERS[id].name + ' ' + STACK_LAYERS[id].blend;
+      });
+      renderCode(stackCode, [
+        ['// layers, bottom up: ' + (live.length ? live.join(', ') : 'none'), 't-com'], '\n',
+        ['namespace', 't-kw'], ' anim = hitlib::profiles::anim::underglow;\n\n',
+        'strand.compose(anim::composition);\n',
+        'strand.setDriverLevel(anim::driver::alert, ', [String(stackAlert), 't-num'], ');'
+      ]);
+    };
+
+    var setStackNote = function (L) {
+      if (!stackNote) return;
+      stackNote.innerHTML = '<b>' + L.name + ' · ' + L.blend + '</b> ' + STACK_NOTES[L.blend];
+    };
+
+    var setHot = function (L, hot) {
+      L.row.classList.toggle('is-hot', hot);
+      L.sheet.classList.toggle('is-hot', hot);
+    };
+
+    STACK_ORDER.forEach(function (id) {
+      var L = STACK_LAYERS[id];
+      var eye = L.row.querySelector('.stack-eye');
+      var select = L.row.querySelector('.stack-blend');
+      L.blend = select.value; // a reload can restore a different choice
+      L.tagBlend.textContent = L.blend;
+      eye.addEventListener('click', function () {
+        L.on = !L.on;
+        eye.setAttribute('aria-pressed', L.on ? 'true' : 'false');
+        L.row.classList.toggle('is-muted', !L.on);
+        L.sheet.classList.toggle('is-muted', !L.on);
+        renderStackCode();
+        refreshDemo(stackDemo);
+      });
+      select.addEventListener('change', function () {
+        L.blend = select.value;
+        L.tagBlend.textContent = L.blend;
+        setStackNote(L);
+        renderStackCode();
+        refreshDemo(stackDemo);
+      });
+      L.row.addEventListener('mouseenter', function () { setHot(L, true); });
+      L.row.addEventListener('mouseleave', function () { setHot(L, false); });
+      L.row.addEventListener('focusin', function () { setHot(L, true); });
+      L.row.addEventListener('focusout', function () { setHot(L, false); });
+    });
+
+    if (stackAlertRange) {
+      var readAlert = function () {
+        stackAlert = Math.max(0, Math.min(255, parseInt(stackAlertRange.value, 10) || 0));
+      };
+      readAlert();
+      stackAlertRange.addEventListener('input', function () {
+        readAlert();
+        renderStackCode();
+        refreshDemo(stackDemo);
+      });
+    }
+
+    stackLab.querySelectorAll('[data-stack-view]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        stackLab.classList.toggle('is-stacked', btn.getAttribute('data-stack-view') === 'stacked');
+        stackLab.querySelectorAll('[data-stack-view]').forEach(function (b) {
+          var on = b === btn;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
+    });
+
+    if (stackNote) {
+      stackNote.innerHTML = '<b>KEY</b> is what makes stacking work: the scanner paints its run and lets the wash through. ' +
+        'Set it to <b>OVER</b> to see the difference.';
+    }
+    renderStackCode();
+  }
+
   /* demo loop */
 
   (function startDemos() {
@@ -1488,6 +1790,33 @@
     sections.forEach(function (s) { railObserver.observe(s); });
   }
 
+  /* ---------- discord prompt ---------- */
+
+  // Shown once card checkout is ready and before Stripe takes over the tab, so
+  // every buyer gets a clear look at the Discord. Nothing is timed: it waits
+  // for Okay. Esc puts the buyer back on the form instead. Without <dialog>
+  // support there's no prompt, rather than no way to pay.
+  var discordDialog = document.getElementById('discord-dialog');
+  var discordOk = document.getElementById('discord-dialog-ok');
+
+  function offerDiscordThen(proceed, goBack) {
+    if (!discordDialog || !discordOk || typeof discordDialog.showModal !== 'function') {
+      proceed();
+      return;
+    }
+    function done() {
+      discordOk.removeEventListener('click', onOk);
+      discordDialog.removeEventListener('cancel', onCancel);
+      discordDialog.close();
+    }
+    function onOk() { done(); proceed(); }
+    function onCancel(e) { e.preventDefault(); done(); goBack(); }
+    discordOk.addEventListener('click', onOk);
+    discordDialog.addEventListener('cancel', onCancel);
+    discordDialog.showModal();
+    discordOk.focus();
+  }
+
   /* ---------- orders ---------- */
 
   function escapeHtml(str) {
@@ -1663,7 +1992,7 @@
         }
 
         submitBtn.disabled = true;
-        statusEl.textContent = 'Taking you to checkout…';
+        statusEl.textContent = 'Getting checkout ready…';
 
         try {
           var checkoutResp = await fetch('/api/create-checkout-session', {
@@ -1682,7 +2011,13 @@
             submitBtn.disabled = false;
             return;
           }
-          window.location.href = checkoutData.url;
+          statusEl.textContent = '';
+          offerDiscordThen(function () {
+            statusEl.textContent = 'Taking you to checkout…';
+            window.location.href = checkoutData.url;
+          }, function () {
+            submitBtn.disabled = false;
+          });
         } catch (err) {
           statusEl.textContent = 'Could not reach the payment desk. Try again in a bit.';
           submitBtn.disabled = false;

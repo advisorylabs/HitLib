@@ -764,6 +764,293 @@
   .new-item { padding: 16px 0; border-bottom: 1px solid var(--line); }
   .new-item p { margin: 6px 0 0; font-size: 14.5px; color: var(--text-muted); }
 
+  /* ---------- layer stack (custom animations demo) ---------- */
+
+  .stack-lab {
+    margin-top: 30px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-sunken);
+    overflow: hidden;
+  }
+  .stack-lab .code-window-bar .seg-toggle { margin-left: auto; }
+  .stack-lab + .demo-caption + .new-grid { margin-top: 34px; }
+
+  .stack-body {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  /* The exploded view: every layer on its own glass sheet, tilted back and
+     lifted off the strip by its depth. "On the strip" lowers them all into the
+     result and turns it to face you. */
+  .stack-scene {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 420px;
+    padding: 28px 26px;
+    perspective: 1100px;
+    perspective-origin: 50% 15%;
+    overflow: hidden;
+  }
+
+  .stack-world {
+    --tilt: 58deg;
+    --twist: -8deg;
+    --lift: 74px;
+    position: relative;
+    width: 100%;
+    max-width: 460px;
+    height: 58px;
+    transform-style: preserve-3d;
+    transform: translateY(96px) rotateX(var(--tilt)) rotateZ(var(--twist));
+    transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .stack-sheet {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    border: 1px solid var(--line-strong);
+    border-color: color-mix(in srgb, var(--c, var(--purple)) 42%, transparent);
+    border-radius: 12px;
+    background: rgba(17, 16, 32, 0.4);
+    transform: translateZ(calc(var(--depth) * var(--lift)));
+    transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease,
+      border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .stack-sheet .leds { flex: 1; --gap: 6px; }
+
+  .stack-sheet.is-hot {
+    border-color: var(--c);
+    box-shadow: 0 0 26px -6px var(--c);
+  }
+  .stack-sheet.is-muted { opacity: 0.2; }
+
+  .stack-result {
+    border-color: var(--line-strong);
+    background: #05040a;
+    box-shadow: 0 0 46px -14px rgba(155, 77, 255, 0.6);
+  }
+
+  .stack-tag {
+    position: absolute;
+    top: -10px;
+    left: 14px;
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface-sunken);
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    line-height: 1.5;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--text-muted);
+  }
+  .stack-tag b { font-weight: 600; color: var(--text); }
+  .stack-tag-blend { margin-left: 4px; color: var(--c); }
+
+  /* A pixel a layer leaves uncovered is clear glass, not an unlit LED: the
+     sheets below show through it. */
+  .stack-sheet .led-dot.is-clear {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(164, 157, 196, 0.18);
+  }
+
+  .stack-lab.is-stacked .stack-world { transform: translateY(0) rotateX(0deg) rotateZ(0deg); }
+  .stack-lab.is-stacked .stack-sheet:not(.stack-result) { transform: translateZ(0); opacity: 0; }
+
+  .stack-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 18px 18px 20px;
+    border-left: 1px solid var(--line);
+  }
+
+  .stack-panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    padding: 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .stack-panel-head:not(:first-child) { margin-top: 6px; }
+
+  .stack-layers { display: flex; flex-direction: column; gap: 6px; }
+
+  .stack-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 7px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    transition: border-color 0.15s ease;
+  }
+  .stack-row.is-hot { border-color: var(--line-strong); }
+  .stack-row.is-muted .stack-row-name { color: var(--text-muted); }
+
+  .stack-eye {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--bg);
+    cursor: pointer;
+  }
+  .stack-eye:hover { border-color: var(--text-muted); }
+  .stack-eye:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+  .stack-eye-led {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--track);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .stack-eye[aria-pressed="true"] .stack-eye-led {
+    background: var(--c);
+    box-shadow: 0 0 6px var(--c), 0 0 14px var(--c);
+  }
+
+  .stack-row-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .stack-kind {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  .stack-blend {
+    flex: none;
+    -webkit-appearance: none;
+    appearance: none;
+    min-height: 30px;
+    padding: 4px 26px 4px 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' fill='none' stroke='%23a49dc4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center / 10px 10px;
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  .stack-blend:hover { border-color: var(--text-muted); }
+  .stack-blend:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+  .stack-blend option { background: var(--surface); color: var(--text); }
+
+  .stack-blend-note {
+    margin: 0;
+    min-height: 3.1em;
+    padding: 0 2px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-muted);
+  }
+  .stack-blend-note b { color: var(--text); font-family: ui-monospace, "SF Mono", monospace; font-weight: 600; }
+
+  .stack-driver {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 8px 12px;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .stack-driver-name {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0 8px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 12.5px;
+    color: var(--text);
+  }
+  .stack-driver-target {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .stack-driver-target::before { content: "→ "; }
+  .stack-driver input[type="range"],
+  .stack-meter { grid-column: 1 / -1; }
+  .stack-driver input[type="range"] { width: 100%; margin: 0; accent-color: var(--amber); }
+
+  .stack-meter {
+    display: block;
+    height: 6px;
+    margin: 5px 0 4px;
+    border-radius: 3px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .stack-meter-fill {
+    display: block;
+    width: 50%;
+    height: 100%;
+    border-radius: 3px;
+    background: #6a3bff;
+    box-shadow: 0 0 8px #6a3bff;
+  }
+
+  .stack-code {
+    border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.22);
+  }
+
+  @media (max-width: 860px) {
+    .stack-body { grid-template-columns: minmax(0, 1fr); }
+    .stack-panel { border-left: 0; border-top: 1px solid var(--line); }
+    .stack-scene { min-height: 380px; }
+  }
+
+  @media (max-width: 560px) {
+    .stack-scene { min-height: 310px; padding: 22px 12px; }
+    /* Narrower than the column: the near sheets render wider than the far
+       ones, and the top one would otherwise run off the edge. */
+    .stack-world {
+      --lift: 52px;
+      --twist: -6deg;
+      max-width: 270px;
+      height: 42px;
+      transform: translateY(70px) rotateX(var(--tilt)) rotateZ(var(--twist));
+    }
+    .stack-sheet { padding: 0 8px; border-radius: 10px; }
+    .stack-sheet .leds { --gap: 2px; }
+    .stack-panel { padding: 16px 14px 18px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stack-world,
+    .stack-sheet { transition: none; }
+  }
+
   /* ---------- animations specimen sheet ---------- */
 
   .specimen { margin-top: 26px; border-top: 1px solid var(--line); }
@@ -1496,7 +1783,7 @@
   .kits-noscript { margin: 16px 0 0; font-size: 15px; font-weight: 600; }
 
   .footer .feedback { margin: 22px 0 0; font-size: 13.5px; color: var(--text-muted); max-width: 64ch; }
-  .footer .feedback + .credit { margin-top: 10px; }
+  .footer .feedback + .credit-row { margin-top: 10px; }
 
   /* ---------- homepage responsive ---------- */
 
@@ -1696,6 +1983,49 @@
   .buy-confirm p {
     color: var(--text-muted);
     margin: 0 0 14px;
+  }
+
+  .buy-confirm .buy-confirm-discord { margin: 0; font-size: 14px; }
+  .buy-confirm-actions { justify-content: center; margin-top: 16px; }
+
+  /* ---------- discord prompt (between our form and Stripe's checkout) ---------- */
+
+  .discord-dialog {
+    width: min(520px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    padding: 26px 28px 24px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 30px 80px -30px rgba(155, 77, 255, 0.55);
+  }
+  .discord-dialog::backdrop { background: rgba(7, 6, 13, 0.74); }
+
+  .discord-dialog h2 { font-size: 22px; font-weight: 700; }
+
+  .discord-dialog p {
+    margin: 12px 0 0;
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+  .discord-dialog p code {
+    font-size: 0.86em;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+
+  .discord-dialog .cta-row { margin-top: 22px; }
+  .discord-dialog button.btn { cursor: pointer; }
+  .discord-dialog .discord-dialog-note { margin-top: 14px; font-size: 12.5px; }
+
+  @media (max-width: 520px) {
+    .discord-dialog { padding: 22px 18px 20px; }
+    .discord-dialog .cta-row .btn { flex: 1 1 100%; justify-content: center; }
   }
 
   /* ---------- app window (editor screenshots + photos) ---------- */
@@ -2552,11 +2882,26 @@
   .pinout a:hover .name,
   .pinout a:hover .url { color: var(--pink); }
 
-  .credit {
+  .credit-row {
     margin-top: 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px 32px;
+  }
+
+  .credit {
+    flex: 0 1 60ch;
+    margin: 0;
     font-size: 13px;
     color: var(--text-muted);
-    max-width: 60ch;
+  }
+
+  .credit-logo {
+    flex: none;
+    margin-left: auto;
+    width: 132px;
+    height: auto;
   }
 
   @media (max-width: 520px) {
