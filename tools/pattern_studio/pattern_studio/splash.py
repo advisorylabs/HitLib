@@ -42,6 +42,10 @@ class SplashScreen(QWidget):
 
     #: Fired after the fade-out completes and the widget has closed.
     finished = Signal()
+    #: Fired once the fade-in has landed and the splash is fully in view, with
+    #: the hold already timed - the point to do slow startup work behind it.
+    #: Never fired if a skip cut the fade-in short.
+    faded_in = Signal()
 
     # Geometry, in logical pixels.
     SIZE = 340
@@ -117,7 +121,10 @@ class SplashScreen(QWidget):
     def _begin_hold(self) -> None:
         if self._closing:
             return
+        # Timed before anyone hears about it, so work done on faded_in runs
+        # inside the hold rather than pushing it back.
         QTimer.singleShot(self.hold_ms, self._fade_out)
+        self.faded_in.emit()
 
     def _fade_out(self) -> None:
         # Guarded: a click during the hold can race the hold timer, and

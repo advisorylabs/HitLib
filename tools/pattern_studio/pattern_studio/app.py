@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QEventLoop
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -66,18 +67,29 @@ def main() -> None:
 
     splash = SplashScreen()
     splash.start()
-    # Paint the splash before building the window: MainWindow's constructor
-    # blocks the event loop, and without this the splash would first appear
-    # already partway through its fade.
-    app.processEvents()
+    # The window waits for the fade-in to land. MainWindow's constructor
+    # blocks the event loop, so built any earlier it ran behind a splash still
+    # at zero opacity - an empty screen for the whole build - and the fade-in
+    # only began after it, pushing the whole animation out behind startup.
+    # Built here it lands in the hold, with the splash fully in view; the ring
+    # just stands still while it runs. A skip that cuts the fade-in short gets
+    # here through finished instead.
+    fade_in = QEventLoop()
+    splash.faded_in.connect(fade_in.quit)
+    splash.finished.connect(fade_in.quit)
+    fade_in.exec()
 
-    # Built while the splash is up rather than after it, so the animation
-    # overlaps startup instead of being tacked on in front of it.
+    # Out here rather than in a slot, so a window that fails to build still
+    # raises out of main() instead of into the event loop, which would print
+    # it and idle on with nothing left to show.
     window = MainWindow()
     # Also set per-window, not just app-wide: the taskbar reads the window's
     # own icon first, and only falls back to the application's.
     window.setWindowIcon(icon)
-    splash.finished.connect(window.show)
+    if splash.isVisible():
+        splash.finished.connect(window.show)
+    else:
+        window.show()
 
     sys.exit(app.exec())
 

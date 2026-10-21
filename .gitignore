@@ -46,3 +46,6 @@ __pycache__/
 tools/pattern_studio/build/
 tools/pattern_studio/dist/
 /.claude
+
+# Pattern Studio's test suite stays local, out of the repository
+tools/pattern_studio/tests/

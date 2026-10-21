@@ -34,12 +34,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import fill_sources
+from . import codegen_custom, fill_sources
 from .envelope import BAND_LABELS
+from .frame_codec import MAX_DRAWN_FRAMES
 from .platforms import Platform
 from .models import (
     AnimationConfig,
     AnimationKind,
+    CompositionConfig,
+    DriverKind,
+    LayerKind,
     GaugeStopConfig,
     ModeConfig,
     MusicConfig,
@@ -69,7 +73,8 @@ def _effective_modes(config: StrandConfig) -> list[ModeConfig]:
     return [ModeConfig(name="Default", priority=100, animation=config.animation, splice=config.splice)]
 
 
-def validate_for_export(config: StrandConfig, music: MusicConfig | None = None) -> list[str]:
+def validate_for_export(config: StrandConfig, music: MusicConfig | None = None,
+                        compositions: list[CompositionConfig] | None = None) -> list[str]:
     errors: list[str] = []
 
     if not (1 <= config.length <= MAX_LEDS):
@@ -101,23 +106,28 @@ def validate_for_export(config: StrandConfig, music: MusicConfig | None = None) 
             for phase in mode.phases:
                 if phase.duration_ms < 1:
                     errors.append(f'Mode "{mode.name}", phase "{phase.name}": duration must be >= 1 ms.')
-                errors.extend(_validate_animation(mode.name, phase.name, phase.animation, music))
+                errors.extend(_validate_animation(mode.name, phase.name, phase.animation,
+                                                  music, compositions))
                 errors.extend(_validate_splice(mode.name, phase.name, phase.splice))
         else:
-            errors.extend(_validate_animation(mode.name, None, mode.animation, music))
+            errors.extend(_validate_animation(mode.name, None, mode.animation,
+                                              music, compositions))
             errors.extend(_validate_splice(mode.name, None, mode.splice))
 
     return errors
 
 
 def validate_document_for_export(
-    configs: list[StrandConfig], music: MusicConfig | None = None
+    configs: list[StrandConfig], music: MusicConfig | None = None,
+    compositions: list[CompositionConfig] | None = None
 ) -> list[str]:
     """Validate every strand for a whole-document export.
 
     Beyond each strand's own checks, names must be distinct: they become the
     namespace names, and two strands called "Strand" would produce `strand`
-    and `strand2` with nothing to distinguish them.
+    and `strand2` with nothing to distinguish them. Ports must be too: the
+    preview draws two strips, but two LedStrands on one port overwrite each
+    other's frames every tick.
     """
     if not configs:
         return ["Nothing to export, add at least one strand."]
@@ -134,30 +144,46 @@ def validate_document_for_export(
                 f"so its generated namespace can be told apart."
             )
 
+    on_port: dict[tuple[int, int], list[str]] = {}
+    for cfg in configs:
+        on_port.setdefault((cfg.smart_port, cfg.adi_port), []).append(cfg.name or "Profile")
+    for (smart, adi), names in on_port.items():
+        if len(names) > 1:
+            port = f"ADI port {adi}" + (f" of the expander on smart port {smart}" if smart else "")
+            listed = ", ".join(f'"{n}"' for n in names[:-1]) + f' and "{names[-1]}"'
+            errors.append(
+                f"{listed} are all on {port}, so on the robot they would overwrite "
+                f"each other's frames - give each strand a port of its own."
+            )
+
     for cfg in configs:
         label = cfg.name or "Profile"
-        errors.extend(f"[{label}] {e}" for e in validate_for_export(cfg, music))
+        errors.extend(f"[{label}] {e}" for e in validate_for_export(cfg, music, compositions))
     return errors
 
 
 def _validate_animation(
-    mode_name: str, phase_name: str | None, a: AnimationConfig, music: MusicConfig | None = None
+    mode_name: str, phase_name: str | None, a: AnimationConfig,
+    music: MusicConfig | None = None,
+    compositions: list[CompositionConfig] | None = None,
 ) -> list[str]:
     where = f'mode "{mode_name}"' + (f', phase "{phase_name}"' if phase_name else "")
     errors = []
+    if a.kind == AnimationKind.CUSTOM:
+        library = {c.id: c for c in (compositions or [])}
+        comp = library.get(a.composition_id)
+        if comp is None:
+            errors.append(
+                f"{where}: this strand plays a custom animation that is not in the "
+                f"library any more - pick one in the Animator, or change the "
+                f"animation kind."
+            )
+        else:
+            errors.extend(_validate_composition(where, comp, music))
     if a.kind == AnimationKind.TWINKLE and not a.palette:
         errors.append(f"{where}: Twinkle needs at least one palette color.")
     if a.kind == AnimationKind.MUSIC:
-        if music is None or not music.loaded:
-            errors.append(
-                f"{where}: Music Sync needs a song - load an audio or MIDI file in the "
-                f"Song bar under the preview."
-            )
-        elif not music.bands.get(a.band):
-            errors.append(
-                f'{where}: the song has nothing in the "{a.band}" band - pick a '
-                f"different one, or a different source track."
-            )
+        errors.extend(_validate_song(where, "Music Sync", a.band, music))
         if not (0 <= a.sensitivity <= 255):
             errors.append(f"{where}: sensitivity must be 0-255 (got {a.sensitivity}).")
     if a.kind == AnimationKind.FILL:
@@ -182,11 +208,152 @@ def _validate_animation(
     for label, value in (("run_length", a.run_length), ("speed", a.speed), ("segment_width", a.segment_width)):
         if not (0 <= value <= 255):
             errors.append(f"{where}: {label} must fit in 0-255 (got {value}).")
+    if not (0 <= a.step_ms <= 0xFFFF):
+        errors.append(f"{where}: step time must fit in 0-65535 ms (got {a.step_ms}).")
     # Flash durations are milliseconds, not uint8 counts. They get their own
     # bound (uint32 on the C++ side, but the GUI caps at 10 s).
     for label, value in (("on_ms", a.on_ms), ("off_ms", a.off_ms)):
         if value < 1:
             errors.append(f"{where}: {label} must be >= 1 ms (got {value}).")
+    return errors
+
+
+#: LedStrand::MusicTrack::frameCount is a uint16_t, and a longer table is a
+#: narrowing error in the brace initializer that emits it.
+MAX_MUSIC_FRAMES = 0xFFFF
+
+
+def _validate_song(where: str, what: str, band: str, music: MusicConfig | None) -> list[str]:
+    """What `band` of the design's song has to be for @p what - a Music Sync
+    animation or a composition's Song Band driver - to play it on the robot."""
+    if music is None or not music.loaded:
+        return [
+            f"{where}: {what} needs a song - load an audio or MIDI file in the "
+            f"Song bar under the preview."
+        ]
+    if not music.bands.get(band):
+        return [
+            f'{where}: the song has nothing in the "{band}" band - pick a '
+            f"different one, or a different source track."
+        ]
+    frames = len(music.table(band))
+    if frames > MAX_MUSIC_FRAMES:
+        return [
+            f"{where}: the song is {frames} frames of {music.frame_ms} ms, and the "
+            f"robot's table holds at most {MAX_MUSIC_FRAMES} - raise the Frame time "
+            f"in the Song bar, or load a shorter clip."
+        ]
+    return []
+
+
+
+def _validate_composition(where: str, comp: CompositionConfig,
+                          music: MusicConfig | None = None) -> list[str]:
+    """What the firmware cannot be handed, checked before it is emitted.
+
+    The bounds are LedStrand's own static constexpr ceilings. Going past one
+    is caught here rather than silently truncated at compose(), because a
+    design that loses its eighth layer on export and nowhere else is the
+    worst way to find out.
+    """
+    from .models import MAX_BINDINGS, MAX_DRIVERS, MAX_LAYERS, CURVE_POINTS
+
+    errors: list[str] = []
+    label = f'{where}: custom animation "{comp.name}"'
+
+    live = [layer for layer in comp.layers if not layer.muted]
+    if not live:
+        errors.append(f"{label} has no layers that are not muted, so it renders as nothing.")
+    if len(live) > MAX_LAYERS:
+        errors.append(
+            f"{label} has {len(live)} layers, and a strand can run {MAX_LAYERS}. "
+            f"Mute or remove {len(live) - MAX_LAYERS} of them."
+        )
+    if len(comp.drivers) > MAX_DRIVERS:
+        errors.append(
+            f"{label} has {len(comp.drivers)} drivers, and a strand can run {MAX_DRIVERS}."
+        )
+
+    for i, layer in enumerate(live):
+        lwhere = f'{label}, layer "{layer.name or i}"'
+        if len(layer.bindings) > MAX_BINDINGS:
+            errors.append(
+                f"{lwhere}: {len(layer.bindings)} bindings, and a layer can carry "
+                f"{MAX_BINDINGS}."
+            )
+        for b in layer.bindings:
+            if b.driver >= len(comp.drivers):
+                errors.append(
+                    f"{lwhere}: a binding points at driver {b.driver}, which this "
+                    f"animation does not have."
+                )
+            if b.curve and len(b.curve) != CURVE_POINTS:
+                errors.append(
+                    f"{lwhere}: a binding curve has {len(b.curve)} points, and a "
+                    f"curve has exactly {CURVE_POINTS}."
+                )
+        if layer.kind == LayerKind.TWINKLE and not layer.palette:
+            errors.append(f"{lwhere}: Twinkle needs at least one palette color.")
+        if layer.kind == LayerKind.BITSCROLL:
+            if not layer.segments:
+                errors.append(f"{lwhere}: Bitscroll needs at least one segment.")
+            for seg in layer.segments:
+                if seg.width < 1:
+                    errors.append(f"{lwhere}: a Bitscroll segment width must be >= 1.")
+        if layer.kind == LayerKind.FRAMES:
+            if not layer.frames:
+                errors.append(f"{lwhere}: a Drawn Frames layer has nothing drawn in it.")
+            if len(layer.frames) > MAX_DRAWN_FRAMES:
+                errors.append(
+                    f"{lwhere}: {len(layer.frames)} frames, and a drawn layer can hold "
+                    f"{MAX_DRAWN_FRAMES}. Delete {len(layer.frames) - MAX_DRAWN_FRAMES} of them."
+                )
+            if layer.frame_width < 1:
+                errors.append(f"{lwhere}: frame width must be >= 1.")
+            if len(layer.frame_palette) > 32:
+                errors.append(
+                    f"{lwhere}: {len(layer.frame_palette)} palette colors, and a "
+                    f"drawn frame's index is five bits, so 32 is the most it can name."
+                )
+        if not (0 <= layer.opacity <= 255):
+            errors.append(f"{lwhere}: opacity must be 0-255 (got {layer.opacity}).")
+        if layer.start >= MAX_LEDS:
+            errors.append(f"{lwhere}: start pixel must be below {MAX_LEDS}.")
+
+    for i, drv in enumerate(comp.drivers):
+        dwhere = f'{label}, driver "{drv.name or i}"'
+        if drv.kind == DriverKind.SENSOR:
+            if drv.source not in fill_sources.SOURCES:
+                errors.append(f'{dwhere}: unknown source "{drv.source}".')
+            else:
+                low, high = fill_sources.port_range(drv.source)
+                if high and not (low <= drv.source_port <= high):
+                    errors.append(
+                        f"{dwhere}: reads a port between {low} and {high} "
+                        f"(got {drv.source_port})."
+                    )
+                if (fill_sources.polls_a_device(drv.source)
+                        and drv.source_empty == drv.source_full):
+                    errors.append(
+                        f"{dwhere}: Empty At and Full At are both {drv.source_empty}, "
+                        f"so it has no range to move across."
+                    )
+                if not fill_sources.polls_a_device(drv.source):
+                    # The preview sweeps it like any other, but on the robot
+                    # a Sensor driver with no reader holds still, and
+                    # setDriverLevel() only moves a Constant one.
+                    errors.append(
+                        f"{dwhere}: a Sensor driver on Manual has nothing to read on "
+                        f"the robot, so it would never move there. Pick a source, or "
+                        f"make it a Constant driver and set it from robot code with "
+                        f"setDriverLevel()."
+                    )
+            if not (0 <= drv.smoothing <= 99):
+                errors.append(f"{dwhere}: smoothing must be 0-99 (got {drv.smoothing}).")
+        if drv.kind == DriverKind.MUSIC:
+            errors.extend(_validate_song(dwhere, "a Song Band driver", drv.band, music))
+        if drv.kind == DriverKind.LFO and drv.period_ms < 1:
+            errors.append(f"{dwhere}: an oscillator's period must be >= 1 ms.")
     return errors
 
 
@@ -301,9 +468,46 @@ def _snake_case(name: str, fallback: str) -> str:
     return ident
 
 
+#: Namespaces the generated code reaches, or that a header in the same file
+#: defines at hitlib::profiles. A strand or composition namespace of the same
+#: name would shadow one of them for everything nested beside it.
+_OWNED_NAMESPACES = frozenset({"pros", "vex", "std", "hitlib", "music", "anim"})
+
+#: Names a strand's namespace cannot take because the banner's paste block
+#: aliases it at global scope in main.cpp, where these already mean something.
+#: Chosen once for both platforms, so one design names its strands the same
+#: whichever it is exported for.
+_MAIN_CPP_NAMES = frozenset({
+    # Entry points: PROS's, then the VEXcode competition template's.
+    "initialize", "disabled", "autonomous", "opcontrol",
+    "usercontrol", "main", "vexcodeInit",
+    # The vex:: classes and enums _camel_case() can spell. A VEXcode main.cpp
+    # opens with `using namespace vex;`, which makes `led::strand` ambiguous
+    # between the alias and vex::led.
+    "accelerometer", "analogUnits", "axisType", "brain", "brakeType", "bumper",
+    "color", "competition", "controller", "controllerType", "currentUnits",
+    "device", "devices", "directionType", "distance", "distanceUnits",
+    "drivetrain", "electromagnet", "encoder", "event", "fontType", "gearSetting",
+    "gestureType", "gps", "guido", "gyro", "inertial", "led", "ledState",
+    "light", "limit", "line", "linkType", "mevent", "motor", "motor29", "mutex",
+    "optical", "orientationType", "percentUnits", "pneumatics", "pot", "potV2",
+    "powerUnits", "rotation", "rotationUnits", "safearray", "semaphore",
+    "servo", "sizeType", "smartdrive", "sonar", "task", "temperatureUnits",
+    "thread", "timeUnits", "timer", "torqueUnits", "triport", "triportType",
+    "turnType", "velocityUnits", "vexlink", "vision", "voltageUnits",
+    # The C library every main.cpp sees, where a strand could plausibly be
+    # named the same thing ("Signal", "Time").
+    "abort", "abs", "clock", "div", "exit", "floor", "free", "index", "kill",
+    "log", "raise", "rand", "random", "remove", "rename", "round", "select",
+    "signal", "system", "time", "timespec", "uint", "ulong", "ushort",
+})
+
+
 class _UniqueNamer:
-    def __init__(self):
-        self._used: set[str] = set()
+    def __init__(self, reserved=()):
+        #: Seeded with names that are taken before anything is generated, so
+        #: the first strand to want one gets the "2" instead.
+        self._used: set[str] = set(reserved)
 
     def make(self, name: str, fallback: str) -> str:
         base = _camel_case(name, fallback)
@@ -323,6 +527,17 @@ class _UniqueNamer:
 
 def _hex(color: int) -> str:
     return f"0x{color & 0xFFFFFF:06X}"
+
+
+def _speed(pixels: int, step_ms: int) -> str:
+    """A LedStrand::Speed argument. A bare number is pixels per refresh tick,
+    the only thing `speed` could say before it could go slower, so a design
+    that never slows anything down exports exactly what it always did."""
+    if not step_ms:
+        return str(pixels)
+    if pixels == 1:
+        return f"LedStrand::Speed::everyMs({step_ms})"
+    return f"LedStrand::Speed::everyMs({step_ms}, {pixels})"
 
 
 def _bool(b: bool) -> str:
@@ -417,7 +632,9 @@ class _MusicRef:
 @dataclass
 class _FillSourceSet:
     """The readers one strand's Fill animations need, collected as its modes
-    are generated and emitted together as its `source::` namespace.
+    are generated and emitted together as its `source::` namespace. Each
+    composition gets one of its own the same way, for its Sensor drivers:
+    a `source::` name only resolves inside the namespace that emitted it.
 
     Readers are shared: two meters on the same motor and port are the same
     reading, so they share one function and one device object. Custom hooks are
@@ -456,7 +673,7 @@ class _FillSourceSet:
         if source.id == fill_sources.CUSTOM:
             name = self.namer.make(label, "fillSource")
             self.lines.append(
-                f'/// Fill source for "{label}". Assign it before that mode runs -'
+                f'/// Fill source for "{_escape(label)}". Assign it before that mode runs -'
             )
             self.lines.append("/// the banner at the top of this file spells out how.")
             self.lines.append(_variable(self.platform, "LedStrand::LevelFn", name, " = nullptr"))
@@ -515,34 +732,38 @@ def _animation_statements(
     music: _MusicRef | None = None,
     sources: _FillSourceSet | None = None,
     label: str = "",
+    comps: dict[int, str] | None = None,
 ) -> list[str]:
     """The call(s) that set one animation up. A list because a Fill meter takes
     two: its colors, then its source."""
     if a.kind == AnimationKind.FILL:
         reader = sources.reader_for(a, label) if sources is not None else None
         return _fill_statements(a, reader)
-    return [_animation_statement(a, music)]
+    return [_animation_statement(a, music, comps)]
 
 
-def _animation_statement(a: AnimationConfig, music: _MusicRef | None = None) -> str:
+def _animation_statement(a: AnimationConfig, music: _MusicRef | None = None,
+                         comps: dict[int, str] | None = None) -> str:
     if a.kind == AnimationKind.OFF:
         return "s.off();"
     if a.kind == AnimationKind.SOLID:
         return f"s.setColor({_hex(a.color)});"
     if a.kind == AnimationKind.PULSE:
         return (
-            f"s.pulse({_hex(a.color)}, {a.run_length}, {a.speed}, {_hex(a.bg_color)}, "
+            f"s.pulse({_hex(a.color)}, {a.run_length}, {_speed(a.speed, a.step_ms)}, "
+            f"{_hex(a.bg_color)}, "
             f"{_bool(a.invert)}, {_bool(a.bounce)});"
         )
     if a.kind == AnimationKind.FLASH:
         return f"s.flash({_hex(a.color)}, {a.on_ms}, {a.off_ms}, {_hex(a.bg_color)});"
     if a.kind == AnimationKind.FLOW:
         return (
-            f"s.flow({_hex(a.color)}, {_hex(a.color2)}, {a.speed}, {_bool(a.invert)}, "
+            f"s.flow({_hex(a.color)}, {_hex(a.color2)}, {_speed(a.speed, a.step_ms)}, "
+            f"{_bool(a.invert)}, "
             f"{_bool(a.seamless)});"
         )
     if a.kind == AnimationKind.RAINBOW:
-        return f"s.rainbow({a.speed});"
+        return f"s.rainbow({_speed(a.speed, a.step_ms)});"
     if a.kind == AnimationKind.TWINKLE:
         return (
             f"s.twinkle({_palette_literal(a.palette)}, {a.density_pct}, {a.fade_step}, {_hex(a.bg_color)});"
@@ -550,9 +771,18 @@ def _animation_statement(a: AnimationConfig, music: _MusicRef | None = None) -> 
     if a.kind == AnimationKind.BITSCROLL:
         segment = f"LedStrand::BitScrollSegment{{{_hex(a.color)}, {a.segment_width}}}"
         return (
-            f"s.bitscroll({{{segment}}}, {a.speed}, {_bool(a.invert)}, {_hex(a.bg_color)}, "
+            f"s.bitscroll({{{segment}}}, {_speed(a.speed, a.step_ms)}, {_bool(a.invert)}, "
+            f"{_hex(a.bg_color)}, "
             f"{_bool(a.bounce)}, {a.spacing}, {_bool(a.repeating)});"
         )
+    if a.kind == AnimationKind.CUSTOM:
+        # validate_for_export() rejects a dangling id; the fallback keeps a
+        # caller that skipped validation from naming a namespace that was
+        # never emitted.
+        name = (comps or {}).get(a.composition_id)
+        if name is None:
+            return "s.off();  // Custom Animation, but the design has no such composition"
+        return f"s.compose(anim::{name}::composition);"
     if a.kind == AnimationKind.MUSIC:
         # validate_for_export() rejects this case; the fallback is here so a
         # caller that skipped validation gets a dark strip rather than a
@@ -574,13 +804,15 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
     if o.kind == OverlayAnimationKind.SOLID:
         return f"s.overlaySetColor({_hex(o.color)});"
     if o.kind == OverlayAnimationKind.PULSE:
-        return f"s.overlayPulse({_hex(o.color)}, {o.run_length}, {o.speed}, {_hex(o.bg_color)});"
+        return (f"s.overlayPulse({_hex(o.color)}, {o.run_length}, "
+                f"{_speed(o.speed, o.step_ms)}, {_hex(o.bg_color)});")
     if o.kind == OverlayAnimationKind.FLASH:
         return f"s.overlayFlash({_hex(o.color)}, {o.on_ms}, {o.off_ms}, {_hex(o.bg_color)});"
     if o.kind == OverlayAnimationKind.FLOW:
-        return f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, {o.speed}, {_bool(o.seamless)});"
+        return (f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, "
+                f"{_speed(o.speed, o.step_ms)}, {_bool(o.seamless)});")
     if o.kind == OverlayAnimationKind.RAINBOW:
-        return f"s.overlayRainbow({o.speed});"
+        return f"s.overlayRainbow({_speed(o.speed, o.step_ms)});"
     if o.kind == OverlayAnimationKind.TWINKLE:
         return (
             f"s.overlayTwinkle({_palette_literal(o.palette)}, {o.density_pct}, {o.fade_step}, "
@@ -589,7 +821,7 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
     if o.kind == OverlayAnimationKind.BITSCROLL:
         segment = f"LedStrand::BitScrollSegment{{{_hex(o.color)}, {o.segment_width}}}"
         return (
-            f"s.overlayBitscroll({{{segment}}}, {o.speed}, {_bool(o.invert)}, "
+            f"s.overlayBitscroll({{{segment}}}, {_speed(o.speed, o.step_ms)}, {_bool(o.invert)}, "
             f"{_hex(o.bg_color)}, {o.spacing}, {_bool(o.repeating)});"
         )
     if o.kind == OverlayAnimationKind.GAUGE:
@@ -644,7 +876,7 @@ def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tup
         return fields + [
             ("color", _hex(a.color)),
             ("bgColor", _hex(a.bg_color)),
-            ("speed", str(a.speed)),
+            ("speed", _speed(a.speed, a.step_ms)),
             ("invert", _bool(a.invert)),
             ("segmentWidth", str(a.segment_width)),
             ("spacing", str(a.spacing)),
@@ -656,7 +888,7 @@ def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tup
         ("color2", _hex(a.color2)),
         ("bgColor", _hex(a.bg_color)),
         ("runLength", str(a.run_length)),
-        ("speed", str(a.speed)),
+        ("speed", _speed(a.speed, a.step_ms)),
         ("onMs", str(a.on_ms)),
         ("offMs", str(a.off_ms)),
         ("seamless", _bool(a.seamless)),
@@ -698,7 +930,9 @@ def _splice_statements(
     if platform is Platform.VEXCODE:
         # SpliceRegion has default member values, which in C++11 means it is
         # not an aggregate, so no brace form constructs one. Fill each in.
-        lines = [f"std::vector<LedStrand::SpliceRegion> regions({len(s.regions)});"]
+        # Named from the global namespace, as the SDK readers are, so nothing
+        # the design names can shadow it.
+        lines = [f"::std::vector<LedStrand::SpliceRegion> regions({len(s.regions)});"]
         for i, (r, reader) in enumerate(zip(s.regions, readers)):
             lines += [f"regions[{i}].{name} = {value};" for name, value in _region_fields(r, reader)]
         lines.append("s.spliceMaskCustom(regions);")
@@ -718,9 +952,10 @@ def _leaf_body(
     sources: _FillSourceSet | None = None,
     label: str = "",
     platform: Platform = Platform.PROS,
+    comps: dict[int, str] | None = None,
 ) -> list[str]:
     return [
-        *_animation_statements(a, music, sources, label),
+        *_animation_statements(a, music, sources, label, comps),
         *_splice_statements(splice, sources, label, platform),
     ]
 
@@ -787,6 +1022,7 @@ def _usage_banner(
     header_name: str,
     music: _MusicRef | None = None,
     platform: Platform = Platform.PROS,
+    comp_hooks: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """The comment block at the top of every export: what to paste into
     main.cpp, with this design's real identifiers and mode names.
@@ -798,6 +1034,9 @@ def _usage_banner(
     The paste uses each platform's own entry points: PROS's initialize() and
     opcontrol(), and the pre_auton() and usercontrol() of VEXcode's
     competition template.
+
+    @p comp_hooks are the compositions' Custom hooks, as (fully qualified
+    name, what it feeds): no strand alias reaches into `anim::`.
     """
     PASTE = _PASTE_PREFIX
     NOTE = "//    "
@@ -825,10 +1064,12 @@ def _usage_banner(
     # A custom Fill source can only be supplied by the robot's own code, so the
     # paste block leaves an assignment to fill in. Placed before begin(), which
     # is when the modes that read them start running.
-    for e, name, label in hooks:
+    assignments = [(f"{e.ns}::source::{name}", label) for e, name, label in hooks]
+    assignments += comp_hooks or []
+    for target, label in assignments:
         lines.append(
-            f"{PASTE}    {e.ns}::source::{name} = [] {{ return 0.0; }};"
-            f'   // TODO: "{label}"'
+            f"{PASTE}    {target} = [] {{ return 0.0; }};"
+            f'   // TODO: "{_escape(label)}"'
         )
     lines.append(f"{PASTE}    hitlib::studio::begin();")
     lines.append(f"{PASTE}}}")
@@ -886,6 +1127,7 @@ def _render_strand(
     ns_namer: _UniqueNamer,
     music: _MusicRef | None = None,
     platform: Platform = Platform.PROS,
+    comps: dict[int, str] | None = None,
 ) -> _StrandRender:
     modes = _effective_modes(config)
     display_name = config.name or "Profile"
@@ -902,7 +1144,8 @@ def _render_strand(
     mode_names: list[str] = []
 
     for mode in modes:
-        activate_fn, tick_fn, blocks = _generate_mode(mode, fn_namer, music, sources, platform)
+        activate_fn, tick_fn, blocks = _generate_mode(mode, fn_namer, music, sources,
+                                                      platform, comps)
         function_blocks.extend(blocks)
         tick_arg = f"detail::{tick_fn}" if tick_fn else "nullptr"
         mode_entries.append(
@@ -1042,14 +1285,19 @@ def _render_studio(entries: list[_StrandRender], platform: Platform = Platform.P
     lines.append("")
     lines.append("/// Adds this design's strands to a group your own code owns and attaches")
     lines.append("/// their profiles, leaving init(), start() and the refresh interval to")
-    lines.append("/// you. Call it before or after your own init(); order does not matter.")
+    lines.append("/// you. Each strand is initialized as it is added - init() skips one that")
+    lines.append("/// already is - so call it before or after your own init();")
+    lines.append("/// order does not matter.")
     if split:
         lines.append("/// Note: these strands were designed at different refresh intervals, and")
         lines.append("/// one group runs one. Pick the interval the flash timings matter at, or")
         lines.append("/// use the no-argument begin() instead.")
     lines.append("inline void begin(LedGroup& existing) {")
     for e in entries:
+        # A group only initializes the strands it holds when its own init()
+        # runs, so one added after that would otherwise never light.
         lines.append(f"    existing.add(&{qualified(e)});")
+        lines.append(f"    {qualified(e)}.init();")
     lines.append("")
     for e in entries:
         lines.extend(wire(e))
@@ -1066,8 +1314,10 @@ def _render_studio(entries: list[_StrandRender], platform: Platform = Platform.P
 _SAMPLES_PER_LINE = 12
 
 
-def _music_bands_used(configs: list[StrandConfig]) -> list[str]:
-    """Bands any exported Music Sync animation asks for, in first-seen order.
+def _music_bands_used(configs: list[StrandConfig],
+                      compositions: list[CompositionConfig] | None = None) -> list[str]:
+    """Bands any exported Music Sync animation, or Song Band driver in a
+    composition the export plays, asks for, in first-seen order.
 
     Only these get a table emitted: the tables are the bulk of the generated
     file, and a design that pumps on the bass has no use for three more.
@@ -1079,6 +1329,13 @@ def _music_bands_used(configs: list[StrandConfig]) -> list[str]:
             for a in leaves:
                 if a.kind == AnimationKind.MUSIC and a.band not in used:
                     used.append(a.band)
+    played = _compositions_used(configs)
+    for comp in compositions or []:
+        if comp.id not in played:
+            continue
+        for drv in comp.drivers:
+            if drv.kind == DriverKind.MUSIC and drv.band not in used:
+                used.append(drv.band)
     return used
 
 
@@ -1126,36 +1383,115 @@ def _render_music(
     return _MusicRef(exprs=exprs, loop=music.loop), lines
 
 
+
+def _compositions_used(configs: list[StrandConfig]) -> set[int]:
+    """Composition ids something in this export actually plays."""
+    used: set[int] = set()
+    for cfg in configs:
+        for mode in _effective_modes(cfg):
+            leaves = [p.animation for p in mode.phases] if mode.phases else [mode.animation]
+            for a in leaves:
+                if a.kind == AnimationKind.CUSTOM and a.composition_id:
+                    used.add(a.composition_id)
+    return used
+
+
+def _render_compositions(
+    compositions: list[CompositionConfig],
+    configs: list[StrandConfig],
+    music_ref: _MusicRef | None,
+    platform: Platform,
+) -> tuple[list[str], dict[int, str], list[tuple[str, _FillSourceSet]]]:
+    """The `anim::` namespace, the id -> namespace-name map the strands need
+    to reach into it, and each emitted composition's readers by its name.
+
+    Emitted once for the whole file, outside any strand, because a
+    composition belongs to the document: two strands can play one, and
+    emitting it twice would be two copies of the same tables in flash.
+
+    Each composition gets its own _FillSourceSet. Its readers land in its own
+    `source::`, so one that another composition already emitted would be a
+    name this one cannot see.
+    """
+    used = _compositions_used(configs)
+    wanted = [c for c in compositions if c.id in used]
+    if not wanted:
+        return [], {}, []
+
+    namer = _UniqueNamer(reserved=_OWNED_NAMESPACES)
+    names: dict[int, str] = {}
+    readers: list[tuple[str, _FillSourceSet]] = []
+    body: list[str] = []
+    for comp in wanted:
+        name = namer.make(comp.name, "animation")
+        names[comp.id] = name
+        sources = _FillSourceSet(platform=platform)
+        readers.append((name, sources))
+        body.extend(codegen_custom.render_composition(
+            comp, name, platform, lambda ty, n, init="", count=None: _variable(
+                platform, ty, n, init, count),
+            sources, music_ref, _namespace_open, _namespace_close,
+        ))
+
+    lines = [
+        "// Custom animations from the Animator. A composition belongs to the",
+        "// document rather than to one strip, so several strands can play the",
+        "// same one - hence its own namespace rather than a strand's.",
+        _namespace_open(platform, "anim"),
+        "",
+        *body,
+        _namespace_close(platform, "anim"),
+    ]
+    return lines, names, readers
+
+
 def _render_file(
     configs: list[StrandConfig],
     header_name: str | None,
     music: MusicConfig | None = None,
     platform: Platform = Platform.PROS,
+    compositions: list[CompositionConfig] | None = None,
 ) -> str:
     single = len(configs) == 1
-    ns_namer = _UniqueNamer()
+    ns_namer = _UniqueNamer(reserved=_OWNED_NAMESPACES | _MAIN_CPP_NAMES)
 
     music_ref: _MusicRef | None = None
     music_lines: list[str] = []
-    bands_used = _music_bands_used(configs)
+    bands_used = _music_bands_used(configs, compositions)
     if music is not None and music.loaded and bands_used:
         music_ref, music_lines = _render_music(music, bands_used, platform)
         if not music_ref.exprs:
             music_ref, music_lines = None, []
 
-    entries = [_render_strand(cfg, ns_namer, music_ref, platform) for cfg in configs]
+    # Only the compositions something actually plays. A library can hold a
+    # dozen while a design uses two, and a header carrying the other ten is
+    # flash spent on nothing.
+    comp_lines, comp_names, comp_sources = _render_compositions(
+        compositions or [], configs, music_ref, platform
+    )
+    comp_hooks = [
+        (f"hitlib::profiles::anim::{comp}::source::{name}", label)
+        for comp, sources in comp_sources
+        for name, label in sources.hooks
+    ]
+
+    entries = [_render_strand(cfg, ns_namer, music_ref, platform, comp_names) for cfg in configs]
 
     default_name = (
         suggested_header_name(configs[0].name, platform) if single else document_header_name(platform)
     )
 
     lines: list[str] = ["#pragma once", ""]
-    lines.extend(_usage_banner(entries, header_name or default_name, music_ref, platform))
+    lines.extend(_usage_banner(entries, header_name or default_name, music_ref, platform,
+                               comp_hooks))
     lines.append("")
     # HitLib's headers are .h in its VEXcode download.
     for library_header in ("led_group", "led_profile", "led_sequencer", "led_strand"):
         lines.append(f'#include "hitlib/{library_header}{platform.header_suffix}"')
-    device_includes = sorted({inc for e in entries for inc in e.sources.includes})
+    device_includes = sorted(
+        {inc for e in entries for inc in e.sources.includes}
+        | {inc for _, sources in comp_sources for inc in sources.includes}
+    )
     if device_includes:
         lines.append("")
         lines.append("// Devices this design's Fill meters and Gauges read")
@@ -1172,6 +1508,9 @@ def _render_file(
     lines.append("")
     if music_lines:
         lines.extend(music_lines)
+        lines.append("")
+    if comp_lines:
+        lines.extend(comp_lines)
         lines.append("")
     for entry in entries:
         lines.extend(entry.lines)
@@ -1199,6 +1538,7 @@ def generate_cpp(
     header_name: str | None = None,
     music: MusicConfig | None = None,
     platform: Platform = Platform.PROS,
+    compositions: list[CompositionConfig] | None = None,
 ) -> str:
     """Render one strand as a standalone header.
 
@@ -1207,13 +1547,14 @@ def generate_cpp(
     song, needed only when the strand actually has a Music Sync animation.
     @p platform is the environment the robot's code is built in.
     """
-    return _render_file([config], header_name, music, platform)
+    return _render_file([config], header_name, music, platform, compositions)
 
 
 def generate_document_cpp(
     configs: list[StrandConfig], header_name: str | None = None,
     music: MusicConfig | None = None,
     platform: Platform = Platform.PROS,
+    compositions: list[CompositionConfig] | None = None,
 ) -> str:
     """Render every strand in the document into a single header, each in its
     own namespace.
@@ -1224,7 +1565,7 @@ def generate_document_cpp(
     """
     if not configs:
         raise ValueError("no strands to export")
-    return _render_file(configs, header_name, music, platform)
+    return _render_file(configs, header_name, music, platform, compositions)
 
 
 def _generate_mode(
@@ -1233,6 +1574,7 @@ def _generate_mode(
     music: _MusicRef | None = None,
     sources: _FillSourceSet | None = None,
     platform: Platform = Platform.PROS,
+    comps: dict[int, str] | None = None,
 ) -> tuple[str, str | None, list[str]]:
     blocks: list[str] = []
 
@@ -1240,7 +1582,8 @@ def _generate_mode(
         activate_fn = namer.make(mode.name, "mode")
         body = "\n".join(
             f"    {line}"
-            for line in _leaf_body(mode.animation, mode.splice, music, sources, mode.name, platform)
+            for line in _leaf_body(mode.animation, mode.splice, music, sources,
+                                   mode.name, platform, comps)
         )
         blocks.append(f"inline void {activate_fn}(LedStrand& s) {{\n{body}\n}}")
         return activate_fn, None, blocks
@@ -1251,7 +1594,8 @@ def _generate_mode(
         label = f"{mode.name} {phase.name}"
         body = "\n".join(
             f"    {line}"
-            for line in _leaf_body(phase.animation, phase.splice, music, sources, label, platform)
+            for line in _leaf_body(phase.animation, phase.splice, music, sources,
+                                   label, platform, comps)
         )
         blocks.append(f"inline void {fn_name}(LedStrand& s) {{\n{body}\n}}")
         phase_fn_names.append((fn_name, phase.duration_ms))
@@ -1274,4 +1618,19 @@ def _generate_mode(
 
 
 def _escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    """@p text as the inside of a C++ string literal, or of a quoted name in a
+    comment.
+
+    A control character (a newline in a hand-edited file's name, say) becomes
+    a three-digit octal escape: unlike \\x, octal stops after three digits,
+    so a name that goes on with a digit cannot run into it.
+    """
+    out = []
+    for ch in text:
+        if ch in '\\"':
+            out.append("\\" + ch)
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\{ord(ch):03o}")
+        else:
+            out.append(ch)
+    return "".join(out)

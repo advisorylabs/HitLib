@@ -91,11 +91,16 @@ class _CaptionButton(QAbstractButton):
         self.setAttribute(Qt.WA_Hover, True)
 
     def set_native_state(self, hover: bool | None = None, down: bool | None = None) -> None:
+        before = (self.native_hover, self.native_down)
         if hover is not None:
             self.native_hover = hover
         if down is not None:
             self.native_down = down
-        self.update()
+        # Only on a change: the hit test that calls this runs for every mouse
+        # move over the whole window, and nearly all of them leave the button
+        # exactly as it was.
+        if (self.native_hover, self.native_down) != before:
+            self.update()
 
     @property
     def hot(self) -> bool:
@@ -199,6 +204,10 @@ class TitleBar(QWidget):
         # exist yet - the window adds them after this runs.
         self.menu_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout.addWidget(self.menu_bar, 0, Qt.AlignVCenter)
+        # Where insert_after_menu() puts anything the window wants in
+        # the caption row. Held as an index rather than left to the
+        # caller to count, since the row above it is platform-dependent.
+        self._after_menu_index = layout.count()
 
         layout.addSpacing(9)
         self.title_label = QLabel()
@@ -240,6 +249,17 @@ class TitleBar(QWidget):
     # Contents
     # ------------------------------------------------------------------
 
+    def insert_after_menu(self, widget: QWidget) -> None:
+        """Put `widget` in the caption row, immediately right of the menus.
+
+        The row already has space there, and it is the one place a workspace
+        switch can sit without adding a strip of its own - which is the whole
+        thing this class exists to avoid.
+        """
+        layout = self.layout()
+        layout.insertWidget(self._after_menu_index, widget, 0, Qt.AlignVCenter)
+        self._after_menu_index += 1
+
     def set_title(self, name: str, version: str, file_name: str | None = None) -> None:
         self.title_label.setText(name)
         trailer = f"v{version}"
@@ -258,7 +278,7 @@ class TitleBar(QWidget):
             self._window.showMaximized()
 
     def maximize_hit(self, global_pos: QPoint) -> bool:
-        """Is that screen position over the maximize button?"""
+        """Is that screen position (Qt's logical pixels) over the maximize button?"""
         return self.maximize_btn.rect().contains(
             self.maximize_btn.mapFromGlobal(global_pos)
         )
@@ -390,6 +410,25 @@ def _signed_word(value: int) -> int:
     return value - 0x10000 if value >= 0x8000 else value
 
 
+def _from_native(screen, x: int, y: int) -> QPoint:
+    """A native screen position, in the logical coordinates Qt maps with.
+
+    Qt 6 makes the process per-monitor DPI aware, so Windows hands over
+    physical pixels while mapFromGlobal() wants Qt's device-independent ones.
+    At 100% they are the same number, which is the only place the raw lParam
+    ever worked. Converted the way Qt converts its own: a screen's top-left
+    keeps its native position, and only the distance past it is scaled. The
+    window's own screen rather than the one under the point, since that is
+    the scale its contents - the button included - are laid out at.
+    """
+    if screen is None:
+        return QPoint(x, y)
+    origin = screen.geometry().topLeft()
+    # The whole of Qt's scaling on Windows, where the platform itself always
+    # reports a ratio of 1.
+    return (QPoint(x, y) - origin) / screen.devicePixelRatio() + origin
+
+
 def caption_message(title_bar: TitleBar, message: int, wparam: int, lparam: int):
     """The four messages that make the maximize button a real caption button.
 
@@ -401,7 +440,9 @@ def caption_message(title_bar: TitleBar, message: int, wparam: int, lparam: int)
     """
     if message == WM_NCHITTEST:
         over = title_bar.maximize_hit(
-            QPoint(_signed_word(lparam), _signed_word(lparam >> 16))
+            _from_native(
+                title_bar.screen(), _signed_word(lparam), _signed_word(lparam >> 16)
+            )
         )
         title_bar.maximize_btn.set_native_state(hover=over)
         return (True, HTMAXBUTTON) if over else None

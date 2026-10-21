@@ -18,6 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Both zips are named, and the conductor versions the template, from
+      # template.pros, so it has to be bumped with the Makefile's VERSION.
+      - name: Check template version
+        run: |
+          TEMPLATE_VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
+          MAKE_VERSION=$(sed -n 's/^VERSION:=//p' Makefile | tr -d '[:space:]')
+          if [ "$TEMPLATE_VERSION" != "$MAKE_VERSION" ]; then
+            echo "::error file=template.pros::template.pros is version $TEMPLATE_VERSION but the Makefile's VERSION is $MAKE_VERSION"
+            exit 1
+          fi
+
       - name: Install ARM embedded toolchain
         run: |
           sudo apt-get update
@@ -30,12 +41,16 @@ jobs:
       - name: Build library
         run: make
 
+      # Laid out as `make template` lays it out. `pros c apply` copies each
+      # system file to the same path in the project, and a PROS project only
+      # links the archives in firmware/. Only include/hitlib/ ships: the rest
+      # of include/ is the kernel's, which the project already has.
       - name: Package template
         run: |
           VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
-          mkdir -p template_pkg/include template_pkg/lib
-          cp -r include/ template_pkg/
-          cp bin/hitlib.a template_pkg/lib/
+          mkdir -p template_pkg/include template_pkg/firmware
+          cp -r include/hitlib template_pkg/include/
+          cp bin/hitlib.a template_pkg/firmware/
           cp template.pros template_pkg/
           cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
 

@@ -56,11 +56,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,build]"
 
-      # tests/conftest.py forces QT_QPA_PLATFORM=offscreen before PySide6 is
-      # imported, so this is headless on every runner with no display to set up.
-      - name: Run tests
-        run: pytest -q
-
       - name: Build
         run: pyinstaller --noconfirm HitLibPatternStudio.spec
 

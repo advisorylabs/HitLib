@@ -23,6 +23,9 @@ rewrite safely, so the lines that use the export are left for the user.
 from __future__ import annotations
 
 import json
+import os
+import secrets
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -163,16 +166,52 @@ class Project:
         Pro V5 project the header is also listed in the `.v5code`, after it is
         written, so a VEXcode that reloads on seeing the list change finds it.
 
-        Written with newline="" so the file holds exactly the generated text:
-        otherwise Windows turns every line ending into CRLF, and the same design
-        deploys different bytes there than on a Mac, or than Export writes.
+        Written as the exact bytes of the generated text: no newline
+        translation, or Windows would turn every line ending into CRLF and the
+        same design would deploy different bytes there than on a Mac, or than
+        Export writes. The previous header is replaced only once the new one is
+        whole, so a failure part-way leaves the project building as it did.
+
+        Only include/ itself is ever created. A root that has gone - renamed or
+        moved since it was picked - is an error to report, not a folder tree to
+        quietly rebuild where the project used to be.
         """
-        self.include_dir.mkdir(parents=True, exist_ok=True)
+        data = code.encode("utf-8")
+        self.include_dir.mkdir(exist_ok=True)
         destination = self.header_path(header_name)
-        destination.write_text(code, encoding="utf-8", newline="")
+        _replace_file(destination, data)
         if self.platform is Platform.VEXCODE:
             _list_in_v5code(self.root, f"{INCLUDE_DIR}/{header_name}")
         return destination
+
+
+def _replace_file(path: Path, data: bytes) -> None:
+    """Make @p path hold exactly @p data, all or nothing.
+
+    Written to a temporary file beside it and moved into place, so a failure
+    at any point - a full disk, a crash - leaves the old file whole rather than
+    truncated. An existing file keeps its permissions; a new one gets the
+    usual ones for its folder. A symlink is written through, as an in-place
+    write would have.
+    """
+    if path.is_symlink():
+        path = Path(os.path.realpath(path))
+    temp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        # 0o666 before the umask is what an ordinary open() creates. O_BINARY
+        # keeps Windows from turning each \n into \r\n on the way out.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        with os.fdopen(os.open(temp, flags, 0o666), "wb") as out:
+            out.write(data)
+        if os.name != "nt" and path.exists():
+            shutil.copymode(path, temp)
+        os.replace(temp, path)
+    except BaseException:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass  # the failure being raised is the one worth reporting
+        raise
 
 
 def _list_in_v5code(root: Path, name: str) -> None:
@@ -180,9 +219,11 @@ def _list_in_v5code(root: Path, name: str) -> None:
     file list, if the project has one and it isn't already there.
 
     Written the way VEXcode writes the file - compact JSON, files before
-    directories - so VEXcode reads it back unchanged. A list that can't be read
-    is left alone: the header still builds, and rewriting a file VEXcode needs
-    to open the project is not a risk worth taking to make it visible.
+    directories - so VEXcode reads it back unchanged. A list that can't be read,
+    or can't be written back as it was read, is left alone: the header still
+    builds, and rewriting a file VEXcode needs to open the project is not a
+    risk worth taking to make it visible. For the same reason the new list
+    replaces the old one whole, never by rewriting it in place.
     """
     solution = next((p for p in root.glob(f"*{V5CODE_SUFFIX}") if p.is_file()), None)
     if solution is None:
@@ -206,7 +247,12 @@ def _list_in_v5code(root: Path, name: str) -> None:
     folder = name.rsplit("/", 1)[0] if "/" in name else ""
     if folder and not any(isinstance(e, dict) and e.get("name") == folder for e in files):
         files.append({"name": folder, "type": "Directory"})
-    solution.write_text(json.dumps(content, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    try:
+        # A lone surrogate, which JSON can spell as an escape, has no UTF-8.
+        data = json.dumps(content, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return
+    _replace_file(solution, data)
 
 
 def open_project(path: Path) -> Project | None:

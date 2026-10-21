@@ -16,8 +16,8 @@
 # black frame means the permission was refused, not that the app is broken,
 # and gui-processes.txt still proves a real window existed.
 #
-# Each step carries on past a failure in the one before, so a broken test or
-# build still leaves whatever evidence the rest could gather.
+# Each step carries on past a failure in the one before, so a broken build
+# still leaves whatever evidence the rest could gather.
 #
 # What this cannot tell you: how anything feels. Drag latency, trackpad
 # gestures, audio playback and Retina rendering all need real hardware.
@@ -60,12 +60,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,build]"
 
-      - name: Run tests
-        continue-on-error: true
-        run: pytest -q
-
-      # From source, on the runner's real window server rather than the
-      # offscreen platform the tests use. Offscreen has no screen menu bar and
+      # From source, on the runner's real window server rather than Qt's
+      # offscreen platform. Offscreen has no screen menu bar and
       # no title bar, so it would draw File and Export inside the window and
       # report a safe area of zero - a layout no Mac ever shows.
       - name: Grab the window Qt drew

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from hitlib_sim import (
     BitScrollSegment,
+    Composition,
+    Speed,
     GaugeBlend,
     GaugeStop,
     GaugeStyle,
@@ -19,9 +21,12 @@ from hitlib_sim import (
     Strand,
 )
 
+from . import composer
 from .models import (
     AnimationConfig,
     AnimationKind,
+    CompositionConfig,
+    DriverKind,
     GaugeBlendKind,
     GaugeStyleKind,
     ModeConfig,
@@ -102,44 +107,60 @@ def make_music_binding(music: MusicConfig | None) -> MusicBinding | None:
     )
 
 
-def make_strand(config: StrandConfig, music: MusicBinding | None = None) -> Strand:
+def make_strand(config: StrandConfig, music: MusicBinding | None = None,
+                compositions: dict[int, CompositionConfig] | None = None) -> Strand:
     strand = Strand(
         adi_port=config.adi_port,
         length=config.length,
         refresh_ms=config.refresh_ms,
         smart_port=config.smart_port,
     )
-    apply_strand_config(strand, config, music)
+    apply_strand_config(strand, config, music, compositions)
     return strand
 
 
 def apply_strand_config(strand: Strand, config: StrandConfig,
-                        music: MusicBinding | None = None) -> None:
+                        music: MusicBinding | None = None,
+                        compositions: dict[int, CompositionConfig] | None = None) -> None:
     """(Re-)apply a strand's full config: either a single free-standing
     animation, or an attached Profile with the configured modes activated.
+
+    Each composition is flattened once per call and the one object reused -
+    see _apply_composition. A fresh call is a fresh set, so an edit still
+    re-installs what it changed.
     """
     strand.set_brightness(config.brightness)
+    flattened: dict[int, Composition] = {}
 
     if config.use_profile:
-        strand.attach_profile(build_profile(config, music))
+        strand.attach_profile(build_profile(config, music, compositions, flattened))
         for idx in config.active_mode_indices:
             if 0 <= idx < len(config.profile_modes):
                 strand.activate_mode(idx)
     else:
         strand.detach_profile()
-        _apply_animation(strand, config.animation, music)
+        _apply_animation(strand, config.animation, music, compositions, flattened)
         _apply_splice(strand, config.splice)
 
 
-def build_profile(config: StrandConfig, music: MusicBinding | None = None) -> Profile:
+def build_profile(config: StrandConfig, music: MusicBinding | None = None,
+                  compositions: dict[int, CompositionConfig] | None = None,
+                  flattened: dict[int, Composition] | None = None) -> Profile:
+    flattened = {} if flattened is None else flattened
     return Profile(
-        name=config.name, modes=[_build_profile_mode(mc, music) for mc in config.profile_modes]
+        name=config.name,
+        modes=[_build_profile_mode(mc, music, compositions, flattened)
+               for mc in config.profile_modes],
     )
 
 
-def _build_profile_mode(mc: ModeConfig, music: MusicBinding | None = None) -> ProfileMode:
+def _build_profile_mode(mc: ModeConfig, music: MusicBinding | None = None,
+                        compositions: dict[int, CompositionConfig] | None = None,
+                        flattened: dict[int, Composition] | None = None) -> ProfileMode:
     if mc.phases:
-        sequencer = Sequencer([Phase(p.duration_ms, _make_phase_start_fn(p, music)) for p in mc.phases])
+        sequencer = Sequencer([Phase(p.duration_ms,
+                                     _make_phase_start_fn(p, music, compositions, flattened))
+                               for p in mc.phases])
 
         def on_activate(strand: Strand, seq: Sequencer = sequencer) -> None:
             seq.start(strand)
@@ -150,38 +171,46 @@ def _build_profile_mode(mc: ModeConfig, music: MusicBinding | None = None) -> Pr
         return ProfileMode(name=mc.name, priority=mc.priority, on_activate=on_activate, on_tick=on_tick)
 
     def on_activate(strand: Strand, mc: ModeConfig = mc) -> None:
-        _apply_animation(strand, mc.animation, music)
+        _apply_animation(strand, mc.animation, music, compositions, flattened)
         _apply_splice(strand, mc.splice)
 
     return ProfileMode(name=mc.name, priority=mc.priority, on_activate=on_activate, on_tick=None)
 
 
-def _make_phase_start_fn(p: PhaseConfig, music: MusicBinding | None = None):
+def _make_phase_start_fn(p: PhaseConfig, music: MusicBinding | None = None,
+                         compositions: dict[int, CompositionConfig] | None = None,
+                         flattened: dict[int, Composition] | None = None):
     def start_fn(strand: Strand, p: PhaseConfig = p) -> None:
-        _apply_animation(strand, p.animation, music)
+        _apply_animation(strand, p.animation, music, compositions, flattened)
         _apply_splice(strand, p.splice)
 
     return start_fn
 
 
-def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | None = None) -> None:
-    if a.kind == AnimationKind.OFF:
+def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | None = None,
+                     compositions: dict[int, CompositionConfig] | None = None,
+                     flattened: dict[int, Composition] | None = None) -> None:
+    if a.kind == AnimationKind.CUSTOM:
+        _apply_composition(strand, a, music, compositions, flattened)
+    elif a.kind == AnimationKind.OFF:
         strand.off()
     elif a.kind == AnimationKind.SOLID:
         strand.set_color(a.color)
     elif a.kind == AnimationKind.PULSE:
-        strand.pulse(a.color, a.run_length, a.speed, a.bg_color, a.invert, a.bounce)
+        strand.pulse(a.color, a.run_length, Speed(a.speed, a.step_ms), a.bg_color, a.invert,
+                     a.bounce)
     elif a.kind == AnimationKind.FLASH:
         strand.flash(a.color, a.on_ms, a.off_ms, a.bg_color)
     elif a.kind == AnimationKind.FLOW:
-        strand.flow(a.color, a.color2, a.speed, a.invert, a.seamless)
+        strand.flow(a.color, a.color2, Speed(a.speed, a.step_ms), a.invert, a.seamless)
     elif a.kind == AnimationKind.RAINBOW:
-        strand.rainbow(a.speed)
+        strand.rainbow(Speed(a.speed, a.step_ms))
     elif a.kind == AnimationKind.TWINKLE:
         strand.twinkle(a.palette, a.density_pct, a.fade_step, a.bg_color)
     elif a.kind == AnimationKind.BITSCROLL:
         segments = [BitScrollSegment(color=a.color, width=a.segment_width)]
-        strand.bitscroll(segments, a.speed, a.invert, a.bg_color, a.bounce, a.spacing, a.repeating)
+        strand.bitscroll(segments, Speed(a.speed, a.step_ms), a.invert, a.bg_color, a.bounce,
+                         a.spacing, a.repeating)
     elif a.kind == AnimationKind.FILL:
         strand.level_fill(a.color, a.color2, a.gradient, a.bg_color, a.invert)
         # Every source previews the same way, Manual included: with no device
@@ -198,6 +227,51 @@ def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | N
         else:
             strand.music_sync(track, a.color, a.color2, a.gradient, a.bg_color, a.invert,
                               a.sensitivity, music.loop)
+
+
+def _apply_composition(strand: Strand, a: AnimationConfig, music: MusicBinding | None,
+                       compositions: dict[int, CompositionConfig] | None,
+                       flattened: dict[int, Composition] | None = None) -> None:
+    """Play the composition this strand names, or go dark if it has none.
+
+    A strand can outlive the composition it points at - deleting one from the
+    library does not walk the strands - so a missing id is an ordinary state
+    here, not an error. Dark is the honest preview of what the export does in
+    the same case.
+
+    `flattened` holds what this strand has already flattened, by id. The
+    export's phases and modes all compose() one static Composition, and
+    compose() of the one already playing is a no-op, so a phase re-issuing it
+    leaves it running. Handing the sim a new object each time restarted it at
+    every phase start instead.
+    """
+    cfg = (compositions or {}).get(a.composition_id)
+    if cfg is None:
+        strand.clear_composition()
+        strand.off()
+        return
+
+    if flattened is not None and cfg.id in flattened:
+        strand.compose(flattened[cfg.id])
+        return
+
+    readers, tracks = {}, {}
+    for i, drv in enumerate(cfg.drivers):
+        if drv.kind == DriverKind.SENSOR:
+            # Every source previews the same way, Manual included: with no
+            # device to read, a stand-in drives the driver through the
+            # firmware's own mapping. Each driver sweeps from its own phase
+            # offset so a row of them does not move in lockstep.
+            offset = 2.0 * i / max(len(cfg.drivers), 1)
+            readers[i] = _preview_reader(strand, drv, offset)
+        elif drv.kind == DriverKind.MUSIC and music is not None:
+            tracks[i] = music.track_for(drv.band)
+
+    comp = composer.flatten(cfg, readers=readers, tracks=tracks,
+                            loop=bool(music and music.loop))
+    if flattened is not None:
+        flattened[cfg.id] = comp
+    strand.compose(comp)
 
 
 #: How long one preview sweep takes to cross the range, in milliseconds. Slow
@@ -249,18 +323,19 @@ def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
     elif o.kind == OverlayAnimationKind.SOLID:
         strand.overlay_set_color(o.color)
     elif o.kind == OverlayAnimationKind.PULSE:
-        strand.overlay_pulse(o.color, o.run_length, o.speed, o.bg_color)
+        strand.overlay_pulse(o.color, o.run_length, Speed(o.speed, o.step_ms), o.bg_color)
     elif o.kind == OverlayAnimationKind.FLASH:
         strand.overlay_flash(o.color, o.on_ms, o.off_ms, o.bg_color)
     elif o.kind == OverlayAnimationKind.FLOW:
-        strand.overlay_flow(o.color, o.color2, o.speed, o.seamless)
+        strand.overlay_flow(o.color, o.color2, Speed(o.speed, o.step_ms), o.seamless)
     elif o.kind == OverlayAnimationKind.RAINBOW:
-        strand.overlay_rainbow(o.speed)
+        strand.overlay_rainbow(Speed(o.speed, o.step_ms))
     elif o.kind == OverlayAnimationKind.TWINKLE:
         strand.overlay_twinkle(o.palette, o.density_pct, o.fade_step, o.bg_color)
     elif o.kind == OverlayAnimationKind.BITSCROLL:
         segments = [BitScrollSegment(color=o.color, width=o.segment_width)]
-        strand.overlay_bitscroll(segments, o.speed, o.invert, o.bg_color, o.spacing, o.repeating)
+        strand.overlay_bitscroll(segments, Speed(o.speed, o.step_ms), o.invert, o.bg_color,
+                                 o.spacing, o.repeating)
 
 
 def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
@@ -295,7 +370,7 @@ def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
         color2=a.color2,
         bg_color=a.bg_color,
         run_length=a.run_length,
-        speed=a.speed,
+        speed=Speed(a.speed, a.step_ms),
         on_ms=a.on_ms,
         off_ms=a.off_ms,
         seamless=a.seamless,

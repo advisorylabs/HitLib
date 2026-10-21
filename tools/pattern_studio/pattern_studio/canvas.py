@@ -73,9 +73,45 @@ class StripCanvas(QWidget):
         self._pulse_timer.setInterval(self.PULSE_FRAME_MS)
         self._pulse_timer.timeout.connect(self.update)
 
+        # Every session ticks on its own timer, out of phase with the rest,
+        # and a paint redraws every row - so repainting per tick painted the
+        # canvas several times per refresh interval. A tick asks for a frame
+        # instead: the first repaints at once, and the ticks that land within
+        # the fastest strand's interval after it share the next one. Each
+        # strand's newest frame is still the one drawn.
+        self._frame_pending = False
+        self._frame_timer = QTimer(self)
+        self._frame_timer.setTimerType(Qt.PreciseTimer)
+        self._frame_timer.timeout.connect(self._on_frame)
+
     def set_sessions(self, sessions: list) -> None:
         self.sessions = sessions
         self.update()
+
+    def request_frame(self) -> None:
+        """A strand has a new frame to show. What a session's `ticked` is
+        connected to, rather than update() - see __init__."""
+        if self._frame_timer.isActive():
+            self._frame_pending = True
+            return
+        self.update()
+        self._frame_timer.start(self._frame_ms())
+
+    def _on_frame(self) -> None:
+        if not self._frame_pending:
+            # A whole frame with no tick: nothing is playing.
+            self._frame_timer.stop()
+            return
+        self._frame_pending = False
+        self.update()
+        frame_ms = self._frame_ms()
+        if frame_ms != self._frame_timer.interval():
+            self._frame_timer.setInterval(frame_ms)
+
+    def _frame_ms(self) -> int:
+        """The fastest strand's refresh interval. No strand has a newer frame
+        to show any sooner than that."""
+        return max(1, min((s.config.refresh_ms for s in self.sessions), default=1))
 
     def set_selected(self, indices) -> None:
         """Rows to outline as the current group-edit selection. Only drawn

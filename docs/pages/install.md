@@ -12,7 +12,7 @@
 ## Install via PROS CLI
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
 pros c apply hitlib
 ```
 
@@ -26,7 +26,7 @@ latest version and swap the version number above if a newer one is available.
 ## Install into a VEXcode project
 
 VEXcode has no template system, so HitLib ships as source for it. Download
-`hitlib-vexcode@1.4.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+`hitlib-vexcode@1.5.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
 and copy its two folders into your project:
 
 ```
@@ -195,15 +195,18 @@ cd hitlib
 make
 
 # Package it as an installable PROS template
-mkdir -p template_pkg/include template_pkg/lib
-cp -r include/ template_pkg/
-cp bin/hitlib.a template_pkg/lib/
+mkdir -p template_pkg/include template_pkg/firmware
+cp -r include/hitlib template_pkg/include/
+cp bin/hitlib.a template_pkg/firmware/
 cp template.pros template_pkg/
-cd template_pkg && zip -r ../hitlib@1.4.0.zip .
+cd template_pkg && zip -r ../hitlib@1.5.0.zip .
 ```
 
-This produces `hitlib@1.4.0.zip` in the project root (matching the `version`
+This produces `hitlib@1.5.0.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.
+The archive goes in `firmware/` because that is the only place a PROS project
+links archives from, and only `include/hitlib/` is packaged: the rest of
+`include/` is the PROS kernel's, which every project already has.
 
 ## Building the VEXcode download from source
 
@@ -215,4 +218,6 @@ python tools/package_vexcode.py vexcode_pkg
 ```
 
 `vexcode_pkg/` then holds the `include/hitlib/` and `src/hitlib/` folders to
-copy into a VEXcode project, exactly as the release zip does.
+copy into a VEXcode project, exactly as the release zip does. Give it your
+project's folder instead to install or update HitLib there directly: it
+replaces those two folders and leaves everything else in the project alone.

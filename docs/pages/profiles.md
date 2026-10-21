@@ -292,3 +292,11 @@ static void myEgTick    (hitlib::LedStrand& s) { seq.update(s); }
 ```
 
 Phases loop indefinitely until the mode is deactivated.
+
+One Sequencer can run on several strands at once, each at its own phase, so a
+profile attached to a whole group (`group.attachProfile()`, or a generated
+`apply(group)`) sequences every strand in it. It keeps track of up to
+`Sequencer::MAX_STRANDS` (8) strands; starting it on a ninth takes over from the
+strand that has gone longest without an `update()`, normally one whose mode has
+since been replaced. `stop()` stops it everywhere and `stop(strand)` on one
+strand.

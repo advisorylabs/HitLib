@@ -8,6 +8,10 @@ produces
     OUT_DIR/include/hitlib/...   every header, renamed from .hpp to .h
     OUT_DIR/src/hitlib/...       the library's .cpp files
 
+Those two folders are all it touches: an earlier copy of either is replaced,
+and anything else in OUT_DIR is left alone, so OUT_DIR can be a VEXcode
+project to install or update HitLib in place.
+
 VEXcode has no template system, so it gets source rather than a built archive.
 The headers are renamed because VEXcode Pro V5 only recognises `.h` as a
 header: an `.hpp` still compiles, but never appears in the project's file tree,
@@ -36,6 +40,9 @@ SOURCE_DIR = Path("src")
 #: EXCLUDE_SRC_FROM_LIB keeps out of the PROS archive.
 ENTRY_POINT_STEMS = frozenset({"main", "autonomous", "opcontrol", "initialize"})
 
+#: The folders the package writes under OUT_DIR, and the only ones it clears.
+PACKAGE_DIRS = (HEADER_ROOT, SOURCE_DIR / "hitlib")
+
 
 def header_stems(repo: Path = REPO_ROOT) -> list[str]:
     """The name, without extension, of every HitLib header."""
@@ -62,10 +69,12 @@ def rename_references(text: str, stems: list[str]) -> str:
 
 
 def build(out_dir: Path, repo: Path = REPO_ROOT) -> Path:
-    """Write the package into @p out_dir, replacing anything already there."""
+    """Write the package into @p out_dir, replacing any earlier copy of it
+    there but nothing else - @p out_dir may be a team's VEXcode project."""
     out_dir = Path(out_dir)
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
+    for folder in PACKAGE_DIRS:
+        if (out_dir / folder).exists():
+            shutil.rmtree(out_dir / folder)
     stems = header_stems(repo)
 
     for header in sorted((repo / HEADER_ROOT).rglob("*.hpp")):
@@ -78,9 +87,12 @@ def build(out_dir: Path, repo: Path = REPO_ROOT) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         _write(target, rename_references(_read(source), stems))
 
+    # Only the package's own files: the rest of a project is not HitLib's to
+    # check, and a build product there isn't even text.
     leftovers = [
         str(p.relative_to(out_dir))
-        for p in out_dir.rglob("*")
+        for folder in PACKAGE_DIRS
+        for p in (out_dir / folder).rglob("*")
         if p.is_file() and _reference_pattern(stems).search(_read(p))
     ]
     if leftovers:

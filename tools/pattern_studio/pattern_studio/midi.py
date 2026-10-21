@@ -158,7 +158,10 @@ class _TickClock:
         times: list[float] = [0.0]
         tempos: list[int] = [DEFAULT_TEMPO_US]
 
-        for tick, tempo in sorted(tempo_events):
+        # By tick alone. The sort is stable, so events at the same tick stay in
+        # file order - sorting the tuples would break the tie on the tempo
+        # value, and keep whichever tempo is slowest instead of the later one.
+        for tick, tempo in sorted(tempo_events, key=lambda event: event[0]):
             if tick <= ticks[-1]:
                 tempos[-1] = tempo  # same instant: the later event wins
                 continue
@@ -211,11 +214,20 @@ def _parse_track(reader: _Reader, track_index: int):
     while not reader.eof():
         tick += reader.vlq()
         if reader.peek() & 0x80:
-            status = reader.byte()
+            event = reader.byte()
+            # Only a channel message becomes the running status. The spec has
+            # meta and sysex events cancel it, but files that carry on after a
+            # lyric or marker as if they hadn't are common (.kar karaoke files
+            # above all), and other readers play them - so the last channel
+            # status is kept, not replaced by the meta event's own.
+            if event < 0xF0:
+                status = event
         elif status == 0:
             raise MidiError("MIDI data byte with no running status to apply it to.")
+        else:
+            event = status
 
-        if status == 0xFF:  # meta event
+        if event == 0xFF:  # meta event
             meta_type = reader.byte()
             data = reader.take(reader.vlq())
             if meta_type == 0x51 and len(data) == 3:
@@ -226,12 +238,12 @@ def _parse_track(reader: _Reader, track_index: int):
                 break
             continue
 
-        if status in (0xF0, 0xF7):  # sysex, skipped by length
+        if event in (0xF0, 0xF7):  # sysex, skipped by length
             reader.take(reader.vlq())
             continue
 
-        kind = status & 0xF0
-        channel = status & 0x0F
+        kind = event & 0xF0
+        channel = event & 0x0F
         if kind in (0xC0, 0xD0):  # program change / channel pressure: one data byte
             reader.byte()
             continue
@@ -399,8 +411,10 @@ def analyse_midi(
     full = bands[BAND_FULL]
 
     for note in notes:
-        power = float(note.velocity * note.velocity)
         first = max(0, int(note.start_ms // frame_ms))
+        if first >= frame_count:
+            continue  # starts past MAX_FRAMES, beyond anything the bands hold
+        power = float(note.velocity * note.velocity)
         # Half-open on the end, so a note stopping exactly where the next one
         # starts hands the frame over instead of both claiming it.
         last = min(frame_count - 1, max(first, int(-(-note.end_ms // frame_ms)) - 1))

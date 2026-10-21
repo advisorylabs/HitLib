@@ -20,6 +20,7 @@ seconds with nothing but the standard library.
 from __future__ import annotations
 
 from array import array
+from itertools import repeat
 from operator import add, mul
 from pathlib import Path
 from typing import Callable
@@ -108,6 +109,8 @@ def _decode(path: Path, on_progress: Callable[[float], None] | None):
         loop.quit()
 
     def drain() -> None:
+        if "raised" in state:
+            return  # abandoned: a buffer queued before the loop quit is unwanted
         watchdog.start()
         while decoder.bufferAvailable():
             buffer = decoder.read()
@@ -119,7 +122,15 @@ def _decode(path: Path, on_progress: Callable[[float], None] | None):
                 state["format"] = fmt
             chunks.append(bytes(buffer.data()))
         if on_progress is not None and decoder.duration() > 0:
-            on_progress(min(0.75, 0.75 * decoder.position() / decoder.duration()))
+            try:
+                on_progress(min(0.75, 0.75 * decoder.position() / decoder.duration()))
+            except Exception as exc:
+                # This runs as a Qt slot, where an exception is printed and
+                # dropped instead of reaching the caller. It is carried out of
+                # the loop instead, so a callback can abandon the decode - the
+                # Song bar's Cancel button works by raising here.
+                state["raised"] = exc
+                stop()
 
     decoder.bufferReady.connect(drain)
     decoder.finished.connect(lambda: stop())
@@ -137,6 +148,8 @@ def _decode(path: Path, on_progress: Callable[[float], None] | None):
     watchdog.stop()
     decoder.stop()
 
+    if "raised" in state:
+        raise state["raised"]
     if state["error"]:
         raise AudioError(state["error"])
     if "format" not in state or not chunks:
@@ -155,19 +168,43 @@ def _decode(path: Path, on_progress: Callable[[float], None] | None):
 def _to_mono(samples, channels: int, scale: float, offset: float):
     """Interleaved native samples -> mono float in -1..1.
 
-    Widening to float happens before any arithmetic: FLAC arrives as Int16 and
-    summing two channels of that overflows the array's own element type.
+    The channels are summed in their native units and scaled once at the end,
+    so every step is a C-level pass: scaling each sample first was a Python
+    loop over the whole file, holding a Python float per sample while it ran.
+
+    The sum is never held in the input's own type, since FLAC arrives as Int16
+    and two channels of that overflow it. Int16 and UInt8 sum exactly as
+    Python integers. Int32 has more bits than a float32 holds, so each
+    channel is rounded to float32 before it is added, where scaling it used to
+    round it. Either way the result is the same to the bit as scaling first.
     """
-    if scale != 1.0 or offset != 0.0 or samples.typecode != "f":
-        samples = array("f", [v * scale + offset for v in samples])
-    if channels <= 1:
-        return samples
-    usable = (len(samples) // channels) * channels
-    mono = samples[0:usable:channels]
-    for c in range(1, channels):
-        mono = array("f", map(add, mono, samples[c:usable:channels]))
-    gain = 1.0 / channels
-    return array("f", [v * gain for v in mono])
+    channels = max(1, channels)
+    mono = samples
+    if channels > 1:
+        usable = (len(samples) // channels) * channels
+        exact = samples.typecode in "Bh"
+
+        def channel(c: int):
+            part = samples[c:usable:channels]
+            return part if exact or part.typecode == "f" else array("f", part)
+
+        mono = channel(0)
+        for c in range(1, channels):
+            mono = map(add, mono, channel(c))
+            # A float32 sum is rounded after every add, as it always was. An
+            # integer one is exact however it is held, so it stays a lazy
+            # chain feeding the final pass instead of an array of its own.
+            if not exact:
+                mono = array("f", mono)
+
+    gain = scale / channels
+    # UInt8 centres on 128: its offset in native units, once per channel summed.
+    bias = offset / scale * channels
+    if gain == 1.0 and not bias and samples.typecode == "f":
+        return mono  # mono float already
+    if bias:
+        mono = map(add, mono, repeat(bias))
+    return array("f", map(mul, mono, repeat(gain)))
 
 
 def _halve(signal):
@@ -205,6 +242,8 @@ def analyse_audio(
 
     `on_progress` is called with 0..1 as the work proceeds, so a long file can
     show something moving; it is the only reason this reports progress at all.
+    Anything it raises abandons the analysis and comes out of this call, which
+    is how a Cancel button stops one.
     """
     path = Path(path)
     samples, rate, channels, scale, offset = _decode(path, on_progress)

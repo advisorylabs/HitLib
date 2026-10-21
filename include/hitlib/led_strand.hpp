@@ -81,6 +81,39 @@ public:
     };
 
     /**
+     * @brief How fast a moving animation travels: so many pixels, so often.
+     *
+     * A bare number is pixels per refresh tick, which is what @c speed has
+     * always meant, so `strand.rainbow(2)` is unchanged.  A pixel a tick is
+     * the fastest-but-one a bare number can say and the slowest it can say,
+     * so for anything slower give the time between steps instead:
+     *
+     * @code{.cpp}
+     * using Speed = hitlib::LedStrand::Speed;
+     * strand.pulse(0xFF0000, 5, Speed::everyMs(80));               // a pixel every 80 ms
+     * strand.flow(0xFF0000, 0x0000FF, Speed::everyMs(40, 2));      // two pixels every 40 ms
+     * @endcode
+     *
+     * Like flash()'s durations, @c stepMs is rounded to whole refresh ticks,
+     * so the pace is even: a 100 ms step on a 20 ms strand moves on every
+     * fifth tick, never on a mix of fourth and sixth ones.
+     */
+    struct Speed {
+        uint8_t  pixels; ///< Pixels moved per step.
+        uint16_t stepMs; ///< Milliseconds between steps. 0 steps on every refresh tick.
+
+        /// @p pixelsPerStep pixels every @p ms milliseconds; with no @p ms,
+        /// that many pixels on every refresh tick.
+        constexpr Speed(int pixelsPerStep = 1, uint16_t ms = 0)
+            : pixels((uint8_t)pixelsPerStep), stepMs(ms) {}
+
+        /// @p pixelsPerStep pixels (default one) every @p ms milliseconds.
+        static constexpr Speed everyMs(uint16_t ms, uint8_t pixelsPerStep = 1) {
+            return Speed(pixelsPerStep, ms);
+        }
+    };
+
+    /**
      * @brief Signature for the reader a fill meter follows, see levelSource().
      *
      * Called once per refresh tick, from the LedGroup task rather than from
@@ -125,7 +158,8 @@ public:
      * Stops are given in the reading's own units, not in pixels or 0-255:
      * `{55.0, 0xFF7000}` is "orange at 55 °C".  They are sorted and mapped
      * onto the region's @c emptyAt - @c fullAt range once, when the mask is
-     * applied.
+     * applied.  Two stops at the same reading make a hard edge, and keep the
+     * order they were given in: the first is the color below it.
      *
      * Below the first stop and above the last, the gauge shows that stop's
      * color, so a scale never has to cover a range it doesn't care about.
@@ -150,7 +184,8 @@ public:
      */
     enum class GaugeBlend : uint8_t {
         LERP, ///< Blend smoothly, so a rising reading slides between colors.
-        STEP, ///< Hold each stop's color until the next one is reached.
+        STEP, ///< Hold each stop's color until the next one is reached (a
+              ///< reading exactly on a stop has reached it).
     };
 
     /**
@@ -169,7 +204,7 @@ public:
         uint32_t color2    = 0x0000FF; ///< FLOW end color.
         uint32_t bgColor   = 0x000000; ///< PULSE/FLASH/TWINKLE/BITSCROLL background, and a GAUGE BAR's unlit part.
         uint8_t  runLength = 5;        ///< PULSE run length.
-        uint8_t  speed     = 1;        ///< PULSE/FLOW/RAINBOW/BITSCROLL animation speed.
+        Speed    speed     = 1;        ///< PULSE/FLOW/RAINBOW/BITSCROLL motion, see Speed.
         uint32_t onMs      = 250;      ///< FLASH lit duration (ms).
         uint32_t offMs     = 250;      ///< FLASH blank duration (ms).
         bool     seamless  = true;     ///< FLOW only. See @c flow().
@@ -235,6 +270,274 @@ public:
         uint16_t       frameMs;    ///< Milliseconds between consecutive samples.
     };
 
+    // ========================================================================
+    // Custom animations (Compositions)
+    // ========================================================================
+
+    /// @name Custom Animation Types
+    ///
+    /// Ceilings first: Layer::bindings needs MAX_BINDINGS as an array bound,
+    /// and a class is not complete until its closing brace, so these cannot
+    /// live beside MAX_LEDS at the bottom.
+    /// @{
+
+    static constexpr uint8_t MAX_LAYERS       = 8;  ///< Layers in one Composition.
+    static constexpr uint8_t MAX_DRIVERS      = 8;  ///< Drivers in one Composition.
+    static constexpr uint8_t MAX_BINDINGS     = 4;  ///< Bindings on one Layer.
+    static constexpr uint8_t CURVE_POINTS     = 17; ///< Knots in a Binding curve.
+
+    /**
+     * @brief What one layer of a Composition draws.
+     *
+     * OFF through GAUGE are @ref SpliceRegionAnimKind entry for entry: a layer
+     * and a splice region say the same words and take the same parameters, so
+     * anything learned about one applies to the other.  METER is levelFill()'s
+     * meter scoped to a layer's span.  FRAMES is a hand-drawn pixel strip.
+     */
+    enum class LayerKind : uint8_t {
+        OFF, SOLID, PULSE, FLASH, FLOW, RAINBOW, TWINKLE, BITSCROLL, GAUGE, METER, FRAMES
+    };
+
+    /**
+     * @brief How a layer lands on what the layers below it already drew.
+     *
+     * KEY is the one that makes stacking work: a PULSE layer over a wash
+     * paints only its lit run and lets the wash show through the gaps instead
+     * of blanking them.  Every generator reports a coverage per pixel - a
+     * bitscroll gap, an unlit meter pixel and a half-faded spark are all
+     * partly or wholly transparent - and KEY is what reads it.
+     */
+    enum class LayerBlend : uint8_t {
+        OVER,     ///< Replace, coverage ignored. What a splice region does today.
+        KEY,      ///< Replace where this layer covers; let the layers below through where it does not.
+        ADD,      ///< Saturating add - accents, glows, sparks.
+        SCREEN,   ///< 255 - (255-a)(255-b)/255. Brightens without clipping.
+        MULTIPLY, ///< Per-channel a*b/255 - a tint or a vignette.
+        MASK,     ///< This layer's brightness is how much of the layers below survives.
+    };
+
+    /// Where a driver's 0-255 comes from.
+    enum class DriverKind : uint8_t {
+        CONSTANT, ///< A byte the robot's own code moves, see setDriverLevel().
+        SENSOR,   ///< A LevelFn, mapped and smoothed exactly as levelSource() does.
+        MUSIC,    ///< A baked MusicTrack, sampled exactly as musicSync() does.
+        LFO,      ///< A free-running shape on a period, off the wall clock.
+    };
+
+    enum class LfoShape : uint8_t { TRIANGLE, SAW, RAMP_DOWN, SQUARE, SINE };
+
+    /// A layer parameter a driver is allowed to move, once per tick.
+    enum class LayerParam : uint8_t {
+        NONE, OPACITY, SPEED, RUN_LENGTH, LEVEL, START, WIDTH, DENSITY, MIX
+    };
+
+    /// Which pixels a layer owns.
+    struct LayerSpan {
+        uint8_t start;   ///< First pixel.
+        uint8_t width;   ///< Pixels. 0 means "to the end of the strand".
+        /// 0 draws one span; otherwise repeat it every N pixels.  A repeat is
+        /// never wider than N, so a span wider than the stride (width 0
+        /// included) shows its first N pixels in each and no pixel is drawn
+        /// twice.
+        uint8_t stride;
+        /// With @c stride, sample the animation at the strand-wide pixel index
+        /// rather than restarting it in each repeat. This is the difference
+        /// between one scroll cut into windows (what spliceMask()'s shared
+        /// overlay does) and N synchronized copies of it.  The motion runs
+        /// across the whole strand as well, so a scroll, a bounce or a
+        /// sparkle passes through every window rather than the first alone.
+        bool    continuous;
+    };
+
+    /// How a layer lands. @c opacity is 0-255 and is bindable.
+    struct LayerMix { LayerBlend blend; uint8_t opacity; };
+
+    /**
+     * @brief Ties one driver to one parameter of one layer.
+     *
+     * The parameter is @c atZero when the driver reads 0 and @c atFull when it
+     * reads 255.  @c atFull below @c atZero reverses the binding, the same way
+     * levelSource()'s @c fullAt below @c emptyAt reverses a meter.
+     *
+     * @c curve, when set, points at @ref CURVE_POINTS bytes that reshape the
+     * driver's 0-255 before the line is applied, linearly interpolated between
+     * the knots.  A curve that steps makes a binding a threshold; one that
+     * eases makes it an envelope.  @c nullptr is the straight line.
+     */
+    struct Binding {
+        LayerParam     param;   ///< NONE is an unused slot.
+        uint8_t        driver;  ///< Index into Composition::drivers.
+        int16_t        atZero;
+        int16_t        atFull;
+        const uint8_t* curve;   ///< CURVE_POINTS bytes, or nullptr.
+    };
+
+    struct LayerPaint  { uint32_t color; uint32_t color2; uint32_t bgColor; };
+    /// @c speed.pixels is what a LayerParam::SPEED binding moves; the time
+    /// between steps stays the layer's own.
+    struct LayerMotion { uint8_t runLength; Speed speed; bool invert; bool bounce; bool seamless; };
+    struct LayerFlash  { uint32_t onMs; uint32_t offMs; };
+
+    /**
+     * @brief When a layer is on, inside the composition's loop.
+     *
+     * Both @c startMs and @c endMs zero means "always on".  An @c endMs at or
+     * before @c startMs runs across the loop point.  Two layers with
+     * overlapping windows and matching fades *are* a crossfade; there is no
+     * separate crossfade mechanism to learn.
+     *
+     * A window that starts at or past the loop point never opens, and one
+     * that ends past it ends at it - which is where a loop shortened after
+     * its layers were placed leaves them.
+     */
+    struct LayerTime {
+        uint32_t loopMs;     ///< This layer's own clock; 0 uses the composition's.
+        uint32_t startMs;
+        uint32_t endMs;      ///< 0 with a non-zero startMs means "to the loop point".
+        uint16_t fadeInMs;
+        uint16_t fadeOutMs;
+        bool     retrigger;  ///< Restart this layer's motion each time its window opens.
+    };
+
+    struct LayerSparkle {
+        const uint32_t* palette;      ///< Colors sparks are drawn from. nullptr leaves the span dark.
+        uint8_t         paletteCount;
+        uint8_t         densityPct;   ///< Share of the span lit at once (0-100). Bindable.
+        uint8_t         fadeStep;     ///< Brightness step per tick, so bigger is faster.
+    };
+
+    struct LayerPattern {
+        const BitScrollSegment* segments;      ///< The lit runs, in order.
+        uint8_t                 segmentCount;
+        uint8_t                 spacing;       ///< Background pixels between runs.
+        bool                    repeating;     ///< Tile across the span, or scroll one copy.
+    };
+
+    struct LayerGauge {
+        uint8_t    level;      ///< Starting level; bind LayerParam::LEVEL to move it.
+        bool       gradient;   ///< METER: lay color -> color2 across the span.
+        GaugeStyle style;      ///< GAUGE: whole-span color, or a bar.
+        GaugeBlend blend;
+        const GaugeStop* stops;    ///< The scale, in the driver's own units. Empty
+                                   ///< falls back to color at emptyAt -> color2 at fullAt.
+        uint8_t          stopCount;
+        double           emptyAt;  ///< Units @c stops are given in.
+        double           fullAt;
+    };
+
+    /**
+     * @brief A hand-drawn pixel strip: x = pixel, y = frame.
+     *
+     * Each frame is run-length coded, one byte per run: the top three bits are
+     * the run length minus one (1-8 pixels) and the bottom five a palette
+     * index (0-31).  Palette index 0 is transparent, so a drawn shape lets the
+     * layers below through around it.  Identical frames share an offset in
+     * @c index, so a two-frame blink costs two runs and four index entries.
+     *
+     * @c width is the frame's own width, not the layer's span, so a frame
+     * wider than the span can be scrolled through it.  A decoder clamps a run
+     * to whatever width is left, so a hand-edited table cannot overrun.
+     *
+     * Each frame either holds still, showing exactly what was drawn, or
+     * scrolls at the layer's LayerMotion speed, as @c scroll says.  A run of
+     * scrolling frames is one continuous scroll; a frame that holds puts the
+     * drawing back where it was drawn, and a scrolling frame after it starts
+     * from there.
+     *
+     * @note Scrolls, but does not bounce - a bounce needs a padded master
+     *       pattern, which a frame strip does not build.
+     */
+    struct LayerFrames {
+        const uint8_t*  data;
+        const uint16_t* index;        ///< Byte offset of each frame in @c data.
+        const uint32_t* palette;      ///< Index 0 is transparent whatever color it names.
+        uint8_t         paletteCount;
+        uint8_t         width;        ///< Pixels per frame.
+        uint8_t         count;        ///< Frames.
+        uint16_t        frameMs;      ///< How long each frame holds.
+        /// One flag per frame: non-zero scrolls that frame.  @c nullptr holds
+        /// every frame still.
+        const uint8_t*  scroll;
+    };
+
+    /**
+     * @brief One layer of a Composition: what it draws, where, when, what
+     *        moves it, and how it lands on the layers below it.
+     *
+     * A layer with no timing and no bindings, drawn OVER the whole strand, is
+     * exactly one of the preset animations.  Everything else here is what a
+     * splice region, the overlay buffer and the sequencer could each do
+     * separately, made available to all of them at once.
+     *
+     * @note No default member initializers, deliberately: that keeps this a
+     *       C++11 aggregate, so the PROS and VEXcode exports brace-initialize
+     *       it with the same characters and both keep it @c const, in flash.
+     *       Defaults live in Pattern Studio, which is where a user-facing
+     *       default belongs.  Groups a kind ignores are written @c {}.
+     */
+    struct Layer {
+        const char*  name;      ///< Shown nowhere on the robot; it is what makes the export readable.
+        LayerKind    kind;
+        LayerSpan    span;
+        LayerMix     mix;
+        Binding      bindings[MAX_BINDINGS];
+        LayerPaint   paint;
+        LayerMotion  motion;
+        LayerFlash   flash;
+        LayerTime    time;
+        LayerSparkle sparkle;
+        LayerPattern pattern;
+        LayerGauge   gauge;
+        LayerFrames  frames;
+    };
+
+    /**
+     * @brief One thing a composition watches, reduced to a byte per tick.
+     *
+     * The three drivers that already exist in this class, plus an oscillator.
+     * SENSOR is levelSource()'s reader, range, wrap and smoothing; MUSIC is
+     * musicSync()'s track and sensitivity; CONSTANT is setLevel().  A
+     * composition evaluates each driver exactly once per tick, before any
+     * layer runs, so two layers bound to one reading cannot disagree about it
+     * within a frame.
+     */
+    struct Driver {
+        const char*       name;
+        DriverKind        kind;
+        uint8_t           value;        ///< CONSTANT's byte, moved by setDriverLevel().
+        LevelFn           read;         ///< SENSOR. nullptr leaves the driver at 0.
+        double            emptyAt;
+        double            fullAt;
+        bool              wrap;
+        uint8_t           smoothing;    ///< 0-99, as in levelSource().
+        const MusicTrack* track;        ///< MUSIC. Must outlive the strand.
+        uint8_t           sensitivity;
+        bool              loop;
+        LfoShape          shape;        ///< LFO.
+        uint32_t          periodMs;
+        uint8_t           phasePct;     ///< Offset into the period, so two LFOs can differ.
+    };
+
+    /**
+     * @brief A named, reusable custom animation: layers over a driver table
+     *        and a clock.
+     *
+     * Like Profile and MusicTrack, a Composition is pointed at rather than
+     * copied, so it and everything it points at must outlive the strand.
+     * Pattern Studio emits all of it as namespace-scope constants.
+     */
+    struct Composition {
+        const char*   name;
+        const Layer*  layers;       ///< Drawn in order; layer 0 is the bottom.
+        uint8_t       layerCount;
+        const Driver* drivers;
+        uint8_t       driverCount;
+        uint32_t      loopMs;       ///< 0 means the timeline never wraps.
+        uint32_t      bgColor;      ///< What the frame starts as, under layer 0.
+    };
+
+    /// @}
+
     /// @}
 
     // ========================================================================
@@ -247,6 +550,8 @@ public:
      * @param adiPort    ADI port number (1–8).
      * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
      * @param refreshMs  Refresh interval in milliseconds (default 20 ms = 50 Hz).
+     *                   A LedGroup replaces it with its own, see
+     *                   LedGroup::init().
      */
     LedStrand(uint8_t adiPort, uint8_t length, uint32_t refreshMs = 20);
 
@@ -260,6 +565,7 @@ public:
      * @param port       Smart Port of the expander, and ADI port on it.
      * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
      * @param refreshMs  Refresh interval in milliseconds (default 20 ms).
+     *                   A LedGroup replaces it with its own.
      */
     LedStrand(ExpanderPort port, uint8_t length, uint32_t refreshMs = 20);
 
@@ -274,7 +580,8 @@ public:
      * @param smartPort  Smart port the expander is connected to (1–21).
      * @param adiPort    ADI port on the expander (1–8).
      * @param length     Number of LEDs.  Clamped to MAX_LEDS (64).
-     * @param refreshMs  Refresh interval in milliseconds.
+     * @param refreshMs  Refresh interval in milliseconds.  A LedGroup
+     *                   replaces it with its own.
      */
     LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs);
 
@@ -327,13 +634,14 @@ public:
      *
      * @param color      Foreground color (0xRRGGBB).
      * @param runLength  Number of lit pixels in the run.
-     * @param speed      Pixels advanced per tick (1 = slowest).
+     * @param speed      Pixels advanced per tick, or Speed::everyMs() for
+     *                   slower than one a tick.
      * @param bgColor    Background color (default black).
      * @param invert     Reverse the travel direction (default @c false).
      * @param bounce     Reverse direction at each end instead of wrapping
      *                   (default @c false).
      */
-    void pulse(uint32_t color, uint8_t runLength, uint8_t speed,
+    void pulse(uint32_t color, uint8_t runLength, Speed speed,
                uint32_t bgColor = 0x000000, bool invert = false, bool bounce = false);
 
     /**
@@ -359,21 +667,21 @@ public:
      *
      * @param color1    Start color (0xRRGGBB).
      * @param color2    End color (0xRRGGBB).
-     * @param speed     Pixels shifted per tick.
+     * @param speed     Pixels shifted per tick, or Speed::everyMs().
      * @param invert    Scroll in the reverse direction (default @c false).
      * @param seamless  Loop the gradient back to @p color1 instead of cutting
      *                  straight from @p color2 to @p color1 at the wrap
      *                  (default @c true).
      */
-    void flow(uint32_t color1, uint32_t color2, uint8_t speed, bool invert = false,
+    void flow(uint32_t color1, uint32_t color2, Speed speed, bool invert = false,
               bool seamless = true);
 
     /**
      * @brief Scroll a full HSV rainbow across the strip.
      *
-     * @param speed  Pixels shifted per tick.
+     * @param speed  Pixels shifted per tick, or Speed::everyMs().
      */
-    void rainbow(uint8_t speed);
+    void rainbow(Speed speed);
 
     /**
      * @brief Spawn randomly fading sparkles from a color palette.
@@ -393,7 +701,7 @@ public:
      * @brief Scroll a pattern of colored segments across the strip.
      *
      * @param segments   List of BitScrollSegment descriptors defining the pattern.
-     * @param speed      Pixels advanced per tick.
+     * @param speed      Pixels advanced per tick, or Speed::everyMs().
      * @param invert     Scroll in the reverse direction (default @c false).
      * @param bgColor    Color shown between segments and in blank areas.
      * @param bounce     Rock the pattern back and forth instead of wrapping.
@@ -402,7 +710,7 @@ public:
      *                   show a single copy of it (@c false). works for
      *                   both wrapping and @p bounce travel.
      */
-    void bitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+    void bitscroll(const std::vector<BitScrollSegment>& segments, Speed speed,
                    bool invert = false, uint32_t bgColor = 0x000000, bool bounce = false,
                    uint8_t spacing = 5, bool repeating = true);
 
@@ -713,7 +1021,7 @@ public:
     void overlaySetColor(uint32_t color);
 
     /** @brief Animate a moving run in the overlay buffer. */
-    void overlayPulse(uint32_t color, uint8_t runLength, uint8_t speed,
+    void overlayPulse(uint32_t color, uint8_t runLength, Speed speed,
                       uint32_t bgColor = 0x000000);
 
     /** @brief Blink the overlay buffer on and off (see flash()). */
@@ -724,15 +1032,15 @@ public:
      * @brief Scroll a gradient in the overlay buffer.
      * @param color1    Color the gradient starts from (0xRRGGBB).
      * @param color2    Color the gradient runs to (0xRRGGBB).
-     * @param speed     Pixels shifted per refresh tick.
+     * @param speed     Pixels shifted per refresh tick, or Speed::everyMs().
      * @param seamless  Loop the gradient back to @p color1 instead of
      *                  cutting straight from @p color2 to @p color1 at the
      *                  wrap (default @c true). See @c flow().
      */
-    void overlayFlow(uint32_t color1, uint32_t color2, uint8_t speed, bool seamless = true);
+    void overlayFlow(uint32_t color1, uint32_t color2, Speed speed, bool seamless = true);
 
     /** @brief Scroll a rainbow in the overlay buffer. */
-    void overlayRainbow(uint8_t speed);
+    void overlayRainbow(Speed speed);
 
     /** @brief Sparkle random pixels of the overlay buffer (see twinkle()). */
     void overlayTwinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
@@ -745,7 +1053,7 @@ public:
      * needs a wider master pattern to slide a window over.  Use the base
      * animation for that.
      */
-    void overlayBitscroll(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+    void overlayBitscroll(const std::vector<BitScrollSegment>& segments, Speed speed,
                           bool invert = false, uint32_t bgColor = 0x000000,
                           uint8_t spacing = 5, bool repeating = true);
 
@@ -822,6 +1130,86 @@ public:
     /// @}
 
     // ========================================================================
+    // ========================================================================
+    /// @name Custom Animations
+    ///
+    /// A Composition is a custom animation designed in Pattern Studio's
+    /// Animator: an ordered list of Layers over a shared Driver table and a
+    /// shared clock.  It replaces the base animation and composites into the
+    /// same buffer, so brightness, the overlay, the splice mask and the
+    /// profile system all keep working on top of it.
+    /// @{
+
+    /**
+     * @brief Play a Composition as this strand's base animation.
+     *
+     * Detaches any levelSource() reader and MusicTrack - the composition's own
+     * drivers take those over - and takes down any preset animation, the same
+     * way calling rainbow() takes down a bouncing pulse.
+     *
+     * All one-time work happens here: twinkle state, bitscroll patterns,
+     * decoded frames, resolving gauge scales onto the 0-255 axis.  A tick
+     * allocates nothing.  Re-installing the composition that is already
+     * playing is a no-op, so a Sequencer phase that re-issues it every 200 ms
+     * costs a pointer comparison rather than heap churn.
+     *
+     * @param comp  The composition.  It, and everything it points at, must
+     *              outlive the strand: Pattern Studio emits all of it as
+     *              namespace-scope constants.
+     */
+    void compose(const Composition& comp);
+
+    /// @brief Stop playing a composition and leave the strand dark.
+    void clearComposition();
+
+    /// @brief Whether a composition is currently driving the base buffer.
+    bool composing() const { return composition != nullptr; }
+
+    /**
+     * @brief Set a CONSTANT driver's value - the composition's setLevel().
+     *
+     * Cheap enough to call every control-loop iteration: it stores a byte.
+     * Ignored for a driver that is not CONSTANT, which would overwrite it on
+     * the next tick anyway.
+     *
+     * @param driverIdx  Index into the composition's drivers array.  The
+     *                   generated header names each one as a @c driver::
+     *                   constant.
+     * @param value      0-255, mapped onto each binding's atZero..atFull.
+     */
+    void setDriverLevel(uint8_t driverIdx, uint8_t value);
+
+    /// @brief What a driver last read.  Useful for checking a binding.
+    uint8_t getDriverLevel(uint8_t driverIdx) const;
+
+    /// @brief Restart the composition's timeline, and every layer, from zero.
+    void restartComposition();
+
+    /**
+     * @brief Seek every MUSIC driver in this composition.  See musicSeek().
+     *
+     * A composition may hold several MUSIC drivers on different bands of the
+     * same song; they share one clock, so they stay in step by construction
+     * and this moves all of them together.  The layers' timing windows run on
+     * that clock too, so they move with it.
+     */
+    void composeMusicSeek(uint32_t positionMs);
+
+    /**
+     * @brief Pause or resume every MUSIC driver in this composition.
+     *
+     * The layers' timing windows share the drivers' clock, so pausing holds
+     * them where they are as well, and resuming carries on from there.  Each
+     * layer's own motion - a scroll, a flash - keeps running meanwhile.
+     */
+    void composeMusicPause(bool paused = true);
+
+    /// @brief Position of this composition's music clock, in milliseconds.
+    uint32_t composeMusicPositionMs() const;
+
+    /// @}
+
+    // ========================================================================
     /// @name Accessors
     /// @{
 
@@ -835,6 +1223,9 @@ public:
     static constexpr uint8_t MAX_LEDS = 64;
 
 private:
+    // LedGroup sets refreshMs to the interval it actually ticks the strand at.
+    friend class LedGroup;
+
     // ---- Hardware ----
     uint8_t  adiPort;
     uint8_t  smartPort  = 0;
@@ -843,12 +1234,39 @@ private:
     platform::AdiLed* led = nullptr;
     platform::Mutex mutex;
 
+    // The last frame actually written to the strip, and when. flushBuffer()
+    // skips a frame identical to it, since the pixels hold what they were
+    // sent, and every write costs a 12 ms slot on the shared ADI.
+    uint32_t lastSent[MAX_LEDS] = {0};
+    uint32_t lastSentMs         = 0;
+    bool     lastSentValid      = false;
+
+    // Called by LedGroup, which ticks the strand at its own interval: every
+    // duration converted to ticks after this counts at that rate.
+    void setRefreshMs(uint32_t ms);
+
     enum class AnimMode : uint8_t { STATIC, SHIFT, TWINKLE, FLASH, LEVEL };
+
+    // Paces a moving animation: due() is true once every `hold` refresh
+    // ticks. A hold of 1 - what a bare-number Speed gives - moves on every
+    // tick, which is all `speed` could do before it could be slower.
+    struct StepPacer {
+        uint16_t hold    = 1;
+        uint16_t counter = 0;
+        void reset(uint16_t ticks) { hold = ticks ? ticks : 1; counter = 0; }
+        void restart() { counter = 0; }
+        bool due() {
+            if (++counter < hold) return false;
+            counter = 0;
+            return true;
+        }
+    };
 
     // Base buffer
     AnimMode              animMode     = AnimMode::STATIC;
     int                   shiftStep    = 0;
-    uint8_t               shiftVariant = 0;
+    uint8_t               shiftVariant = 0;   // pixels per step, pre-reversed for invert
+    StepPacer             shiftPacer;         // SHIFT, and both bounces
     std::vector<uint32_t> buffer;
 
     // Pulse bounce
@@ -892,6 +1310,13 @@ private:
     };
     static void advanceTwinkleInto(TwinkleState& t, std::vector<uint32_t>& buf);
 
+    // advanceTwinkleInto() split in two, so a custom-animation layer can take
+    // the per-pixel brightness in @c t.level as coverage and blend it over
+    // whatever is beneath instead of over a single background color.
+    // advanceTwinkleInto() is exactly these two in sequence.
+    static void stepTwinkle(TwinkleState& t, uint8_t width);
+    static void paintTwinkleInto(const TwinkleState& t, std::vector<uint32_t>& buf, uint8_t width);
+
     TwinkleState twinkleState;
 
     // Level meter - buffer holds the meter's colors across the whole strip and
@@ -933,6 +1358,7 @@ private:
         std::vector<uint32_t>  buffer;
         int                    shiftStep  = 0;
         uint8_t                shiftSpeed = 0;
+        StepPacer              shiftPacer;
         // Index in the vector the caller passed to spliceMaskCustom(), which
         // is what setRegionLevel() addresses. Not the index in spliceRegions:
         // SOLID and OFF regions never get a state, so the two disagree.
@@ -994,6 +1420,7 @@ private:
     AnimMode              overlayAnimMode   = AnimMode::STATIC;
     int                   overlayShiftStep  = 0;
     uint8_t               overlayShiftSpeed = 0;
+    StepPacer             overlayShiftPacer;
     std::vector<uint32_t> overlayBuffer;
 
     // Overlay flash - mirrors the base flash state above.
@@ -1022,23 +1449,23 @@ private:
 
     // Internal implementations (no lock)
     void setColorNL(uint32_t color);
-    void pulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg, bool invert, bool bounce);
+    void pulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg, bool invert, bool bounce);
     void flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
-    void flowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool invert, bool seamless);
-    void rainbowNL(uint8_t speed);
+    void flowNL(uint32_t c1, uint32_t c2, Speed speed, bool invert, bool seamless);
+    void rainbowNL(Speed speed);
     void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
                    uint8_t fadeStep, uint32_t bgColor);
-    void bitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed, bool invert,
+    void bitscrollNL(const std::vector<BitScrollSegment>& segments, Speed speed, bool invert,
                      uint32_t bgColor, bool bounce, uint8_t spacing, bool repeating);
 
     void overlaySetColorNL(uint32_t color);
-    void overlayPulseNL(uint32_t color, uint8_t runLen, uint8_t speed, uint32_t bg);
+    void overlayPulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg);
     void overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
-    void overlayFlowNL(uint32_t c1, uint32_t c2, uint8_t speed, bool seamless);
-    void overlayRainbowNL(uint8_t speed);
+    void overlayFlowNL(uint32_t c1, uint32_t c2, Speed speed, bool seamless);
+    void overlayRainbowNL(Speed speed);
     void overlayTwinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
                           uint8_t fadeStep, uint32_t bgColor);
-    void overlayBitscrollNL(const std::vector<BitScrollSegment>& segments, uint8_t speed,
+    void overlayBitscrollNL(const std::vector<BitScrollSegment>& segments, Speed speed,
                             bool invert, uint32_t bgColor, uint8_t spacing, bool repeating);
 
     void levelFillNL(uint32_t color, uint32_t color2, bool gradient, uint32_t bg, bool invert);
@@ -1049,8 +1476,18 @@ private:
     static std::vector<uint32_t> buildBitscrollUnit(const std::vector<BitScrollSegment>& segments,
                                                     uint32_t bgColor, uint8_t spacing,
                                                     size_t& contentLen);
+    // The same tile, from a plain array rather than a vector, because a custom
+    // animation's segments live in a flash-resident table with no vector to
+    // hand over. @p coverage, when given, comes back the same length as the
+    // returned unit: 255 for a lit pixel and 0 for a gap, filled in the same
+    // loop so it cannot drift from the colors. The vector overload forwards
+    // here.
+    static std::vector<uint32_t> buildBitscrollUnit(const BitScrollSegment* segments,
+                                                    uint8_t count, uint32_t bgColor,
+                                                    uint8_t spacing, size_t& contentLen,
+                                                    std::vector<uint8_t>* coverage = nullptr);
     // Lay one tile into `buf` across `width` pixels - tiled when `repeating`,
-    // a single copy on `bgColor` when not - and return the per-tick shift that
+    // a single copy on `bgColor` when not - and return the per-step shift that
     // scrolls it. Shared by the base, overlay, and per-region bitscrolls.
     static uint8_t fillBitscrollBuffer(std::vector<uint32_t>& buf,
                                        const std::vector<uint32_t>& unit, size_t contentLen,
@@ -1070,7 +1507,7 @@ private:
 
     void     shiftBuffer();
     void     shiftOverlayBuffer();
-    void     flushBuffer();
+    void     flushBuffer(uint32_t now);   // called with the mutex held; gives it back
     uint32_t levelPixel(uint8_t i, uint32_t full, uint8_t frac) const;
     uint8_t  sampleMusicNL(uint32_t positionMs) const;
     uint8_t  mapLevelNL(double raw) const;
@@ -1082,14 +1519,139 @@ private:
     static uint8_t smoothLevelTo(uint8_t target, uint8_t current, uint8_t smoothing, bool wrap);
     static uint32_t gaugeColorAt(const SpliceRegionState& state, uint8_t level);
 
+    // gaugeColorAt()'s scale lookup, with the stops passed in rather than read
+    // off a region, so a custom-animation layer can carry its own scale.
+    // gaugeColorAt() is a thin wrapper over this.
+    static uint32_t scaleColorAt(const std::pair<uint8_t, uint32_t>* stops, uint8_t count,
+                                 GaugeBlend blend, uint32_t bgColor, uint8_t level);
+
+    // sampleMusicNL()'s body, with the track and playback options passed in
+    // rather than read off the strand, so a custom-animation driver can play a
+    // track of its own. sampleMusicNL() is a thin wrapper over this.
+    static uint8_t sampleTrackNL(const MusicTrack* track, uint32_t positionMs,
+                                 uint8_t sensitivity, bool loop);
+
+    // One color from a two-color ramp: genGradient()'s loop body, extracted so
+    // a custom-animation layer can sample a gradient without building the
+    // whole buffer. genGradient() is written in terms of this, so the two can
+    // never disagree.
+    static uint32_t gradientPixel(uint32_t c1, uint32_t c2, uint8_t i, uint8_t len,
+                                  bool seamless);
+
+    // Blend @p fg over @p bg by @p level (0-255), and the NeoPixel-style hue
+    // wheel. Private statics rather than file-local helpers so the custom
+    // animation evaluator in led_custom.cpp can reach the same bodies the
+    // presets use.
+    static uint32_t lerpColor(uint32_t bg, uint32_t fg, uint8_t level);
+    static uint32_t wheel(uint8_t pos);
+
     int16_t computeEffectiveMode() const;
     void    pruneExpired(uint32_t now);
     uint32_t applyBrightness(uint32_t color) const;
     uint16_t msToTicks(uint32_t ms) const;
+    /// Refresh ticks between a Speed's steps: 1 for a bare number.
+    uint16_t stepTicks(Speed s) const { return s.stepMs ? msToTicks(s.stepMs) : 1; }
 
+    /// A two-color ramp across @p len pixels. Built from gradientPixel().
     static std::vector<uint32_t> genGradient(uint32_t c1, uint32_t c2, uint8_t len,
                                               bool seamless = false);
     static std::vector<uint32_t> genRainbow(uint8_t len);
+
+    // ========================================================================
+    // Custom animation state and evaluator (src/led_custom.cpp)
+    // ========================================================================
+
+    /// Every scratch word and every value layerPixel() returns is
+    /// `(coverage << 24) | 0xRRGGBB`. The top byte of a color is free, so a
+    /// bitscroll gap, an unlit meter pixel, a meter's *partial* edge pixel, a
+    /// half-faded spark and a drawn frame's transparent index are all one
+    /// concept and one array - which is what makes KEY a single mechanism
+    /// rather than a special case per generator, and correct at a soft edge.
+    static constexpr uint32_t COVER_OPAQUE = 0xFF000000u;
+
+    /// A layer's bindable parameters after its bindings have been applied.
+    /// Rebuilt every tick rather than stored, because a driver can move any of
+    /// them between one tick and the next.
+    struct Resolved {
+        uint8_t start;
+        uint8_t width;
+        uint8_t runLength;
+        uint8_t speed;       ///< Pixels per step; the step's timing is not bindable.
+        uint8_t densityPct;
+        uint8_t opacity;
+        uint8_t level;
+        uint8_t mix;
+    };
+
+    /// What one layer remembers between ticks. No buffer of its own: the
+    /// scratch it needs lives in the shared arena below, at @c scratchAt.
+    struct LayerState {
+        uint16_t shiftAcc     = 0;   ///< Scroll position, mod the sampling ring (motionRing()).
+        int16_t  bouncePos    = 0;
+        int8_t   bounceDir    = 1;
+        uint16_t flashCounter = 0;
+        bool     flashLit     = true;
+        bool     wasOpen      = false;  ///< Whether its window was open last tick.
+        uint16_t frameIdx     = 0;      ///< FRAMES: which frame is showing.
+        uint16_t frameCounter = 0;      ///< FRAMES: ticks it has been showing.
+        StepPacer step;                 ///< When the motion next moves, see LayerMotion::speed.
+        uint16_t scratchAt    = 0;      ///< Index into composeArena.
+        uint16_t scratchLen   = 0;      ///< Words reserved there, 0 for none.
+        uint16_t contentLen   = 0;      ///< BITSCROLL: unit size up to the last lit pixel.
+        uint8_t  maxSpan      = 0;      ///< Widest this layer can ever be, see compose().
+        TwinkleState twinkle;           ///< TWINKLE only; the existing struct, unchanged.
+        /// GAUGE/METER: the scale resolved onto the 0-255 axis, sorted - the
+        /// same representation SpliceRegionState::gaugeStops uses.
+        std::vector<std::pair<uint8_t, uint32_t>> stops;
+    };
+
+    const Composition* composition     = nullptr;
+    uint32_t           composeAnchorMs = 0;
+    /// Bumped whenever the composition is replaced, cleared, or dropped by a
+    /// preset (dropCompositionNL()). evalDriversNL() releases the mutex to run
+    /// a SENSOR reader (user code, which may call back in) and compares this
+    /// afterwards, the same way advanceSpliceRegions() does.
+    uint32_t           composeGeneration    = 0;
+    uint32_t           composeMusicPausedAt = 0;
+    bool               composeMusicPaused   = false;
+
+    std::vector<LayerState> layerStates;
+    /// One grow-only scratch block for the whole composition: every layer's
+    /// pattern unit, bounce master or decoded frame, packed end to end. Sized
+    /// in compose() and never resized inside tick(), so re-composing reuses
+    /// it when it is already big enough and a Sequencer phase that re-issues
+    /// its animation is a memcpy rather than a malloc.
+    std::vector<uint32_t> composeArena;
+    uint8_t driverValue[MAX_DRIVERS]  = {0};
+    bool    driverPrimed[MAX_DRIVERS] = {false};
+
+    void    advanceComposition(uint32_t nowMs);
+    void    dropCompositionNL();
+    uint32_t composeClockNL(uint32_t nowMs) const;
+    bool    evalDriversNL(const Composition& c, uint32_t nowMs);
+    void    resolveLayerNL(const Composition& c, const Layer& l, Resolved& p) const;
+    uint8_t resolveSpan(const Resolved& p, const LayerState& st) const;
+    uint8_t motionRing(const Layer& l, uint8_t span) const;
+    void    prepareLayerNL(const Layer& l, LayerState& st, uint8_t span, uint16_t& arenaAt);
+    void    buildLayerNL(const Layer& l, LayerState& st);
+    void    resetLayerStateNL(const Layer& l, LayerState& st, uint8_t ring);
+    void    advanceLayerNL(const Layer& l, LayerState& st, const Resolved& p, uint8_t ring);
+    uint32_t layerPixel(const Layer& l, const LayerState& st, const Resolved& p,
+                        uint8_t k, uint8_t span) const;
+    void    compositeLayerNL(const Layer& l, const LayerState& st, const Resolved& p,
+                             uint8_t span, uint8_t alpha);
+    void    decodeFrameNL(const Layer& l, LayerState& st);
+
+    static uint8_t  nominalSpan(const Layer& l, uint8_t len);
+    static uint8_t  applyCurve(const uint8_t* curve, uint8_t v);
+    static uint8_t  layerWindowAlpha(const Layer& l, uint32_t t, uint32_t period);
+    static uint8_t  shiftFor(uint8_t speed, uint8_t ring, bool invert);
+    static uint8_t  lfoValue(const Driver& d, uint32_t nowMs);
+    static uint32_t blendPixel(LayerBlend m, uint32_t dst, uint32_t src, uint8_t a);
+    static uint32_t addSat(uint32_t a, uint32_t b);
+    static uint32_t screenColor(uint32_t a, uint32_t b);
+    static uint32_t mulColor(uint32_t a, uint32_t b);
+    static uint8_t  luma(uint32_t c);
 };
 
 } // namespace hitlib

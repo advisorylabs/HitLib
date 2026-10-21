@@ -9,6 +9,38 @@ through `group[i]` for those.
 
 All calls are **thread-safe** and take effect on the next refresh tick.
 
+Everything below can also be built - and combined, and driven from a sensor -
+as a custom animation in Pattern Studio's Animate tab. See @ref animator.
+
+---
+
+## Speed
+
+Every animation that moves - flow, rainbow, pulse, bitscroll, and their
+overlay and splice-region versions - takes a hitlib::LedStrand::Speed. A bare
+number is pixels per refresh tick, which is what `speed` has always meant:
+
+```cpp
+strand.rainbow(1);    // a pixel every tick - 50 a second at the default 20 ms
+strand.rainbow(3);    // three pixels every tick
+```
+
+A pixel a tick is the slowest a bare number can go. For anything slower, give
+the time between steps instead:
+
+```cpp
+using Speed = hitlib::LedStrand::Speed;
+
+strand.rainbow(Speed::everyMs(100));                      // a pixel every 100 ms
+strand.pulse(0xFF0000, 5, Speed::everyMs(250));           // a slow crawl
+strand.flow(0xFF00DD, 0x000000, Speed::everyMs(40, 2));   // two pixels every 40 ms
+```
+
+Like `flash()`'s durations, the step time is rounded to whole refresh ticks,
+so the pace stays even: a 100 ms step on a 20 ms strand moves on every fifth
+tick, never on a mix of fourth and sixth ones. A splice region takes one the
+same way, as `.speed = Speed::everyMs(100)`.
+
 ---
 
 ## Static
@@ -54,6 +86,9 @@ strand.pulse(0xFF0000, 5, 1, /*bgColor*/ 0x330000);
 
 // Bounce, run reverses direction at each end
 strand.pulse(0xFF0000, 5, 1, 0x000000, /*invert*/ false, /*bounce*/ true);
+
+// Slower than a pixel a tick - see Speed above
+strand.pulse(0xFF0000, 5, hitlib::LedStrand::Speed::everyMs(120));
 ```
 
 ---
@@ -72,7 +107,9 @@ On and off times are independent, so blink rate and duty cycle are set
 separately. `100, 100` is an even 5 Hz blink, while `100, 400` keeps the same
 brief flash at 2 Hz. Durations are rounded to whole refresh ticks and clamped
 to a minimum of one tick, so a strand can't be asked to blink faster than its
-`refreshMs` interval.
+refresh interval (its group's, once it is in a hitlib::LedGroup). They are also
+capped at 65535 ticks, about 22 minutes at 20 ms, so a huge `onMs` such as
+`UINT32_MAX` stays lit that long rather than wrapping round to one tick.
 
 ---
 
@@ -372,7 +409,9 @@ being one of those per strand.
 
 The scale is a list of stops given in the reading's own units, so it says what
 it means. Below the first stop and above the last, the gauge holds that stop's
-color, so a scale never has to cover a range you don't care about. `stops` is
+color, so a scale never has to cover a range you don't care about. Two stops at
+the same reading make a hard edge: the one listed first is the color below it,
+the second the color above. `stops` is
 optional: leave it empty and the gauge falls back to `color` at `emptyAt`
 blending to `color2` at `fullAt`, so a plain two-color gauge needs no scale at
 all.
@@ -397,7 +436,9 @@ every pixel it owns at once, and `BAR` fills the region proportionally instead,
 like a miniature `levelFill()`. `blend` picks what happens *between* two stops:
 `LERP` slides between their colors, and `STEP` holds each one until the next is
 actually reached -- the honest choice when the stops are thresholds something
-crosses rather than points on a ramp.
+crosses rather than points on a ramp. A reading exactly on a stop has reached
+it, which matters for a V5 motor: it reports temperature in 5 C steps that land
+right on the motor heat scale's stops.
 
 Leave `read` as `nullptr` and the region is hand-driven instead, through
 [setRegionLevel()](\ref hitlib::LedStrand::setRegionLevel) -- `setLevel()`'s

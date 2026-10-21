@@ -23,10 +23,20 @@ the preview one row of height rather than a panel's worth.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QTransform,
+)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -72,13 +82,19 @@ SOURCE_AUDIO = "audio"
 SOURCE_MIDI = "midi"
 
 
+class _Cancelled(Exception):
+    """Raised from the analysis progress callback when Cancel is pressed."""
+
+
 def format_time(ms: float, *, tenths: bool = False) -> str:
     """m:ss, or m:ss.t for the moving readout - a whole-second playhead on a
     song that fills the strip in fractions of a beat reads as stuck."""
-    total = max(0.0, ms) / 1000.0
-    minutes, seconds = divmod(total, 60)
     if tenths:
-        return f"{int(minutes)}:{seconds:04.1f}"
+        # Rounded to whole tenths before splitting off the minutes, so the
+        # last 50 ms of a minute carry into it rather than reading m:60.0.
+        minutes, tenths_in = divmod(round(max(0.0, ms) / 100), 600)
+        return f"{minutes}:{tenths_in // 10:02d}.{tenths_in % 10}"
+    minutes, seconds = divmod(max(0.0, ms) / 1000.0, 60)
     return f"{int(minutes)}:{int(seconds):02d}"
 
 
@@ -146,11 +162,16 @@ class EnvelopeScrubber(QWidget):
         #: width change - not on every repaint, which happens 30 times a second.
         self._peaks: list[float] = []
         self._peaks_width = -1
+        #: The envelope already drawn, dimmed and lit (see _layers), and the
+        #: size and device grid it was drawn for.
+        self._layers_cache: tuple[QPixmap, QPixmap] | None = None
+        self._layers_key: tuple | None = None
 
     def set_envelope(self, samples: list[int], frame_ms: int) -> None:
         self._samples = samples
         self._frame_ms = max(1, frame_ms)
         self._peaks_width = -1
+        self._layers_cache = None
         self.update()
 
     def set_position(self, ms: int) -> None:
@@ -213,31 +234,27 @@ class EnvelopeScrubber(QWidget):
         if columns != self._peaks_width:
             self._build_peaks(columns)
 
-        area, ridge = self._envelope_shapes(plot)
+        device = painter.deviceTransform()
+        dim, lit = self._layers(plot, device)
         played_x = plot.left() + plot.width() * (
             min(self._position_ms, self.duration_ms) / max(1, self.duration_ms)
         )
+        # The layers are copied over the plot and as far past it as the ridge
+        # glow reaches: still well inside the rounded frame, where the frame's
+        # fill is all there is under the envelope, and so exactly the backdrop
+        # the layers were drawn on.
+        reach = math.ceil(max((width for width, _ in self.GLOW), default=0.0) / 2)
 
         # The whole song first, dimmed: what is still ahead. Then the part
         # already played, at full strength and lit, so the playhead reads as a
         # boundary between two states instead of a line lying on top of one.
-        upcoming = QColor(theme.FOCUS)
-        upcoming.setAlpha(70)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(upcoming))
-        painter.drawPolygon(area)
-
         painter.save()
-        painter.setClipRect(QRectF(plot.left(), 0, played_x - plot.left(), self.height()))
-        painter.setBrush(QBrush(QColor(theme.FOCUS)))
-        painter.drawPolygon(area)
-        painter.setCompositionMode(QPainter.CompositionMode_Plus)
-        painter.setBrush(Qt.NoBrush)
-        for width, alpha in self.GLOW:
-            tint = QColor(theme.FOCUS)
-            tint.setAlpha(alpha)
-            painter.setPen(QPen(tint, width))
-            painter.drawPath(ridge)
+        painter.setClipRect(plot.adjusted(-reach, -reach, reach, reach))
+        self._blit(painter, device, dim)
+        painter.setClipRect(
+            QRectF(plot.left(), 0, played_x - plot.left(), self.height()), Qt.IntersectClip
+        )
+        self._blit(painter, device, lit)
         painter.restore()
 
         painter.save()
@@ -250,6 +267,76 @@ class EnvelopeScrubber(QWidget):
         painter.restore()
         painter.setPen(QPen(QColor(theme.ACCENT_HI), 1.4))
         painter.drawLine(int(played_x), int(plot.top()), int(played_x), int(plot.bottom()))
+
+    def _layers(self, plot: QRectF, device: QTransform) -> tuple[QPixmap, QPixmap]:
+        """The envelope drawn twice - dimmed, and lit with its glow - ready to
+        copy onto the widget.
+
+        Stroking the glow along a song's worth of jagged ridge is the costly
+        part of a repaint, 70 ms or more, and the transport repaints every
+        30 ms. None of it changes as the song plays - only how much of it is
+        lit - so both states are drawn once and each repaint copies them.
+
+        They are drawn in the device pixels they land on, at the same fraction
+        of a pixel the widget itself starts at. At 125-175% scaling a widget
+        can sit part-way into a device pixel, and everything it draws directly
+        is rasterised at that offset; a cache drawn on the whole-pixel grid
+        would come out shifted against it.
+        """
+        scale_x, scale_y = device.m11(), device.m22()
+        phase_x = device.dx() - math.floor(device.dx())
+        phase_y = device.dy() - math.floor(device.dy())
+        key = (self.width(), self.height(), scale_x, scale_y, phase_x, phase_y)
+        if self._layers_cache is not None and self._layers_key == key:
+            return self._layers_cache
+
+        area, ridge = self._envelope_shapes(plot)
+        layers = []
+        for lit in (False, True):
+            layer = QPixmap(
+                math.ceil(self.width() * scale_x) + 1, math.ceil(self.height() * scale_y) + 1
+            )
+            layer.fill(QColor(theme.CANVAS_BG))
+            painter = QPainter(layer)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setTransform(QTransform(scale_x, 0, 0, scale_y, phase_x, phase_y))
+
+            upcoming = QColor(theme.FOCUS)
+            upcoming.setAlpha(70)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(upcoming))
+            painter.drawPolygon(area)
+            if lit:
+                painter.setBrush(QBrush(QColor(theme.FOCUS)))
+                painter.drawPolygon(area)
+                painter.setCompositionMode(QPainter.CompositionMode_Plus)
+                painter.setBrush(Qt.NoBrush)
+                for width, alpha in self.GLOW:
+                    tint = QColor(theme.FOCUS)
+                    tint.setAlpha(alpha)
+                    painter.setPen(QPen(tint, width))
+                    painter.drawPath(ridge)
+            painter.end()
+            layers.append(layer)
+
+        self._layers_cache = (layers[0], layers[1])
+        self._layers_key = key
+        return self._layers_cache
+
+    @staticmethod
+    def _blit(painter: QPainter, device: QTransform, layer: QPixmap) -> None:
+        """Copy a layer onto the whole device pixels it was drawn for, one to
+        one, whatever the scale and offset mapping the widget onto them."""
+        left, top = math.floor(device.dx()), math.floor(device.dy())
+        painter.save()
+        painter.setWorldTransform(
+            QTransform(
+                1 / device.m11(), 0, 0, 1 / device.m22(),
+                (left - device.dx()) / device.m11(), (top - device.dy()) / device.m22(),
+            )
+        )
+        painter.drawPixmap(QPointF(0, 0), layer)
+        painter.restore()
 
     def _envelope_shapes(self, plot: QRectF) -> tuple[QPolygonF, QPainterPath]:
         """The envelope as a filled area and as its top edge alone.
@@ -555,9 +642,16 @@ class MusicPanel(QWidget):
             # The analysis runs on this thread, so without pumping the loop the
             # dialog would be a frozen rectangle for the whole of it.
             QApplication.processEvents()
+            # Cancel can only land while the loop is pumped, so this is where
+            # it is seen. Raised, not flagged: analyse_audio passes it straight
+            # out, abandoning the decode before the song is replaced.
+            if progress.wasCanceled():
+                raise _Cancelled
 
         try:
             analysis = analyse_audio(path, on_progress=tick)
+        except _Cancelled:
+            return
         except AudioError as exc:
             progress.close()
             QMessageBox.critical(self, "Couldn't Read Audio", str(exc))
@@ -565,7 +659,9 @@ class MusicPanel(QWidget):
         finally:
             progress.close()
 
-        if not analysis.loaded:
+        # Not `analysis.loaded`: a silent file still analyses to frames, every
+        # one of them at the floor.
+        if not any(any(values) for values in analysis.bands.values()):
             QMessageBox.warning(self, "Silent Track", f"{path.name} decoded, but it is silent.")
             return
 
@@ -585,15 +681,20 @@ class MusicPanel(QWidget):
             )
             return
 
-        self._song = song
-        self._config.source_kind = SOURCE_MIDI
         # Everything with notes to start with: a first look at the whole song is
         # more useful than an empty strip you have to go tick boxes to fill.
-        self._config.tracks = list(song.playable_tracks)
+        tracks = list(song.playable_tracks)
+        # Analysed before anything is replaced, so a failure leaves the current
+        # song whole rather than the new track list over its tables.
+        analysis = analyse_midi(song, tracks=tracks)
+
+        self._song = song
+        self._config.source_kind = SOURCE_MIDI
+        self._config.tracks = tracks
         self._loading = True
         self._refresh_track_list()
         self._loading = False
-        self._adopt(analyse_midi(song, tracks=self._config.tracks), path)
+        self._adopt(analysis, path)
 
     def _adopt(self, analysis, path: Path) -> None:
         self._config.analysis = analysis
@@ -651,10 +752,11 @@ class MusicPanel(QWidget):
             item = self.track_list.item(row)
             if item.checkState() == Qt.Checked:
                 chosen.append(item.data(Qt.UserRole))
-        self._config.tracks = chosen
         # Track choice changes the loudness itself, so this one re-analyses.
         # Cheap for MIDI - there is no audio to decode.
-        self._config.analysis = analyse_midi(self._song, tracks=chosen)
+        analysis = analyse_midi(self._song, tracks=chosen)
+        self._config.tracks = chosen
+        self._config.analysis = analysis
         self.rebake()
 
     def _on_shaping_changed(self, *_args) -> None:

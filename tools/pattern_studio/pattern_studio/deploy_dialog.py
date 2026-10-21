@@ -10,6 +10,8 @@ it.
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
@@ -51,7 +53,13 @@ class DeployDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 14)
         layout.setSpacing(10)
 
-        headline = QLabel(f"Wrote <b>{header_path.name}</b> to<br>{header_path.parent}")
+        # Rich text, so everything that came from outside it is escaped: a
+        # folder name, or the install hint's `<the downloaded .zip>`, would
+        # otherwise be read as a tag and dropped.
+        headline = QLabel(
+            f"Wrote <b>{html.escape(header_path.name)}</b> to<br>"
+            f"{html.escape(str(header_path.parent))}"
+        )
         headline.setTextFormat(Qt.RichText)
         headline.setWordWrap(True)
         layout.addWidget(headline)
@@ -61,7 +69,9 @@ class DeployDialog(QDialog):
             warning = QLabel(
                 "HitLib isn't installed in this project yet, so this won't "
                 "compile until it is:<br><br>"
-                + "<br>".join(line.replace(" ", "&nbsp;") for line in missing_hitlib_lines)
+                + "<br>".join(
+                    html.escape(line).replace(" ", "&nbsp;") for line in missing_hitlib_lines
+                )
             )
             warning.setTextFormat(Qt.RichText)
             warning.setWordWrap(True)

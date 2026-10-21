@@ -81,8 +81,10 @@ class ModesPanel(QWidget):
         self.sequenced_check = QCheckBox("Sequenced (timed phases)")
         editor_layout.addWidget(self.sequenced_check)
 
-        # Steady-state editor (reused for phase editing too, rebound below)
-        self.anim_panel = AnimationPanel()
+        # Steady-state editor (reused for phase editing too, rebound below).
+        # No "Open as Custom" here: the window only opens the strand's own
+        # animation that way, and nothing would answer this copy's button.
+        self.anim_panel = AnimationPanel(show_open_custom=False)
         self.masks_panel = MasksPanel()
         editor_layout.addWidget(self.anim_panel)
         editor_layout.addWidget(self.masks_panel)
@@ -159,10 +161,7 @@ class ModesPanel(QWidget):
         self._mode_idx = -1
         self._phase_idx = -1
         self._refresh_mode_list()
-        if config.profile_modes:
-            self.mode_list.setCurrentRow(0)
-        else:
-            self._editor_box.setEnabled(False)
+        self._select_mode(0 if config.profile_modes else -1)
         self._loading = False
 
     def save(self, config: StrandConfig) -> None:
@@ -190,6 +189,19 @@ class ModesPanel(QWidget):
         if 0 <= current < self.mode_list.count():
             self.mode_list.setCurrentRow(current)
         self.mode_list.blockSignals(False)
+
+    def _select_mode(self, row: int) -> None:
+        """Make @p row current and show it in the editor.
+
+        Always re-shown, not left to the list's signals: _refresh_mode_list()
+        keeps the row that was current, and setCurrentRow() emits nothing
+        when asked for that same row - after a load or a remove it often is,
+        and the editor would go on showing (and writing) another mode.
+        """
+        self.mode_list.blockSignals(True)
+        self.mode_list.setCurrentRow(row)
+        self.mode_list.blockSignals(False)
+        self._on_mode_selected(row)
 
     def _on_mode_item_changed(self, item: QListWidgetItem) -> None:
         if self._loading or self._config is None:
@@ -221,8 +233,7 @@ class ModesPanel(QWidget):
             (i if i < removed else i - 1) for i in self._config.active_mode_indices if i != removed
         )
         self._refresh_mode_list()
-        new_row = min(removed, len(self._config.profile_modes) - 1)
-        self.mode_list.setCurrentRow(new_row)
+        self._select_mode(min(removed, len(self._config.profile_modes) - 1))
         self._emit_changed()
 
     def _move_mode(self, delta: int) -> None:
@@ -266,7 +277,7 @@ class ModesPanel(QWidget):
             self._update_sequenced_visibility()
             self._refresh_phase_list()
             if mode.phases:
-                self.phase_list.setCurrentRow(0)
+                self._select_phase(0)
             else:
                 self._bind_leaf(mode.animation, mode.splice)
         finally:
@@ -288,10 +299,18 @@ class ModesPanel(QWidget):
         mode = self._config.profile_modes[self._mode_idx]
         if checked and not mode.phases:
             mode.phases.append(PhaseConfig(name="Phase 1"))
+        elif not checked:
+            # A mode is sequenced exactly when it has phases - that is what
+            # the engine plays and codegen emits - so unchecking drops them
+            # rather than just hiding them. Left in place, the mode would go
+            # on cycling them, and the steady editor shown below would write
+            # into whichever phase was last selected. Undo brings them back.
+            mode.phases = []
+            self._phase_idx = -1
         self._update_sequenced_visibility()
         self._refresh_phase_list()
-        if checked and mode.phases:
-            self.phase_list.setCurrentRow(0)
+        if checked:
+            self._select_phase(0)
         else:
             self._bind_leaf(mode.animation, mode.splice)
         self._emit_changed()
@@ -324,6 +343,14 @@ class ModesPanel(QWidget):
             self.phase_list.setCurrentRow(current)
         self.phase_list.blockSignals(False)
 
+    def _select_phase(self, row: int) -> None:
+        """Make @p row current and show it - see _select_mode() for why the
+        list's own signal cannot be relied on to do the showing."""
+        self.phase_list.blockSignals(True)
+        self.phase_list.setCurrentRow(row)
+        self.phase_list.blockSignals(False)
+        self._on_phase_selected(row)
+
     def _add_phase(self) -> None:
         mode = self._current_mode()
         if mode is None:
@@ -341,7 +368,7 @@ class ModesPanel(QWidget):
         del mode.phases[self._phase_idx]
         self._refresh_phase_list()
         if mode.phases:
-            self.phase_list.setCurrentRow(min(self._phase_idx, len(mode.phases) - 1))
+            self._select_phase(min(self._phase_idx, len(mode.phases) - 1))
         else:
             self._phase_idx = -1
             self.anim_panel.setVisible(False)

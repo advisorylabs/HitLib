@@ -8,9 +8,10 @@ prioritized modes you switch at runtime. Strips can also fill like a meter -
 tracking a motor's heat, an arm's rotation or the battery on their own, or
 filling in time with a song. One strip can be split into several independent
 gauges, so a strand under the drivebase can show all six motors' temperatures
-at once, each segment colored by its own. Comes with
-**Pattern Studio**, a desktop pattern selection tool that previews patterns live
-and exports them as ready-to-include C++.
+at once, each segment colored by its own. When the presets aren't enough,
+custom animations stack them into layers and drive them from sensors, a song or
+your own code. Comes with **Pattern Studio**, a desktop app that designs and
+previews patterns live and exports them as ready-to-include C++.
 
 📖 **[Documentation](https://advisorylabs.github.io/HitLib/)** ·
 📦 **[Releases](https://github.com/advisorylabs/HitLib/releases)**
@@ -20,14 +21,14 @@ and exports them as ready-to-include C++.
 ## Install
 
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.4.0/hitlib@1.4.0.zip
+pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
 pros c apply hitlib
 ```
 
 Or paste that URL into **Install Template** in the PROS VS Code extension.
 
 **VEXcode** (V5, Pro V5, or the VS Code extension): download
-`hitlib-vexcode@1.4.0.zip` from the Releases page and copy its `include/hitlib/`
+`hitlib-vexcode@1.5.0.zip` from the Releases page and copy its `include/hitlib/`
 and `src/hitlib/` folders into your project. Its headers end in `.h`, since
 VEXcode Pro V5 only shows `.h` files, so VEXcode code includes
 `hitlib/hitapi.h`. See the
@@ -57,6 +58,10 @@ A background task refreshes every strand on its own interval, so animations keep
 running without anything in your control loop. Every call is thread-safe and
 takes effect on the next tick.
 
+A speed is pixels per tick, so `rainbow(1)` is as slow as a bare number goes.
+For slower, give the time between steps: `rainbow(hitlib::LedStrand::Speed::everyMs(100))`
+moves a pixel every 100 ms.
+
 ## Profiles and modes
 
 Rather than scattering animation calls through your match code, declare the
@@ -74,6 +79,24 @@ group.activateModeTimed(4, 1500);     // Scoring, for 1.5 s, then back to Idle
 Three profiles ship in the box (Classic, Modern, Showy), and a `Sequencer`
 handles multi-phase looks like a timed endgame sequence.
 
+## Custom animations
+
+New in 1.5. A custom animation stacks up to eight layers - a pulse keyed over a
+rainbow wash, a gauge that only appears past a threshold, a hand-drawn pixel
+strip - and binds their parameters to up to eight drivers: a sensor, a song, an
+oscillator, or a value your own code sets.
+
+```cpp
+namespace anim = hitlib::profiles::anim::heatWash;
+
+strand.compose(anim::composition);
+strand.setDriverLevel(anim::driver::alert, intakeJammed ? 255 : 0);
+```
+
+They're designed in Pattern Studio and exported with the rest of the design.
+Brightness, overlays, splice masks and profiles all keep working on top of one.
+See [Custom Animations](https://advisorylabs.github.io/HitLib/animator.html).
+
 ## Pattern Studio
 
 A desktop app for designing patterns against a live preview instead of a robot,
@@ -85,6 +108,12 @@ table the strip fills to. Play it back and you hear the song while watching
 every strand react to it; scrub anywhere; point one strip at the kick and
 another at the hi-hats. The tables ship inside the exported header, which is
 how a strip syncs to music on a brain that can't hear any.
+
+Its **Animate** tab builds custom animations instead of picking presets: stack
+layers, drag their spans and timing along the strip, draw frames pixel by pixel,
+and bind any of it to a sensor, the song or an oscillator, all previewed live.
+**Open as Custom** turns whatever preset a strand is playing into a starting
+point.
 
 ```bash
 cd tools/pattern_studio
@@ -105,8 +134,8 @@ Show it your PROS or VEXcode project once - drag the project folder onto the
 window, or **Export > Choose Robot Project...** - and **Deploy** writes the header
 straight into the project's `include/`, in the form that project's compiler
 wants. Everything the design knows comes with it: ports,
-lengths, refresh intervals, brightness, named mode constants, and the strands
-themselves. Wiring it up is two lines, written once:
+lengths, refresh intervals, brightness, named mode constants, custom
+animations, and the strands themselves. Wiring it up is two lines, written once:
 
 ```cpp
 #include "hitlib_studio.hpp"

@@ -456,6 +456,40 @@ QLabel {
 QLabel:disabled {
     color: $dim;
 }
+/* The Design / Animate switch in the caption row. Flat fills only: the
+   selected tab is marked by a cyan underline, which is this app's "this is
+   live" colour, rather than by a graded fill. */
+QPushButton[role="segment"] {
+    background: transparent;
+    color: $muted;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0px;
+    padding: 4px 12px 3px 12px;
+    font-weight: 600;
+}
+QPushButton[role="segment"]:hover {
+    color: $text;
+    background: $hover;
+}
+QPushButton[role="segment"]:checked {
+    color: $text;
+    background: $elevated;
+    border-bottom: 2px solid $focus;
+}
+/* Pressed looks exactly like hover. Without this the platform style nudges
+   the label down a pixel on click, which next to the menu bar - which does
+   not move - reads as the tab being a different kind of thing. */
+QPushButton[role="segment"]:pressed {
+    color: $text;
+    background: $hover;
+    padding: 4px 12px 3px 12px;
+}
+QPushButton[role="segment"]:checked:pressed {
+    background: $elevated;
+    border-bottom: 2px solid $focus;
+}
+
 QLabel[role="sectionHeader"] {
     color: $muted;
     font-weight: 600;
@@ -682,7 +716,7 @@ QListWidget::item {
 QListWidget::item:hover {
     background-color: $hover;
 }
-/* Selected rows are painted by strand_list._RowDelegate, not styled here:
+/* Selected rows are painted by strand_list.RowDelegate, not styled here:
    they carry a dithered wash and, during a group edit, a bloom. Neither of
    which QSS can express. The transparent left border above is what the
    delegate paints its accent bar into. */
@@ -733,9 +767,9 @@ def stylesheet() -> str:
 def _palette() -> QPalette:
     """Dark palette backing the stylesheet.
 
-    QSS can't reach everything: native-ish pieces like QColorDialog's swatch
-    grid, QFileDialog's sidebar and disabled-state text all read the palette
-    directly. Without this they'd stay light-on-light inside a dark app.
+    QSS can't reach everything: native-ish pieces like QFileDialog's sidebar
+    and disabled-state text read the palette directly. Without this they'd
+    stay light-on-light inside a dark app.
     """
     p = QPalette()
     p.setColor(QPalette.Window, QColor(BG_BASE))

@@ -30,9 +30,15 @@ AdiLed::AdiLed(uint8_t smartPort, uint8_t adiPort, uint8_t length) {
 
 AdiLed::~AdiLed() { delete static_cast<pros::adi::Led*>(impl); }
 
+// Fills the Led's buffer through operator[], which only touches memory, and
+// sends it once with update(). set_pixel() would hand the whole strip to
+// VEXos on every call - 21 transfers for a 20-LED frame - and rejects every
+// pixel of a 64-LED strip outright, leaving update() to send it black.
 void AdiLed::write(const uint32_t* pixels, uint8_t count) {
     pros::adi::Led* led = static_cast<pros::adi::Led*>(impl);
-    for (uint8_t i = 0; i < count; ++i) led->set_pixel(pixels[i], i);
+    // operator[] doesn't check its index the way set_pixel() did.
+    if (count > led->length()) count = (uint8_t)led->length();
+    for (uint8_t i = 0; i < count; ++i) (*led)[i] = pixels[i];
     led->update();
 }
 

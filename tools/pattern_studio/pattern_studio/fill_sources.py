@@ -22,6 +22,10 @@ ranges to sweep something plausible.
 
 A source reads the same units on both platforms, so one design's Empty/Full
 range means the same thing whichever one it is exported for.
+
+Every SDK name in the generated code is spelled from the global namespace
+(`::pros::Motor`, `::vex::PORT11`): a reader is emitted inside namespaces the
+design names, where a strand called "PROS" would otherwise shadow the SDK.
 """
 
 from __future__ import annotations
@@ -99,9 +103,9 @@ _SOURCES: tuple[FillSource, ...] = (
         unit=" %",
         empty_default=0,
         full_default=100,
-        expr="pros::battery::get_capacity()",
+        expr="::pros::battery::get_capacity()",
         include="pros/misc.hpp",
-        vex_read="vexBatteryCapacityGet()",
+        vex_read="::vexBatteryCapacityGet()",
         hint="A fuel gauge - the bar empties as the battery does.",
     ),
     FillSource(
@@ -113,11 +117,11 @@ _SOURCES: tuple[FillSource, ...] = (
         # that reads full at 70 is a bar that reads full when it matters.
         empty_default=20,
         full_default=70,
-        device="pros::Motor",
+        device="::pros::Motor",
         call="get_temperature()",
         include="pros/motors.hpp",
-        vex_setup="static vex::motor device(vex::PORT{port});",
-        vex_read="device.temperature(vex::temperatureUnits::celsius)",
+        vex_setup="static ::vex::motor device(::vex::PORT{port});",
+        vex_read="device.temperature(::vex::temperatureUnits::celsius)",
         hint="Fills as a motor heats up - full is roughly where it shuts down.",
         # The V5's own derating schedule, shared with LedStrand::motorHeatGauge()
         # rather than restated, so the GUI preset and the C++ one cannot drift.
@@ -131,11 +135,11 @@ _SOURCES: tuple[FillSource, ...] = (
         empty_default=0,
         full_default=360,
         wrap_default=True,
-        device="pros::Motor",
+        device="::pros::Motor",
         call="get_position()",
         include="pros/motors.hpp",
-        vex_setup="static vex::motor device(vex::PORT{port});",
-        vex_read="device.position(vex::rotationUnits::deg)",
+        vex_setup="static ::vex::motor device(::vex::PORT{port});",
+        vex_read="device.position(::vex::rotationUnits::deg)",
         hint="Fills as a motor turns. With Wrap on, one bar per revolution.",
     ),
     FillSource(
@@ -145,11 +149,11 @@ _SOURCES: tuple[FillSource, ...] = (
         unit=" rpm",
         empty_default=0,
         full_default=200,
-        device="pros::Motor",
+        device="::pros::Motor",
         call="get_actual_velocity()",
         include="pros/motors.hpp",
-        vex_setup="static vex::motor device(vex::PORT{port});",
-        vex_read="device.velocity(vex::velocityUnits::rpm)",
+        vex_setup="static ::vex::motor device(::vex::PORT{port});",
+        vex_read="device.velocity(::vex::velocityUnits::rpm)",
         hint="A speedometer. Worth some smoothing - the reading is noisy.",
     ),
     FillSource(
@@ -159,11 +163,11 @@ _SOURCES: tuple[FillSource, ...] = (
         unit=" %",
         empty_default=0,
         full_default=100,
-        device="pros::Motor",
+        device="::pros::Motor",
         call="get_efficiency()",
         include="pros/motors.hpp",
-        vex_setup="static vex::motor device(vex::PORT{port});",
-        vex_read="device.efficiency(vex::percentUnits::pct)",
+        vex_setup="static ::vex::motor device(::vex::PORT{port});",
+        vex_read="device.efficiency(::vex::percentUnits::pct)",
         hint="Drops as a motor works against a load - a stall warning bar.",
     ),
     FillSource(
@@ -175,12 +179,12 @@ _SOURCES: tuple[FillSource, ...] = (
         empty_default=0,
         full_default=36000,
         wrap_default=True,
-        device="pros::Rotation",
+        device="::pros::Rotation",
         call="get_angle()",
         include="pros/rotation.hpp",
-        vex_setup="static vex::rotation device(vex::PORT{port});",
+        vex_setup="static ::vex::rotation device(::vex::PORT{port});",
         # VEX reads whole degrees; scaled so the range stays in centidegrees.
-        vex_read="device.angle(vex::rotationUnits::deg) * 100.0",
+        vex_read="device.angle(::vex::rotationUnits::deg) * 100.0",
         hint="Absolute shaft angle in centidegrees - 36000 is one full turn.",
     ),
     FillSource(
@@ -191,11 +195,11 @@ _SOURCES: tuple[FillSource, ...] = (
         empty_default=0,
         full_default=360,
         wrap_default=True,
-        device="pros::Imu",
+        device="::pros::Imu",
         call="get_heading()",
         include="pros/imu.hpp",
-        vex_setup="static vex::inertial device(vex::PORT{port});",
-        vex_read="device.heading(vex::rotationUnits::deg)",
+        vex_setup="static ::vex::inertial device(::vex::PORT{port});",
+        vex_read="device.heading(::vex::rotationUnits::deg)",
         hint="Which way the robot faces, as a bar that goes round with it.",
     ),
     FillSource(
@@ -205,11 +209,11 @@ _SOURCES: tuple[FillSource, ...] = (
         unit=" mm",
         empty_default=0,
         full_default=2000,
-        device="pros::Distance",
+        device="::pros::Distance",
         call="get()",
         include="pros/distance.hpp",
-        vex_setup="static vex::distance device(vex::PORT{port});",
-        vex_read="device.objectDistance(vex::distanceUnits::mm)",
+        vex_setup="static ::vex::distance device(::vex::PORT{port});",
+        vex_read="device.objectDistance(::vex::distanceUnits::mm)",
         hint="How far away something is. Swap Empty/Full for a proximity bar.",
     ),
     FillSource(
@@ -219,15 +223,15 @@ _SOURCES: tuple[FillSource, ...] = (
         unit="°",
         empty_default=0,
         full_default=250,
-        device="pros::adi::Potentiometer",
+        device="::pros::adi::Potentiometer",
         call="get_angle()",
         include="pros/adi.hpp",
         # The brain's own 3-wire ports are the internal device on PORT22.
         vex_setup=(
-            "static vex::triport ports(vex::PORT22); "
-            "static vex::pot device(ports.Port[{index}]);"
+            "static ::vex::triport ports(::vex::PORT22); "
+            "static ::vex::pot device(ports.Port[{index}]);"
         ),
-        vex_read="device.angle(vex::rotationUnits::deg)",
+        vex_read="device.angle(::vex::rotationUnits::deg)",
         hint="An analog angle - a lift or arm's position on an ADI port.",
     ),
     FillSource(

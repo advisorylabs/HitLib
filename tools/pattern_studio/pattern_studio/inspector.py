@@ -13,6 +13,7 @@ import copy
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -50,7 +51,9 @@ from .models import (
     StrandConfig,
 )
 from . import theme
-from .widgets import ColorButton, enum_data, format_palette, parse_palette
+from .group_edit import apply_changes, diff_config
+from .strand_list import RowDelegate, restore_selection
+from .widgets import ColorButton, SpeedEdit, enum_data, format_palette, parse_palette
 
 
 def _duration_spin() -> QSpinBox:
@@ -96,6 +99,7 @@ _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
     AnimationKind.MUSIC: {
         "music_hint", "band", "gradient", "color", "color2", "bg_color", "invert", "sensitivity",
     },
+    AnimationKind.CUSTOM: {"composition", "custom_hint"},
 }
 
 
@@ -149,9 +153,9 @@ class StrandSettingsPanel(QWidget):
         add_field("Name", self.name_edit)
         add_field("ADI", self.adi_port_spin)
         add_field("Smart", self.smart_port_spin)
-        add_field("Len", self.length_spin)
-        add_field("Refresh", self.refresh_spin)
-        add_field("Bright", self.brightness_spin)
+        add_field("Length", self.length_spin)
+        add_field("Refresh Rate", self.refresh_spin)
+        add_field("Brightness", self.brightness_spin)
         layout.addStretch(1)
 
         self.name_edit.textChanged.connect(self._emit_changed)
@@ -187,8 +191,10 @@ class StrandSettingsPanel(QWidget):
 
 class AnimationPanel(QGroupBox):
     changed = Signal()
+    #: The user wants this animation opened in the Animator as a layer stack.
+    open_as_custom = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_open_custom: bool = True):
         super().__init__("Animation", parent)
         self._suspend = False
         outer = QVBoxLayout(self)
@@ -196,7 +202,29 @@ class AnimationPanel(QGroupBox):
         self.kind_combo = QComboBox()
         for kind in AnimationKind:
             self.kind_combo.addItem(ANIMATION_KIND_LABELS[kind], kind)
-        outer.addWidget(self.kind_combo)
+
+        # Every preset already *is* a custom animation - this is that made
+        # clickable. It takes whatever is configured here, opens it as a
+        # one-layer composition, and leaves the user one "Add Layer" away
+        # from something the preset vocabulary cannot express. It shares
+        # presets.layer_for_animation() with the Animator's own preset menu
+        # and with the reproduction tests, so a faithless conversion breaks
+        # three things at once rather than quietly producing the wrong
+        # animation in someone's design.
+        self.open_custom_btn = QPushButton("Open as Custom")
+        self.open_custom_btn.setToolTip(
+            "Open this animation in the Animator, as layers you can add to")
+        self.open_custom_btn.clicked.connect(self.open_as_custom)
+
+        kind_row = QHBoxLayout()
+        kind_row.setSpacing(6)
+        kind_row.addWidget(self.kind_combo, 1)
+        kind_row.addWidget(self.open_custom_btn)
+        outer.addLayout(kind_row)
+        # Off wherever nothing listens for open_as_custom: a button that is
+        # shown and does nothing reads as broken.
+        if not show_open_custom:
+            self.open_custom_btn.hide()
 
         form = QFormLayout()
         outer.addLayout(form)
@@ -206,8 +234,11 @@ class AnimationPanel(QGroupBox):
         self.bg_btn = ColorButton(0x000000)
         self.run_length_spin = QSpinBox()
         self.run_length_spin.setRange(1, 64)
-        self.speed_spin = QSpinBox()
-        self.speed_spin.setRange(1, 64)
+        # "1 px every refresh" is the old Speed 1; a time is what goes slower.
+        # speed_spin stays the name of the pixel count, which it always was.
+        self.speed_edit = SpeedEdit()
+        self.speed_spin = self.speed_edit.pixels_spin
+        self.step_spin = self.speed_edit.step_spin
         self.on_ms_spin = _duration_spin()
         self.off_ms_spin = _duration_spin()
         self.invert_check = QCheckBox()
@@ -296,6 +327,29 @@ class AnimationPanel(QGroupBox):
         )
         self.music_hint.setWordWrap(True)
         self.music_hint.setProperty("role", "hint")
+        # Custom. Which of the document's animations this strand plays. The
+        # library is document-level and lives on the Animate tab, so the
+        # window hands it over - see set_compositions().
+        self.composition_combo = QComboBox()
+        # Sized to a sensible name, not the longest one in the library: an
+        # animation called something long would otherwise widen the column.
+        self.composition_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.composition_combo.setMinimumContentsLength(14)
+        self.composition_combo.setToolTip(
+            "Which custom animation this strand plays. They are made and edited "
+            "on the Animate tab.")
+        self.custom_hint = QLabel(
+            "No custom animations yet. Build one on the Animate tab, or use "
+            "Open as Custom to start from any preset."
+        )
+        self.custom_hint.setWordWrap(True)
+        self.custom_hint.setProperty("role", "hint")
+        #: (id, name) for every composition in the document, in library order.
+        self._compositions: list[tuple[int, str]] = []
+        #: What the strand being shown plays. Held apart from the combo so a
+        #: strand pointing at a deleted animation keeps pointing at it.
+        self._composition_id = 0
         self.invert_check.setToolTip("Reverse the direction")
         self.seamless_check.setToolTip(
             "Loop the gradient back to Color instead of cutting straight from "
@@ -308,11 +362,12 @@ class AnimationPanel(QGroupBox):
             form.addRow(label, widget)
             self._rows[name] = (form.labelForField(widget), widget)
 
+        add_row("composition", "Plays", self.composition_combo)
         add_row("color", "Color", self.color_btn)
         add_row("color2", "Color 2", self.color2_btn)
         add_row("bg_color", "Background", self.bg_btn)
         add_row("run_length", "Run Length", self.run_length_spin)
-        add_row("speed", "Speed", self.speed_spin)
+        add_row("speed", "Speed", self.speed_edit)
         add_row("on_ms", "On Time", self.on_ms_spin)
         add_row("off_ms", "Off Time", self.off_ms_spin)
         add_row("invert", "Invert", self.invert_check)
@@ -339,14 +394,17 @@ class AnimationPanel(QGroupBox):
         self._rows["fill_hint"] = (None, self.fill_hint)
         form.addRow(self.music_hint)
         self._rows["music_hint"] = (None, self.music_hint)
+        form.addRow(self.custom_hint)
+        self._rows["custom_hint"] = (None, self.custom_hint)
 
         self.kind_combo.currentIndexChanged.connect(self._on_kind_changed)
+        self.composition_combo.currentIndexChanged.connect(self._on_composition_changed)
         for widget, signal_name in (
             (self.color_btn, "color_changed"),
             (self.color2_btn, "color_changed"),
             (self.bg_btn, "color_changed"),
             (self.run_length_spin, "valueChanged"),
-            (self.speed_spin, "valueChanged"),
+            (self.speed_edit, "changed"),
             (self.on_ms_spin, "valueChanged"),
             (self.off_ms_spin, "valueChanged"),
             (self.invert_check, "toggled"),
@@ -382,6 +440,14 @@ class AnimationPanel(QGroupBox):
             self.changed.emit()
 
     def _on_kind_changed(self, *_args) -> None:
+        # Picking Custom Animation with nothing chosen yet plays the first
+        # one in the library, rather than leaving the strip dark until a
+        # second dropdown is found.
+        if (not self._suspend and self.kind_combo.currentData() == AnimationKind.CUSTOM
+                and self._composition_id not in self._composition_ids()
+                and self._compositions):
+            self._composition_id = self._compositions[0][0]
+            self._fill_composition_combo()
         self._update_visibility()
         self._emit_changed()
 
@@ -406,6 +472,50 @@ class AnimationPanel(QGroupBox):
             self._prefill_source_defaults()
         self._update_visibility()
         self._emit_changed()
+
+    # -- custom animations ------------------------------------------------
+
+    def set_compositions(self, compositions) -> None:
+        """Hand over the document's custom animations, for the Plays list.
+
+        Called whenever the library changes - an animation added, renamed or
+        deleted on the Animate tab, a file opened, an undo - and never an
+        edit in itself: the strand keeps playing whatever it was playing.
+        """
+        self._compositions = [(c.id, c.name or f"Animation {c.id}") for c in compositions]
+        self._fill_composition_combo()
+        self._update_visibility()
+
+    def _composition_ids(self) -> list[int]:
+        return [cid for cid, _name in self._compositions]
+
+    def _fill_composition_combo(self) -> None:
+        combo = self.composition_combo
+        combo.blockSignals(True)
+        combo.clear()
+        for cid, name in self._compositions:
+            combo.addItem(name, cid)
+        current = self._composition_id
+        if current not in self._composition_ids():
+            if current:
+                # Said out loud rather than quietly repointed at whatever is
+                # first: export refuses a strand in this state, and the user
+                # should be able to see why before it does.
+                combo.insertItem(0, "Missing animation (deleted)", current)
+            elif self._compositions:
+                combo.insertItem(0, "Choose an animation", 0)
+            else:
+                combo.addItem("None yet", 0)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.setEnabled(bool(self._compositions))
+        combo.blockSignals(False)
+
+    def _on_composition_changed(self, _index: int) -> None:
+        data = self.composition_combo.currentData()
+        self._composition_id = int(data) if data is not None else 0
+        self._emit_changed()
+
+    # -- sources ----------------------------------------------------------
 
     def _sync_source_fields(self) -> None:
         """Re-range and re-label the source fields for whatever is selected.
@@ -469,6 +579,8 @@ class AnimationPanel(QGroupBox):
                 visible -= {"source_empty", "source_full", "source_wrap", "smoothing"}
             if self.preview_sweep_check.isChecked():
                 visible.discard("preview_level")
+        if kind == AnimationKind.CUSTOM and self._compositions:
+            visible.discard("custom_hint")
         for name, (label, widget) in self._rows.items():
             show = name in visible
             widget.setVisible(show)
@@ -477,6 +589,9 @@ class AnimationPanel(QGroupBox):
 
     def load(self, a: AnimationConfig) -> None:
         self._suspend = True
+        # Before the kind: picking Custom checks what is already chosen.
+        self._composition_id = a.composition_id
+        self._fill_composition_combo()
         idx = self.kind_combo.findData(a.kind)
         if idx >= 0:
             self.kind_combo.setCurrentIndex(idx)
@@ -484,7 +599,7 @@ class AnimationPanel(QGroupBox):
         self.color2_btn.set_color(a.color2)
         self.bg_btn.set_color(a.bg_color)
         self.run_length_spin.setValue(a.run_length)
-        self.speed_spin.setValue(a.speed)
+        self.speed_edit.set_speed(a.speed, a.step_ms)
         self.on_ms_spin.setValue(a.on_ms)
         self.off_ms_spin.setValue(a.off_ms)
         self.invert_check.setChecked(a.invert)
@@ -522,11 +637,13 @@ class AnimationPanel(QGroupBox):
 
     def save(self, a: AnimationConfig) -> None:
         a.kind = enum_data(self.kind_combo, AnimationKind)
+        a.composition_id = self._composition_id
         a.color = self.color_btn.color()
         a.color2 = self.color2_btn.color()
         a.bg_color = self.bg_btn.color()
         a.run_length = self.run_length_spin.value()
-        a.speed = self.speed_spin.value()
+        a.speed = self.speed_edit.pixels()
+        a.step_ms = self.speed_edit.step_ms()
         a.on_ms = self.on_ms_spin.value()
         a.off_ms = self.off_ms_spin.value()
         a.invert = self.invert_check.isChecked()
@@ -723,8 +840,11 @@ class OverlayAnimationPanel(QGroupBox):
         self.bg_btn = ColorButton(0x000000)
         self.run_length_spin = QSpinBox()
         self.run_length_spin.setRange(1, 64)
-        self.speed_spin = QSpinBox()
-        self.speed_spin.setRange(1, 64)
+        # "1 px every refresh" is the old Speed 1; a time is what goes slower.
+        # speed_spin stays the name of the pixel count, which it always was.
+        self.speed_edit = SpeedEdit()
+        self.speed_spin = self.speed_edit.pixels_spin
+        self.step_spin = self.speed_edit.step_spin
         self.on_ms_spin = _duration_spin()
         self.off_ms_spin = _duration_spin()
         self.seamless_check = QCheckBox()
@@ -820,7 +940,7 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("color2", "Color 2", self.color2_btn)
         add_row("bg_color", "Background", self.bg_btn)
         add_row("run_length", "Run Length", self.run_length_spin)
-        add_row("speed", "Speed", self.speed_spin)
+        add_row("speed", "Speed", self.speed_edit)
         add_row("on_ms", "On Time", self.on_ms_spin)
         add_row("off_ms", "Off Time", self.off_ms_spin)
         add_row("seamless", "Seamless", self.seamless_check)
@@ -851,7 +971,7 @@ class OverlayAnimationPanel(QGroupBox):
             (self.color2_btn, "color_changed"),
             (self.bg_btn, "color_changed"),
             (self.run_length_spin, "valueChanged"),
-            (self.speed_spin, "valueChanged"),
+            (self.speed_edit, "changed"),
             (self.on_ms_spin, "valueChanged"),
             (self.off_ms_spin, "valueChanged"),
             (self.density_spin, "valueChanged"),
@@ -1010,7 +1130,7 @@ class OverlayAnimationPanel(QGroupBox):
         self.color2_btn.set_color(o.color2)
         self.bg_btn.set_color(o.bg_color)
         self.run_length_spin.setValue(o.run_length)
-        self.speed_spin.setValue(o.speed)
+        self.speed_edit.set_speed(o.speed, o.step_ms)
         self.seamless_check.setChecked(o.seamless)
         self.density_spin.setValue(o.density_pct)
         self.fade_spin.setValue(o.fade_step)
@@ -1050,7 +1170,8 @@ class OverlayAnimationPanel(QGroupBox):
         o.color2 = self.color2_btn.color()
         o.bg_color = self.bg_btn.color()
         o.run_length = self.run_length_spin.value()
-        o.speed = self.speed_spin.value()
+        o.speed = self.speed_edit.pixels()
+        o.step_ms = self.speed_edit.step_ms()
         o.on_ms = self.on_ms_spin.value()
         o.off_ms = self.off_ms_spin.value()
         o.seamless = self.seamless_check.isChecked()
@@ -1083,7 +1204,9 @@ class SpliceMaskPanel(QGroupBox):
     are edited like ModesPanel's mode/phase lists: Add/Remove buttons plus an
     editor (start/width fields + a per-region OverlayAnimationPanel) bound to
     whichever region is selected, with a Divide action for the common case of
-    wanting N equal segments rather than N hand-placed ones. Region edits
+    wanting N equal segments rather than N hand-placed ones. The list takes a
+    group selection the way the strand list does, and an edit to the region
+    on show is replayed onto the rest of the group. Region edits
     mutate the loaded
     SpliceMaskConfig's `regions` list in place rather than a local copy, so
     save() intentionally leaves `regions` untouched. Callers are expected
@@ -1101,7 +1224,12 @@ class SpliceMaskPanel(QGroupBox):
         super().__init__("Splice Mask", parent)
         self._suspend = False
         self._splice: SpliceMaskConfig | None = None
+        # The anchor: the region the editor shows, and the one an edit is
+        # diffed on before it is replayed onto the rest of the selection.
         self._region_idx = -1
+        # The anchor's animation as it stood before the edit in progress -
+        # see _on_region_anim_changed() for why a diff and not a copy.
+        self._region_baseline: OverlayAnimationConfig | None = None
         # What Divide splits up. The panel edits a mask, not a strand, so the
         # length has to be handed to it - see set_strip_length().
         self._strip_length = 64
@@ -1153,12 +1281,31 @@ class SpliceMaskPanel(QGroupBox):
         regions_label = QLabel("Regions")
         regions_label.setProperty("role", "sectionHeader")
         custom_layout.addWidget(regions_label)
+        # Multi-select, exactly like the strand list: Ctrl/Shift-click or
+        # Select All, and the editor below shows the highlighted region while
+        # every edit lands on the whole selection. Six gauge segments that
+        # differ only in which motor they read are the case this is for -
+        # changing their scale used to mean changing it six times.
         self.region_list = QListWidget()
+        self.region_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._region_delegate = RowDelegate(self.region_list)
+        self.region_list.setItemDelegate(self._region_delegate)
         custom_layout.addWidget(self.region_list)
+        region_select_row = QHBoxLayout()
+        self.select_all_regions_btn = QPushButton("Select All")
+        self.select_all_regions_btn.setToolTip(
+            "Select every region, so the next edit changes all of them")
+        self.region_group_label = QLabel()
+        self.region_group_label.setProperty("role", "groupCount")
+        self.region_group_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        region_select_row.addWidget(self.select_all_regions_btn)
+        region_select_row.addWidget(self.region_group_label, 1)
+        custom_layout.addLayout(region_select_row)
         region_btn_row = QHBoxLayout()
         self.add_region_btn = QPushButton(theme.icon("plus"), " Add")
         self.remove_region_btn = QPushButton(theme.icon("minus"), " Remove")
         self.remove_region_btn.setProperty("role", "danger")
+        self.remove_region_btn.setToolTip("Remove every selected region")
         region_btn_row.addWidget(self.add_region_btn)
         region_btn_row.addWidget(self.remove_region_btn)
         custom_layout.addLayout(region_btn_row)
@@ -1193,6 +1340,13 @@ class SpliceMaskPanel(QGroupBox):
         self.region_editor = QWidget()
         region_editor_layout = QVBoxLayout(self.region_editor)
         region_editor_layout.setContentsMargins(0, 0, 0, 0)
+        # The same banner the inspector raises for a group of strands, minus
+        # the glow: that one stays the single lit thing in the column.
+        self.region_group_banner = QLabel()
+        self.region_group_banner.setObjectName("groupBanner")
+        self.region_group_banner.setWordWrap(True)
+        self.region_group_banner.setVisible(False)
+        region_editor_layout.addWidget(self.region_group_banner)
         region_form = QFormLayout()
         self.region_start_spin = QSpinBox()
         self.region_start_spin.setRange(0, 63)
@@ -1218,7 +1372,9 @@ class SpliceMaskPanel(QGroupBox):
         self.split_bg_btn.color_changed.connect(self._emit_changed)
         self.overlay_panel.changed.connect(self._emit_changed)
 
-        self.region_list.currentRowChanged.connect(self._on_region_selected)
+        self.region_list.currentRowChanged.connect(self._on_region_selection_changed)
+        self.region_list.itemSelectionChanged.connect(self._on_region_selection_changed)
+        self.select_all_regions_btn.clicked.connect(self.region_list.selectAll)
         self.add_region_btn.clicked.connect(self._add_region)
         self.remove_region_btn.clicked.connect(self._remove_region)
         self.divide_btn.clicked.connect(self._divide_strip)
@@ -1268,22 +1424,65 @@ class SpliceMaskPanel(QGroupBox):
         return f"{r.start}-{r.start + r.width - 1}  {kind_label}"
 
     def _refresh_region_list(self) -> None:
-        self.region_list.blockSignals(True)
+        """Rewrite the labels, keeping the anchor and the whole selection."""
+        selected = self._selected_region_rows()
         current = self.region_list.currentRow()
+        self.region_list.blockSignals(True)
         self.region_list.clear()
         if self._splice is not None:
             for r in self._splice.regions:
                 self.region_list.addItem(self._region_label(r))
-        if 0 <= current < self.region_list.count():
-            self.region_list.setCurrentRow(current)
+        restore_selection(self.region_list, selected, current)
         self.region_list.blockSignals(False)
+
+    def _selected_region_rows(self) -> list[int]:
+        return sorted({index.row() for index in self.region_list.selectedIndexes()})
+
+    def _group_region_rows(self) -> list[int]:
+        """Every region an edit applies to, anchor first."""
+        if self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+            return []
+        others = [row for row in self._selected_region_rows()
+                  if row != self._region_idx and 0 <= row < len(self._splice.regions)]
+        return [self._region_idx, *others]
+
+    def select_region(self, row: int) -> None:
+        """Select exactly @p row, dropping any wider group, and show it."""
+        self.region_list.blockSignals(True)
+        self.region_list.clearSelection()
+        self.region_list.setCurrentRow(row)
+        self.region_list.blockSignals(False)
+        self._sync_region_selection(force=True)
+
+    def _on_region_selection_changed(self, *_args) -> None:
+        self._sync_region_selection(force=False)
+
+    def _sync_region_selection(self, force: bool) -> None:
+        rows = self._selected_region_rows()
+        anchor = self.region_list.currentRow()
+        # Qt lets the current row sit outside the selection (Ctrl+click it
+        # off); the anchor has to be a region the edit will actually reach.
+        if anchor not in rows:
+            anchor = rows[0] if rows else -1
+        count = len(rows)
+        self.region_group_label.setText(f"{count} selected" if count > 1 else "")
+        self._region_delegate.set_group(count > 1)
+        self.region_list.viewport().update()
+        if count > 1:
+            self.region_group_banner.setText(
+                f"Editing {count} regions. The fields show the highlighted one; "
+                "a change applies to all of them, and Start moves them together."
+            )
+        self.region_group_banner.setVisible(count > 1)
+        if force or anchor != self._region_idx:
+            self._load_region(anchor)
 
     def _add_region(self) -> None:
         if self._splice is None:
             return
         self._splice.regions.append(SpliceRegionConfig())
         self._refresh_region_list()
-        self.region_list.setCurrentRow(len(self._splice.regions) - 1)
+        self.select_region(len(self._splice.regions) - 1)
         self._emit_changed()
 
     def set_strip_length(self, length: int) -> None:
@@ -1327,26 +1526,32 @@ class SpliceMaskPanel(QGroupBox):
 
         self._splice.regions = regions
         self._refresh_region_list()
-        self.region_list.setCurrentRow(0)
+        self.select_region(0)
         self._emit_changed()
 
     def _remove_region(self) -> None:
-        if self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+        """Remove every selected region, not just the highlighted one."""
+        rows = self._group_region_rows()
+        if self._splice is None or not rows:
             return
-        del self._splice.regions[self._region_idx]
+        for row in sorted(rows, reverse=True):
+            del self._splice.regions[row]
+        self.region_list.blockSignals(True)
+        self.region_list.clearSelection()
+        self.region_list.blockSignals(False)
         self._refresh_region_list()
-        if self._splice.regions:
-            self.region_list.setCurrentRow(min(self._region_idx, len(self._splice.regions) - 1))
-        else:
-            self._region_idx = -1
-            self.region_editor.setEnabled(False)
+        remaining = len(self._splice.regions)
+        self.select_region(min(min(rows), remaining - 1) if remaining else -1)
         self._emit_changed()
 
-    def _on_region_selected(self, row: int) -> None:
-        self._region_idx = row
+    def _load_region(self, row: int) -> None:
+        """Show region @p row in the editor and make it the anchor."""
         if self._splice is None or not (0 <= row < len(self._splice.regions)):
+            self._region_idx = -1
+            self._region_baseline = None
             self.region_editor.setEnabled(False)
             return
+        self._region_idx = row
         self.region_editor.setEnabled(True)
         r = self._splice.regions[row]
         was_suspend = self._suspend
@@ -1357,22 +1562,72 @@ class SpliceMaskPanel(QGroupBox):
             self.region_anim_panel.load(r.animation)
         finally:
             self._suspend = was_suspend
+        self._take_region_baseline()
+
+    def _take_region_baseline(self) -> None:
+        """What the anchor's animation reads *through the panel* right now.
+
+        Saved through the panel rather than copied straight off the config,
+        so a value the widgets would normalise on the way through (a range
+        they clamp, a scale they sort) is not mistaken for an edit and
+        stamped across the rest of the group.
+        """
+        if self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
+            self._region_baseline = None
+            return
+        baseline = copy.deepcopy(self._splice.regions[self._region_idx].animation)
+        self.region_anim_panel.save(baseline)
+        self._region_baseline = baseline
 
     def _on_region_field_changed(self, *_args) -> None:
         if self._suspend or self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
             return
-        r = self._splice.regions[self._region_idx]
-        r.start = self.region_start_spin.value()
-        r.width = self.region_width_spin.value()
+        rows = self._group_region_rows()
+        group = [self._splice.regions[i] for i in rows]
+        anchor = group[0]
+        start = self.region_start_spin.value()
+        width = self.region_width_spin.value()
+        if len(group) > 1:
+            # A group moves as a block: the same shift for every region, held
+            # back at either end of the strip so the spacing between them is
+            # never what gives. Setting every Start to one number would stack
+            # them all on the same pixel, which nobody selects six regions for.
+            shift = start - anchor.start
+            shift = max(-min(r.start for r in group),
+                        min(self.region_start_spin.maximum() - max(r.start for r in group), shift))
+            if width != anchor.width:
+                for r in group:
+                    r.width = width
+            for r in group:
+                r.start += shift
+            if anchor.start != start:
+                was_suspend = self._suspend
+                self._suspend = True
+                self.region_start_spin.setValue(anchor.start)
+                self._suspend = was_suspend
+        else:
+            anchor.start = start
+            anchor.width = width
         self._refresh_region_list()
-        self.region_list.setCurrentRow(self._region_idx)
         self._emit_changed()
 
     def _on_region_anim_changed(self) -> None:
+        """Save the anchor, then replay what changed onto the rest.
+
+        Only the fields that changed are replayed - the same diff the window
+        does for a group of strands (see group_edit) - so turning six gauge
+        segments' smoothing up leaves each one reading its own motor.
+        """
         if self._suspend or self._splice is None or not (0 <= self._region_idx < len(self._splice.regions)):
             return
-        r = self._splice.regions[self._region_idx]
-        self.region_anim_panel.save(r.animation)
+        rows = self._group_region_rows()
+        anchor = self._splice.regions[self._region_idx]
+        self.region_anim_panel.save(anchor.animation)
+        if len(rows) > 1 and self._region_baseline is not None:
+            changes = diff_config(self._region_baseline, anchor.animation)
+            for row in rows[1:]:
+                apply_changes(self._splice.regions[row].animation, changes)
+        self._region_baseline = copy.deepcopy(anchor.animation)
         self._refresh_region_list()
         self._emit_changed()
 
@@ -1397,11 +1652,14 @@ class SpliceMaskPanel(QGroupBox):
         self.split_bg_btn.set_color(s.bg_color)
         self.split_bg_btn.setVisible(not s.use_overlay)
         self.overlay_panel.load(s.overlay)
+        self.region_list.blockSignals(True)
+        self.region_list.clearSelection()
+        self.region_list.blockSignals(False)
         self._refresh_region_list()
-        if s.regions:
-            self.region_list.setCurrentRow(0)
-        else:
-            self.region_editor.setEnabled(False)
+        # Always re-shown, not left to the list's signals: a strand whose
+        # first region lands on the row that was already current would emit
+        # nothing, and the editor would go on showing the last strand's.
+        self.select_region(0 if s.regions else -1)
         self._update_mode_visibility()
         self._update_overlay_visibility()
         self._suspend = False
@@ -1551,6 +1809,12 @@ class InspectorPanel(QWidget):
         self.masks_panel.changed.connect(self.animation_changed)
         self.modes_panel.changed.connect(self.animation_changed)
         self.use_profile_check.toggled.connect(self._on_use_profile_toggled)
+
+    def set_compositions(self, compositions) -> None:
+        """The document's custom animations, for every Plays list in here -
+        the strand's own and the one a profile mode's editor shows."""
+        self.anim_panel.set_compositions(compositions)
+        self.modes_panel.anim_panel.set_compositions(compositions)
 
     def set_group_size(self, count: int) -> None:
         """Tell the inspector how many strands the next edit will hit, so it

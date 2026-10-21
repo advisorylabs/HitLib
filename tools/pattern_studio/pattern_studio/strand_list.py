@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import random
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QImage,
@@ -66,8 +66,12 @@ def _dither_tile() -> QPixmap:
     return _DITHER_TILE
 
 
-class _RowDelegate(QStyledItemDelegate):
+class RowDelegate(QStyledItemDelegate):
     """Paints selected rows: the wash, the accent bar, and the group bloom.
+
+    Shared by every list that supports group selection - the strands here,
+    and a splice mask's custom regions - so a group looks the same wherever
+    one can be made.
 
     This lives in a delegate rather than in the stylesheet because neither of
     those last two is expressible in QSS (there is no dithering and no
@@ -173,6 +177,81 @@ class _RowDelegate(QStyledItemDelegate):
         super().paint(painter, text_option, index)
 
 
+def restore_selection(view: QListWidget, rows: list[int], current: int) -> None:
+    """Put back a group selection: exactly @p rows, anchored on @p current.
+
+    The anchor goes back without being selected. Qt lets the current row sit
+    outside the selection - Ctrl-click it off the group and it stays current -
+    and setCurrentRow() would quietly select it again, so the next edit would
+    reach a row the user had just taken out. Rows out of range are skipped;
+    blocking the view's signals is left to the caller.
+    """
+    count = view.count()
+    if 0 <= current < count:
+        view.selectionModel().setCurrentIndex(
+            view.model().index(current, 0), QItemSelectionModel.NoUpdate)
+    for row in rows:
+        if 0 <= row < count:
+            view.item(row).setSelected(True)
+
+
+class _GroupListWidget(QListWidget):
+    """A QListWidget that reports each click or key press as one change.
+
+    Qt applies a click in two steps, each with its own signal: the current row
+    moves first, while the old row is still the one selected, and only then
+    does the selection follow. Forwarded as they came, the window ran its
+    whole selection handler on the half-way state - reloading the strand
+    being left - and then again for the one clicked. A key press sends the
+    same two the other way round, both on the finished state. Either way
+    they are held here until Qt is done with the event, and reported once.
+    """
+
+    #: The current row and/or the selection changed.
+    settled = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._holding = 0
+        self._pending = False
+        self.itemSelectionChanged.connect(self._on_changed)
+        # currentRowChanged as well: Ctrl+arrow moves the anchor without
+        # changing the selection, and the anchor is what the inspector shows.
+        self.currentRowChanged.connect(self._on_changed)
+
+    def _on_changed(self, *_args) -> None:
+        if self._holding:
+            self._pending = True
+        else:
+            self.settled.emit()
+
+    def _held(self, handler, *args) -> None:
+        """Run @p handler with the signals held, then report once if anything moved."""
+        self._holding += 1
+        try:
+            handler(*args)
+        finally:
+            self._holding -= 1
+        if not self._holding and self._pending:
+            self._pending = False
+            self.settled.emit()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._held(super().mousePressEvent, event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._held(super().mouseMoveEvent, event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._held(super().mouseReleaseEvent, event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._held(super().keyPressEvent, event)
+
+    def setCurrentRow(self, row: int, *args) -> None:  # noqa: N802 (Qt override)
+        self._held(super().setCurrentRow, row, *args)
+
+
 class StrandListPanel(QWidget):
     #: The anchor row and/or the set of selected rows changed.
     selection_changed = Signal()
@@ -190,9 +269,9 @@ class StrandListPanel(QWidget):
         title.setProperty("role", "sectionHeader")
         layout.addWidget(title)
 
-        self.list_widget = QListWidget()
+        self.list_widget = _GroupListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self._row_delegate = _RowDelegate(self.list_widget)
+        self._row_delegate = RowDelegate(self.list_widget)
         self.list_widget.setItemDelegate(self._row_delegate)
         layout.addWidget(self.list_widget)
 
@@ -222,15 +301,9 @@ class StrandListPanel(QWidget):
         self.add_btn.clicked.connect(self.add_requested)
         self.remove_btn.clicked.connect(self.remove_requested)
         self.select_all_btn.clicked.connect(self.select_all)
-        self.list_widget.itemSelectionChanged.connect(self.selection_changed)
-        # currentRowChanged as well: Ctrl+arrow moves the anchor without
-        # changing the selection, and the anchor is what the inspector shows.
-        self.list_widget.currentRowChanged.connect(self._on_current_row_changed)
+        self.list_widget.settled.connect(self.selection_changed)
 
         self.set_group_size(0)
-
-    def _on_current_row_changed(self, _row: int) -> None:
-        self.selection_changed.emit()
 
     # ------------------------------------------------------------------
     # Selection
@@ -245,12 +318,33 @@ class StrandListPanel(QWidget):
         return sorted(index.row() for index in self.list_widget.selectedIndexes())
 
     def select(self, row: int) -> None:
-        """Select exactly `row`, dropping any wider group selection."""
+        """Select exactly `row`, dropping any wider group selection.
+
+        Reported once, from the finished state: left to the list's own
+        signals, the empty selection in between and then the row itself would
+        run the window's selection handler three times over.
+        """
+        self.list_widget.blockSignals(True)
         self.list_widget.clearSelection()
         self.list_widget.setCurrentRow(row)
+        self.list_widget.blockSignals(False)
+        self.selection_changed.emit()
 
     def select_all(self) -> None:
         self.list_widget.selectAll()
+
+    def select_rows(self, rows: list[int], current: int = -1) -> None:
+        """Restore a whole group selection, anchor included.
+
+        Used by undo, which has to put the user back exactly where they were:
+        reversing an edit to strand 3 and landing on strand 1 reads as though
+        nothing happened. Signals are blocked because the caller re-runs the
+        selection handler itself once, rather than once per row touched here.
+        """
+        self.list_widget.blockSignals(True)
+        self.list_widget.clearSelection()
+        restore_selection(self.list_widget, rows, current)
+        self.list_widget.blockSignals(False)
 
     def set_group_size(self, count: int) -> None:
         self.group_label.setText(f"{count} selected" if count > 1 else "")
@@ -267,11 +361,5 @@ class StrandListPanel(QWidget):
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
         self.list_widget.addItems(names)
-        if 0 <= current < len(names):
-            # Re-selects `current` on its own first, so restoring the rest of
-            # the group below has to come after, not before.
-            self.list_widget.setCurrentRow(current)
-        for row in selected:
-            if 0 <= row < len(names):
-                self.list_widget.item(row).setSelected(True)
+        restore_selection(self.list_widget, selected, current)
         self.list_widget.blockSignals(False)

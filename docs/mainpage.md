@@ -14,6 +14,7 @@ New to HitLib? Start here:
 2. \subpage groups_page "Groups" - understand strands and groups before writing code
 3. \subpage animations "Animation Reference" - every animation with examples
 4. \subpage profiles_page "Profiles & Modes" - event-driven animation for competition
+5. \subpage animator "Custom Animations" - build your own out of layers, new in 1.5
 
 ---
 
