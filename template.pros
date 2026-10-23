@@ -1,13 +1,13 @@
 {
   "name": "HitLib",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "target": "v5",
   "description": "HITLIB LED animation and control library for VEX V5",
   "keywords": ["led", "animation", "control", "vex"],
   "homepage": "https://github.com/advisorylabs/HitLib",
   "license": "MPL-2.0",
   "library": true,
-  "supported_kernels": "*",
+  "supported_kernels": ">=4.2.0",
   "system_files": [
     "include/hitlib/hitapi.hpp",
     "include/hitlib/led_group.hpp",

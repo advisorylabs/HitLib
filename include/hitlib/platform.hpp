@@ -14,7 +14,7 @@
  *
  * | Macro                        | Platform                               |
  * |------------------------------|----------------------------------------|
- * | `HITLIB_PLATFORM_PROS=1`     | PROS 4.x                               |
+ * | `HITLIB_PLATFORM_PROS=1`     | PROS kernel 4.1 or later               |
  * | `HITLIB_PLATFORM_VEXCODE=1`  | VEXcode V5, VEXcode Pro V5, VS Code VEX extension |
  * | `HITLIB_PLATFORM_HOST=1`     | A desktop build, for tests only. Never auto-detected. |
  *

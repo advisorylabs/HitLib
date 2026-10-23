@@ -20,15 +20,25 @@ previews patterns live and exports them as ready-to-include C++.
 
 ## Install
 
+Download `hitlib@1.5.1.zip` from the
+[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1),
+then, from your project folder:
+
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
-pros c apply hitlib
+pros c fetch path/to/hitlib@1.5.1.zip
+pros c apply HitLib
 ```
 
-Or paste that URL into **Install Template** in the PROS VS Code extension.
+Or paste the zip's URL,
+`https://github.com/advisorylabs/hitlib/releases/download/1.5.1/hitlib@1.5.1.zip`,
+into **Install Template** in the PROS VS Code extension.
+
+**PROS kernel 4.1.x**, including EZ-Template 3.x projects: fetch
+`hitlib@1.5.1-softfp.zip` from the same release instead. Kernel 4.2.0 switched
+PROS to hard-float code, and the two don't link together.
 
 **VEXcode** (V5, Pro V5, or the VS Code extension): download
-`hitlib-vexcode@1.5.0.zip` from the Releases page and copy its `include/hitlib/`
+`hitlib-vexcode@1.5.1.zip` from the Releases page and copy its `include/hitlib/`
 and `src/hitlib/` folders into your project. Its headers end in `.h`, since
 VEXcode Pro V5 only shows `.h` files, so VEXcode code includes
 `hitlib/hitapi.h`. See the
@@ -162,7 +172,8 @@ drops the strands and group entirely, leaving the profile and constants.
 
 ## Requirements
 
-- PROS 4.x or later, or VEXcode (V5, Pro V5, or the VEX VS Code extension)
+- PROS kernel 4.2.0 or later (4.1.x with the `-softfp` download), or VEXcode
+  (V5, Pro V5, or the VEX VS Code extension)
 - VEX V5 brain
 - WS2812B-compatible strip on an ADI port (or an ADI expander), up to 64 LEDs
   per strand
@@ -173,6 +184,7 @@ Requires an `arm-none-eabi-gcc` toolchain on `PATH` (PROS installs one).
 
 ```bash
 make                                          # PROS: bin/hitlib.a
+python tools/package_template.py              # ...packaged as hitlib@VERSION.zip
 python tools/package_vexcode.py vexcode_pkg   # VEXcode: sources, headers as .h
 ```
 

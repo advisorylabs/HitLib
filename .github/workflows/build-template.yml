@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Both zips are named, and the conductor versions the template, from
+      # Every zip is named, and the conductor versions the template, from
       # template.pros, so it has to be bumped with the Makefile's VERSION.
       - name: Check template version
         run: |
@@ -41,18 +41,24 @@ jobs:
       - name: Build library
         run: make
 
-      # Laid out as `make template` lays it out. `pros c apply` copies each
-      # system file to the same path in the project, and a PROS project only
-      # links the archives in firmware/. Only include/hitlib/ ships: the rest
-      # of include/ is the kernel's, which the project already has.
-      - name: Package template
+      # Kernels before 4.2.0 compile softfp, and their projects can't link the
+      # hard-float archive, so a second one is built for kernel 4.1.x against
+      # that kernel's own headers. 4.1.0, 4.1.1 and 4.1.2 compile HitLib to
+      # identical code; 4.1.2 is the last of them.
+      - name: Build softfp library for kernel 4.1
         run: |
-          VERSION=$(python3 -c "import json; print(json.load(open('template.pros'))['version'])")
-          mkdir -p template_pkg/include template_pkg/firmware
-          cp -r include/hitlib template_pkg/include/
-          cp bin/hitlib.a template_pkg/firmware/
-          cp template.pros template_pkg/
-          cd template_pkg && zip -r ../hitlib@${VERSION}.zip .
+          curl -fsSL -o "$RUNNER_TEMP/kernel-4.1.zip" "https://pros.cs.purdue.edu/v5/_static/releases/kernel@4.1.2.zip"
+          echo "edaebb56bbf1f1aa08483b1df78c1136ffe75916fe1aa7d8899838a236dd7ee7  $RUNNER_TEMP/kernel-4.1.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/kernel-4.1.zip" -d "$RUNNER_TEMP/kernel-4.1"
+          make softfp SOFTFP_KERNEL="$RUNNER_TEMP/kernel-4.1"
+
+      # hitlib@VERSION.zip for kernel 4.2.0 and later, and
+      # hitlib@VERSION-softfp.zip for 4.1.x. Both have the same template name,
+      # and `pros c apply` picks the one whose supported_kernels fit.
+      - name: Package templates
+        run: |
+          python3 tools/package_template.py
+          python3 tools/package_template.py --softfp
 
       # VEXcode has no package manager or prebuilt-library support worth
       # relying on, so it gets the sources to drop into a project instead,

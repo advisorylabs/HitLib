@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HitLib 1.5.0 · Pattern Studio 1.2.0</title>
+<title>HitLib 1.5.1 · Pattern Studio 1.2.0</title>
 <meta name="description" content="HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode. Build your own animations out of layers, design them in Pattern Studio, and deploy them into your robot project.">
 <link rel="canonical" href="https://www.hitlib.org/">
 <meta name="theme-color" content="#9b4dff">
@@ -109,7 +109,7 @@
 
     <div class="hero-meta">
       <span class="team-id">96671H · Hitmen</span>
-      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.0</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.1</a>
       <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.2.0</a>
     </div>
     <h1>Build your own <span class="grad-text">animations</span>.</h1>
@@ -122,7 +122,7 @@
     <div class="cta-row">
       <a class="btn btn-green" href="#in-action">See it in action!</a>
       <a class="btn primary btn-buy" href="#/order">Buy the Kit</a>
-      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">1.5.0 release notes <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.1">1.5.1 release notes <span class="arrow">↗</span></a>
       <a class="btn" href="https://advisorylabs.github.io/HitLib/">Documentation <span class="arrow">↗</span></a>
       <a class="btn" href="https://github.com/advisorylabs/HitLib">HitLib on GitHub <span class="arrow">↗</span></a>
     </div>
@@ -209,7 +209,7 @@
 
     <div class="new-grid">
       <div class="new-col">
-        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.0</div>
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.1</div>
         <div class="new-item">
           <h3>Custom animations</h3>
           <p><code>strand.compose()</code> plays a layer stack exported from Pattern Studio, and <code>setDriverLevel()</code> moves it from your code. Brightness, overlays, splice masks and profiles all keep working on top.</p>
@@ -252,7 +252,7 @@
       <span class="eyebrow">// get started</span>
       <h2>Same calls, PROS or VEXcode</h2>
       <p>
-        HitLib builds in PROS 4.x, VEXcode V5, VEXcode Pro V5 and the VEX VS Code
+        HitLib builds in PROS 4.1 and later, VEXcode V5, VEXcode Pro V5 and the VEX VS Code
         extension. The lines that drive your strips are the same everywhere, only
         the includes and entry points change. Pick your platform here and every
         code sample on this page follows it.
@@ -304,15 +304,24 @@ hitlib::LedGroup  group;
         <div class="leds" data-demo="rainbow" data-n="32" aria-hidden="true"></div>
       </div>
       <div class="install-line" data-platform-pane="pros">
+        <span class="install-label">Download</span>
+        <p>
+          <code>hitlib@1.5.1.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.1">release</a>,
+          or <code>hitlib@1.5.1-softfp.zip</code> for EZ-Template 3.x and other
+          kernel 4.1.x projects.
+        </p>
+      </div>
+      <div class="install-line" data-platform-pane="pros">
         <span class="install-label">Install</span>
-        <pre><code>pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
-pros c apply hitlib</code></pre>
+        <pre><code>pros c fetch path/to/hitlib@1.5.1.zip
+pros c apply HitLib</code></pre>
       </div>
       <div class="install-line" data-platform-pane="vexcode" hidden>
         <span class="install-label">Install</span>
         <p>
-          Download <code>hitlib-vexcode@1.5.0.zip</code> from the
-          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">release</a>
+          Download <code>hitlib-vexcode@1.5.1.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.1">release</a>
           and copy its <code>include/hitlib/</code> and <code>src/hitlib/</code> folders
           into your project. Don't also add the LED port in VEXcode's device menu.
         </p>
@@ -834,9 +843,9 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
         <span class="name">HitLib repository</span>
         <span class="url">github.com/advisorylabs/HitLib</span>
       </a>
-      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.0">
-        <span class="name">HitLib 1.5.0 · Pattern Studio 1.2.0 release</span>
-        <span class="url">.../releases/tag/1.5.0</span>
+      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.1">
+        <span class="name">HitLib 1.5.1 · Pattern Studio 1.2.0 release</span>
+        <span class="url">.../releases/tag/1.5.1</span>
       </a>
       <a href="#/order">
         <span class="name">Buy the Kit</span>

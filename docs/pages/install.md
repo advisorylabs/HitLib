@@ -2,8 +2,10 @@
 
 ## Requirements
 
-- [PROS](https://pros.cs.purdue.edu/) 4.x or later, **or** VEXcode (VEXcode V5,
-  VEXcode Pro V5, or the VEX VS Code extension)
+- [PROS](https://pros.cs.purdue.edu/) kernel 4.2.0 or later, **or** VEXcode
+  (VEXcode V5, VEXcode Pro V5, or the VEX VS Code extension). Projects on
+  kernel 4.1.x, which includes EZ-Template 3.x projects, use the
+  [softfp download](#install_softfp) instead.
 - VEX V5 brain
 - WS2812B-compatible LED strip wired to a VEX ADI port
 
@@ -11,22 +13,50 @@
 
 ## Install via PROS CLI
 
+Download `hitlib@1.5.1.zip` from the
+[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1),
+then, from your project folder:
+
 ```bash
-pros c fetch https://github.com/advisorylabs/hitlib/releases/download/1.5.0/hitlib@1.5.0.zip
-pros c apply hitlib
+pros c fetch path/to/hitlib@1.5.1.zip
+pros c apply HitLib
 ```
 
-Or paste the URL directly into the **Install Template** dialog in the PROS VS Code extension.
+The CLI fetches a template from a file, not a URL, and template names are
+case-sensitive: it's `HitLib`. Or paste the zip's URL,
+`https://github.com/advisorylabs/hitlib/releases/download/1.5.1/hitlib@1.5.1.zip`,
+into the **Install Template** dialog in the PROS VS Code extension.
 
 Check the [Releases page](https://github.com/advisorylabs/hitlib/releases) for the
 latest version and swap the version number above if a newer one is available.
+
+### Projects on kernel 4.1.x (EZ-Template 3.x) {#install_softfp}
+
+PROS kernel 4.2.0 changed how projects compile floating-point code, from
+`softfp` to `hard`, and the linker won't mix the two. A project on an older
+kernel can't use the download above: `pros c apply` reports that HitLib does
+not support the project's kernel version, or the build fails with
+`hitlib.a(...) uses VFP register arguments, ... does not`. Kernel 4.1.x
+projects, which includes every EZ-Template 3.x project, use the softfp build,
+`hitlib@1.5.1-softfp.zip` from the same release:
+
+```bash
+pros c fetch path/to/hitlib@1.5.1-softfp.zip
+pros c apply HitLib
+```
+
+`pros c info-project` shows a project's kernel version. Both downloads install
+as `HitLib`, and `pros c apply HitLib` takes whichever fits the project's
+kernel, so once a project moves to kernel 4.2 or later, fetching the regular
+download and running `pros c apply HitLib` again swaps the softfp build out.
+Kernels before 4.1.0 aren't supported.
 
 ---
 
 ## Install into a VEXcode project
 
 VEXcode has no template system, so HitLib ships as source for it. Download
-`hitlib-vexcode@1.5.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+`hitlib-vexcode@1.5.1.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
 and copy its two folders into your project:
 
 ```
@@ -183,7 +213,7 @@ file.
 
 If you want to build hitlib yourself rather than using a release zip: this
 repo isn't set up as a `pros make`-managed project, so it's a plain library
-build followed by manual packaging.
+build followed by packaging with Python 3.
 
 ```bash
 # Clone the repo
@@ -195,18 +225,28 @@ cd hitlib
 make
 
 # Package it as an installable PROS template
-mkdir -p template_pkg/include template_pkg/firmware
-cp -r include/hitlib template_pkg/include/
-cp bin/hitlib.a template_pkg/firmware/
-cp template.pros template_pkg/
-cd template_pkg && zip -r ../hitlib@1.5.0.zip .
+python tools/package_template.py
 ```
 
-This produces `hitlib@1.5.0.zip` in the project root (matching the `version`
+This produces `hitlib@1.5.1.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.
 The archive goes in `firmware/` because that is the only place a PROS project
 links archives from, and only `include/hitlib/` is packaged: the rest of
 `include/` is the PROS kernel's, which every project already has.
+
+The [softfp build](#install_softfp) for kernel 4.1.x is compiled against that
+kernel's own headers. Unzip
+[kernel@4.1.2.zip](https://pros.cs.purdue.edu/v5/_static/releases/kernel@4.1.2.zip)
+somewhere, then:
+
+```bash
+make softfp SOFTFP_KERNEL=path/to/unzipped/kernel
+python tools/package_template.py --softfp
+```
+
+That builds `bin/softfp/hitlib.a` and packages it as `hitlib@1.5.1-softfp.zip`.
+The packager checks each archive's float ABI and refuses one built for the
+other template.
 
 ## Building the VEXcode download from source
 
