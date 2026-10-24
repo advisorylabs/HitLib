@@ -1,6 +1,9 @@
 {
   "name": "hitlib-site",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "dependencies": {
     "stripe": "^17.4.0"
   }
