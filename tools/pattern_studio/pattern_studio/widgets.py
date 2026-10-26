@@ -384,7 +384,6 @@ class ColorPicker(QWidget):
         self._recent_row = QWidget()
         self._recent_row.setLayout(recent_row)
         recent_row.setContentsMargins(0, 0, 0, 0)
-        self._recent_row.setVisible(bool(self.recent.colors()))
 
         card = QVBoxLayout(self)
         pad = self.SHADOW + 12
@@ -395,6 +394,11 @@ class ColorPicker(QWidget):
         card.addLayout(bottom)
         card.addWidget(self._recent_row)
         card.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        # Only once the card has taken it in. Shown while it had no parent,
+        # the row was briefly a window of its own, which took focus off this
+        # popup, and Qt closes a popup that loses focus - so every picker
+        # after the first color of a session shut the moment it opened.
+        self._recent_row.setVisible(bool(self.recent.colors()))
 
         self.field.changed.connect(self._from_field)
         self.hue_bar.changed.connect(self._from_hue)
