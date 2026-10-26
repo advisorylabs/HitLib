@@ -14,13 +14,20 @@
 ## Install via PROS CLI
 
 Download `hitlib@1.5.1.zip` from the
-[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1),
-then, from your project folder:
+[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1)
+into your Downloads folder, then, from your project folder:
 
 ```bash
-pros c fetch path/to/hitlib@1.5.1.zip
+pros c fetch $HOME/Downloads/hitlib@1.5.1.zip
 pros c apply HitLib
 ```
+
+Those run as they are in PowerShell, the VS Code terminal's default on
+Windows, and in a macOS or Linux terminal. If you saved the zip somewhere
+else, give `pros c fetch` that path instead. In Command Prompt, the path is
+`%USERPROFILE%\Downloads\hitlib@1.5.1.zip`. Safari unzips downloads by
+itself, into a `hitlib@1.5.1` folder, and `pros c fetch` takes that folder
+too: leave off the `.zip`.
 
 The CLI fetches a template from a file, not a URL, and template names are
 case-sensitive: it's `HitLib`. Or paste the zip's URL,
@@ -41,7 +48,7 @@ projects, which includes every EZ-Template 3.x project, use the softfp build,
 `hitlib@1.5.1-softfp.zip` from the same release:
 
 ```bash
-pros c fetch path/to/hitlib@1.5.1-softfp.zip
+pros c fetch $HOME/Downloads/hitlib@1.5.1-softfp.zip
 pros c apply HitLib
 ```
 
@@ -50,6 +57,26 @@ as `HitLib`, and `pros c apply HitLib` takes whichever fits the project's
 kernel, so once a project moves to kernel 4.2 or later, fetching the regular
 download and running `pros c apply HitLib` again swaps the softfp build out.
 Kernels before 4.1.0 aren't supported.
+
+### "HitLib does not support kernel version ..." {#install_kernel_error}
+
+`pros c apply` prints this whenever none of the templates you have fetched
+matches the name you gave it for the project's kernel. A typo gets the same
+message as a real kernel mismatch. On kernel 4.2.0 or later, check:
+
+- **The capitalization.** The CLI matches template names exactly, and the
+  download's file name is lowercase, so `pros c apply hitlib` fails with
+  "hitlib does not support kernel version 4.2.2". It's `pros c apply HitLib`.
+- **Which build you fetched.** `pros c ls-templates HitLib` lists every HitLib
+  you have fetched. If the only one there ends in `-softfp`, that's the kernel
+  4.1.x build: fetch `hitlib@1.5.1.zip` as well.
+- **That the fetch worked.** `pros c apply` doesn't download HitLib by
+  itself. If `pros c fetch` printed `Template not found: path/to/hitlib`, or
+  any other path, it found no zip there and fetched nothing. Pasting both
+  lines at once buries that error under the one from `pros c apply`.
+
+On kernel 4.1.x, the message means the project needs the
+[softfp build](#install_softfp).
 
 ---
 

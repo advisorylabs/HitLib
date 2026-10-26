@@ -21,17 +21,25 @@ previews patterns live and exports them as ready-to-include C++.
 ## Install
 
 Download `hitlib@1.5.1.zip` from the
-[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1),
-then, from your project folder:
+[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1)
+into your Downloads folder, then, from your project folder:
 
 ```bash
-pros c fetch path/to/hitlib@1.5.1.zip
+pros c fetch $HOME/Downloads/hitlib@1.5.1.zip
 pros c apply HitLib
 ```
+
+That works as it is in PowerShell and in macOS and Linux terminals. If the zip
+is somewhere else, point `pros c fetch` there instead.
 
 Or paste the zip's URL,
 `https://github.com/advisorylabs/hitlib/releases/download/1.5.1/hitlib@1.5.1.zip`,
 into **Install Template** in the PROS VS Code extension.
+
+The name is case-sensitive: `pros c apply hitlib` fails with "hitlib does not
+support kernel version ...", which the CLI says for any name it can't find.
+See [troubleshooting](https://advisorylabs.github.io/HitLib/install_page.html#install_kernel_error)
+if `HitLib` gets that message too.
 
 **PROS kernel 4.1.x**, including EZ-Template 3.x projects: fetch
 `hitlib@1.5.1-softfp.zip` from the same release instead. Kernel 4.2.0 switched
