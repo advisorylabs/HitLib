@@ -56,13 +56,16 @@ STUDIO_HEADER_STEM = "hitlib_studio"
 
 #: Shown when it isn't, per platform. Separate lines so no entry has to carry
 #: an escape. Names no version: a pinned URL goes stale at the next release.
+#: pros-cli matches template names case-sensitively, and the template is
+#: HitLib even though the download is hitlib@*.zip: `pros c apply hitlib`
+#: fails with "hitlib does not support kernel version ...".
 _INSTALL_HINTS = {
     Platform.PROS: (
         "Download the template from",
         "    https://github.com/advisorylabs/HitLib/releases",
         "then, in the project:",
         "    pros c fetch <the downloaded .zip>",
-        "    pros c apply hitlib",
+        "    pros c apply HitLib",
     ),
     Platform.VEXCODE: (
         "Download hitlib-vexcode from",
