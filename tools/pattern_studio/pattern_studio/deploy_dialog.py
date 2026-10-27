@@ -25,21 +25,6 @@ from PySide6.QtWidgets import (
 
 from . import theme
 
-#: The paste block is the one thing in this dialog anyone reads character by
-#: character, so it gets each platform's own modern mono face before the
-#: typewriter fallbacks. Menlo is the macOS entry that matters: SF Mono is not
-#: installed for arbitrary apps to ask for, and Menlo ships on every Mac.
-_MONO = [
-    "Cascadia Mono",
-    "Consolas",
-    "SF Mono",
-    "Menlo",
-    "Monaco",
-    "DejaVu Sans Mono",
-    "Courier New",
-    "monospace",
-]
-
 
 class DeployDialog(QDialog):
     """Shows where the header landed and what to paste to use it."""
@@ -84,7 +69,8 @@ class DeployDialog(QDialog):
 
         self.paste_box = QPlainTextEdit(paste)
         self.paste_box.setReadOnly(True)
-        self.paste_box.setFont(QFont(_MONO, theme.FONT_POINT_SIZE))
+        # The one thing in this dialog anyone reads character by character.
+        self.paste_box.setFont(QFont(theme.MONO_STACK, theme.FONT_POINT_SIZE))
         self.paste_box.setMinimumSize(520, 190)
         layout.addWidget(self.paste_box)
 

@@ -7,7 +7,7 @@ from PySide6.QtCore import QEventLoop
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from . import theme
+from . import error_dialog, theme
 from .main_window import MainWindow
 from .splash import SplashScreen
 
@@ -51,6 +51,9 @@ def main() -> None:
     # Before any window exists, so nothing ever paints in the default style
     # and then restyles itself a frame later.
     theme.apply_theme(app)
+    # Before anything can raise into the event loop, where a build without a
+    # console would otherwise drop the error without a word.
+    error_dialog.install(app)
     icon = QIcon(str(_icon_path()))
     # Not in the macOS bundle: there the application icon *is* the Dock tile,
     # and this .ico is full-bleed Windows art that would replace the .icns -

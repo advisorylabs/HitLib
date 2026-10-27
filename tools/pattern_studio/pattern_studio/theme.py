@@ -102,6 +102,20 @@ FONT_STACK = [
     "Helvetica Neue",
     "sans-serif",
 ]
+#: For text read character by character - code to paste, a traceback - each
+#: platform's own modern mono face before the typewriter fallbacks. Menlo is
+#: the macOS entry that matters: SF Mono is not installed for arbitrary apps
+#: to ask for, and Menlo ships on every Mac.
+MONO_STACK = [
+    "Cascadia Mono",
+    "Consolas",
+    "SF Mono",
+    "Menlo",
+    "Monaco",
+    "DejaVu Sans Mono",
+    "Courier New",
+    "monospace",
+]
 #: Points, so it varies with the platform's idea of a logical inch: Windows
 #: calls that 96 DPI and macOS 72, which renders the same number a quarter
 #: smaller there. 12 on macOS is 9 on Windows to the pixel, which is what the
