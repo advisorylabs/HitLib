@@ -78,9 +78,9 @@ message as a real kernel mismatch. On kernel 4.2.0 or later, check:
 On kernel 4.1.x, the message means the project needs the
 [softfp build](#install_softfp).
 
-### Black screen at startup after installing 1.5.1 {#install_cold_hang}
+### Black screen at startup after installing 1.5.1 or older{#install_cold_hang}
 
-With HitLib 1.5.1 installed, a PROS project can stop at a black screen as soon
+With HitLib 1.5.1 or older installed, a PROS project can stop at a black screen as soon
 as it starts: `initialize()` never runs, nothing drives, and the terminal
 doesn't even show the PROS banner. It happens whether or not the program uses
 any LEDs. One single-byte variable in 1.5.1's `hitlib.a` moves LVGL's display
