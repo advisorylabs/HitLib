@@ -471,8 +471,8 @@ QLabel:disabled {
     color: $dim;
 }
 /* The Design / Animate switch in the caption row. Flat fills only: the
-   selected tab is marked by a cyan underline, which is this app's "this is
-   live" colour, rather than by a graded fill. */
+   selected tab is marked by an underline in the brand violet, the same accent
+   every other selection in the app wears, rather than by a graded fill. */
 QPushButton[role="segment"] {
     background: transparent;
     color: $muted;
@@ -489,7 +489,7 @@ QPushButton[role="segment"]:hover {
 QPushButton[role="segment"]:checked {
     color: $text;
     background: $elevated;
-    border-bottom: 2px solid $focus;
+    border-bottom: 2px solid $accent;
 }
 /* Pressed looks exactly like hover. Without this the platform style nudges
    the label down a pixel on click, which next to the menu bar - which does
@@ -501,7 +501,7 @@ QPushButton[role="segment"]:pressed {
 }
 QPushButton[role="segment"]:checked:pressed {
     background: $elevated;
-    border-bottom: 2px solid $focus;
+    border-bottom: 2px solid $accent;
 }
 
 QLabel[role="sectionHeader"] {
@@ -541,6 +541,12 @@ QPushButton:hover {
 }
 QPushButton:pressed {
     background-color: $input;
+}
+/* A toggle that is on (Onion Skin, the music Settings): outlined in the accent, flat,
+   so it reads as switched on without looking like a primary action. */
+QPushButton:checked {
+    border-color: $accent;
+    color: $accent_hi;
 }
 QPushButton:disabled {
     background-color: $panel;

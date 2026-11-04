@@ -41,11 +41,46 @@ void Sequencer::start(LedStrand& strand) {
     Run& run         = runs[idx];
     run.strand       = &strand;
     run.phase        = 0;
+    run.lap          = 0;
     run.phaseStartMs = now;
     run.lastTouch    = ++touches;
     s_runsMutex.give();
 
-    if (phaseCount > 0 && phases[0].startFn) phases[0].startFn(strand);
+    // No wipe: there is no phase before the first one for it to come in over.
+    if (phaseCount > 0) begin(phases[0], strand, false);
+}
+
+// A phase's transition first, so it snapshots what the strand is showing
+// before startFn replaces it - when @p wipe says there is a different phase to
+// wipe away from. Called with no lock held: both reach straight back into the
+// strand.
+void Sequencer::begin(const Phase& phase, LedStrand& strand, bool wipe) {
+    // A cut too, not just a wipe: a phase that cuts in cuts short whatever
+    // wipe the phase before it was still in, rather than letting it carry on
+    // over this one from a frame two phases old.
+    if (wipe) strand.transition(phase.transition);
+    if (phase.startFn) phase.startFn(strand);
+}
+
+// Moves @p run on to the next phase still due to play, counting a lap each
+// time it wraps. Trying each phase once, the current one last, is enough: if
+// none of them is due, nothing will be on a later lap either. False, with
+// the run left where it was, when every phase has run out of plays.
+bool Sequencer::advance(Run& run) const {
+    uint8_t idx = run.phase;
+    uint8_t lap = run.lap;
+    for (uint8_t tries = 0; tries < phaseCount; ++tries) {
+        if (++idx >= phaseCount) {
+            idx = 0;
+            if (lap < 255) ++lap;
+        }
+        if (phases[idx].plays == 0 || lap < phases[idx].plays) {
+            run.phase = idx;
+            run.lap   = lap;
+            return true;
+        }
+    }
+    return false;
 }
 
 void Sequencer::stop() {
@@ -66,6 +101,7 @@ void Sequencer::update(LedStrand& strand) {
 
     uint32_t now = platform::millis();
     int16_t  started = -1;   // the phase to call startFn for, once unlocked
+    bool     wipe    = false;
 
     s_runsMutex.take();
     int8_t idx = indexOf(strand);
@@ -73,14 +109,22 @@ void Sequencer::update(LedStrand& strand) {
         Run& run = runs[idx];
         run.lastTouch = ++touches;
         if (now - run.phaseStartMs >= phases[run.phase].durationMs) {
-            run.phase        = (uint8_t)((run.phase + 1) % phaseCount);
+            // A run with nothing left to play holds its last phase, and
+            // checks again a whole phase later rather than every tick.
+            uint8_t was = run.phase;
+            if (advance(run)) {
+                started = run.phase;
+                // A phase going round into itself - the only one in the loop,
+                // or the only one left once the intros have played - restarts
+                // without a wipe: there is nothing different to wipe away.
+                wipe = run.phase != was;
+            }
             run.phaseStartMs = now;
-            started          = run.phase;
         }
     }
     s_runsMutex.give();
 
-    if (started >= 0 && phases[started].startFn) phases[started].startFn(strand);
+    if (started >= 0) begin(phases[started], strand, wipe);
 }
 
 bool Sequencer::isRunning() const {

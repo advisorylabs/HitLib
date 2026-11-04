@@ -293,6 +293,31 @@ static void myEgTick    (hitlib::LedStrand& s) { seq.update(s); }
 
 Phases loop indefinitely until the mode is deactivated.
 
+### Intros and transitions
+
+A phase has two more members, both optional. `plays` is how many times round
+the loop it plays before it is skipped - 1 makes it an intro that shows the
+first time only - and `transition` is how it wipes in over the phase before it.
+Leave them out and a phase plays every time and cuts in, as it always has.
+
+```cpp
+using LS = hitlib::LedStrand;
+static const hitlib::Sequencer::Phase phases[] = {
+    {1500, intro, 1},   // once per activation, then skipped
+    {4000, rainbow, 0, {LS::TransitionKind::SPREAD, 500, LS::SpreadOrigin::CENTER}},
+    {4000, pulse,   0, {LS::TransitionKind::TWINKLE, 800, LS::SpreadOrigin::EDGE, false, 2}},
+};
+```
+
+Plays are counted from `start()`, so re-activating the mode plays the intro
+again. If every phase runs out of plays, the last one to play stays on.
+
+A transition plays only when the sequence moves to a *different* phase. It does
+not play at `start()`, which has no phase before it, and it does not play when
+the loop comes back round to the same phase - a sequence of one phase, or the
+one phase left looping once the intros above have played. That phase just
+restarts, as it always has.
+
 One Sequencer can run on several strands at once, each at its own phase, so a
 profile attached to a whole group (`group.attachProfile()`, or a generated
 `apply(group)`) sequences every strand in it. It keeps track of up to

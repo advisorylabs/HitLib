@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QRegularExpression, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QRegularExpression,
+    QSize,
+    QTimer,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QGradient,
@@ -14,6 +26,9 @@ from PySide6.QtGui import (
     QRegularExpressionValidator,
 )
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -790,6 +805,38 @@ class SpeedEdit(QWidget):
 
     def step_ms(self) -> int:
         return self.step_spin.value()
+
+
+class _WheelGuard(QObject):
+    """Keeps the scroll wheel from changing a number field or a dropdown.
+
+    A trackpad sends wheel events for every two-finger scroll, so scrolling a
+    panel past a spin box or a closed dropdown under the pointer changed its
+    value - an animation's kind, even. The event is turned away from the
+    control instead, and Qt hands an event no widget took to the widget's
+    parent - the panel's scroll area, which scrolls as if the control were not
+    there. Typing, the arrow buttons and an open dropdown's list (a separate
+    widget, which this leaves alone) all still work.
+    """
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() == QEvent.Wheel and isinstance(obj, (QAbstractSpinBox, QComboBox)):
+            event.ignore()
+            return True
+        return False
+
+
+_WHEEL_GUARD: _WheelGuard | None = None
+
+
+def install_wheel_guard(app: QApplication) -> None:
+    """Stop the wheel changing every spin box and dropdown in `app`, for good.
+    Idempotent."""
+    global _WHEEL_GUARD
+    if _WHEEL_GUARD is None:
+        # Unparented: this module keeps it alive for as long as the app runs.
+        _WHEEL_GUARD = _WheelGuard()
+        app.installEventFilter(_WHEEL_GUARD)
 
 
 def enum_data(combo, enum_cls):

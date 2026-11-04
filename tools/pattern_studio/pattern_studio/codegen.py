@@ -32,27 +32,34 @@ ranges.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import codegen_custom, fill_sources
 from .envelope import BAND_LABELS
 from .frame_codec import MAX_DRAWN_FRAMES
 from .platforms import Platform
 from .models import (
+    MAX_CHAIN_LEDS,
+    MAX_SEGMENTS,
     AnimationConfig,
     AnimationKind,
     CompositionConfig,
     DriverKind,
     LayerKind,
     GaugeStopConfig,
+    MaskKind,
     ModeConfig,
     MusicConfig,
     OverlayAnimationConfig,
     OverlayAnimationKind,
+    PhaseConfig,
     SpliceMaskConfig,
     SpliceModeKind,
     SpliceRegionConfig,
     StrandConfig,
+    TransitionConfig,
+    TransitionKind,
+    chains,
 )
 
 MAX_LEDS = 64
@@ -73,20 +80,66 @@ def _effective_modes(config: StrandConfig) -> list[ModeConfig]:
     return [ModeConfig(name="Default", priority=100, animation=config.animation, splice=config.splice)]
 
 
-def validate_for_export(config: StrandConfig, music: MusicConfig | None = None,
-                        compositions: list[CompositionConfig] | None = None) -> list[str]:
+def _validate_hardware(config: StrandConfig) -> list[str]:
+    """The checks every strand gets, chained or not: what it is plugged into."""
     errors: list[str] = []
-
     if not (1 <= config.length <= MAX_LEDS):
         errors.append(f"Strand length must be 1-{MAX_LEDS} (got {config.length}).")
-    if not (0 <= config.brightness <= 100):
-        errors.append(f"Brightness must be 0-100 (got {config.brightness}).")
     if not (1 <= config.adi_port <= 8):
         errors.append(f"ADI port must be 1-8 (got {config.adi_port}).")
     if not (0 <= config.smart_port <= 21):
         errors.append(f"Smart port must be 0-21 (got {config.smart_port}).")
+    return errors
+
+
+def _validate_chain(config: StrandConfig, chained: list[StrandConfig]) -> list[str]:
+    """What one LedStrand can drive: MAX_SEGMENTS strips, MAX_CHAIN_LEDS
+    pixels across them. Past either, the firmware drops the rest."""
+    if not chained:
+        return []
+    members = [config, *chained]
+    errors = []
+    if len(members) > MAX_SEGMENTS:
+        errors.append(
+            f"{len(members)} strands are chained together, and one chain can drive "
+            f"{MAX_SEGMENTS} - unchain {len(members) - MAX_SEGMENTS} of them."
+        )
+    total = sum(m.length for m in members)
+    if total > MAX_CHAIN_LEDS:
+        errors.append(
+            f"The chain is {total} LEDs long, and one chain can drive {MAX_CHAIN_LEDS} - "
+            f"shorten its strands or unchain one."
+        )
+    for m in chained:
+        errors.extend(f'chained strand "{m.name}": {e}' for e in _validate_hardware(m))
+    # The whole-document export checks this across every strand; exporting
+    # just the one chain has to check it within the chain.
+    seen: dict[tuple[int, int], str] = {}
+    for m in members:
+        port = (m.smart_port, m.adi_port)
+        if port in seen:
+            where = f"ADI port {m.adi_port}" + (
+                f" of the expander on smart port {m.smart_port}" if m.smart_port else "")
+            errors.append(
+                f'"{seen[port]}" and "{m.name}" are chained but both on {where} - '
+                f"each strip in a chain needs a port of its own.")
+        else:
+            seen[port] = m.name
+    return errors
+
+
+def validate_for_export(config: StrandConfig, music: MusicConfig | None = None,
+                        compositions: list[CompositionConfig] | None = None,
+                        chained: list[StrandConfig] | None = None) -> list[str]:
+    """Everything that would stop `config` exporting. `chained` are the
+    strands that continue it, if it heads a chain."""
+    errors: list[str] = _validate_hardware(config)
+
+    if not (0 <= config.brightness <= 100):
+        errors.append(f"Brightness must be 0-100 (got {config.brightness}).")
     if config.refresh_ms < 1:
         errors.append(f"Refresh interval must be >= 1 ms (got {config.refresh_ms}).")
+    errors.extend(_validate_chain(config, chained or []))
 
     modes = _effective_modes(config)
     if not modes:
@@ -106,6 +159,7 @@ def validate_for_export(config: StrandConfig, music: MusicConfig | None = None,
             for phase in mode.phases:
                 if phase.duration_ms < 1:
                     errors.append(f'Mode "{mode.name}", phase "{phase.name}": duration must be >= 1 ms.')
+                errors.extend(_validate_phase_timing(mode.name, phase))
                 errors.extend(_validate_animation(mode.name, phase.name, phase.animation,
                                                   music, compositions))
                 errors.extend(_validate_splice(mode.name, phase.name, phase.splice))
@@ -134,7 +188,8 @@ def validate_document_for_export(
 
     errors: list[str] = []
     seen: dict[str, int] = {}
-    for cfg in configs:
+    # Only a chain's first strand becomes a namespace; the rest are strips of it.
+    for cfg in (configs[group[0]] for group in chains(configs)):
         name = cfg.name or "Profile"
         seen[name] = seen.get(name, 0) + 1
     for name, count in seen.items():
@@ -156,9 +211,12 @@ def validate_document_for_export(
                 f"each other's frames - give each strand a port of its own."
             )
 
-    for cfg in configs:
+    for group in chains(configs):
+        cfg = configs[group[0]]
         label = cfg.name or "Profile"
-        errors.extend(f"[{label}] {e}" for e in validate_for_export(cfg, music, compositions))
+        chained = [configs[i] for i in group[1:]]
+        errors.extend(f"[{label}] {e}"
+                      for e in validate_for_export(cfg, music, compositions, chained))
     return errors
 
 
@@ -182,6 +240,8 @@ def _validate_animation(
             errors.extend(_validate_composition(where, comp, music))
     if a.kind == AnimationKind.TWINKLE and not a.palette:
         errors.append(f"{where}: Twinkle needs at least one palette color.")
+    if a.kind == AnimationKind.TWINKLE:
+        errors.extend(_validate_bit_width(where, a.bit_width))
     if a.kind == AnimationKind.MUSIC:
         errors.extend(_validate_song(where, "Music Sync", a.band, music))
         if not (0 <= a.sensitivity <= 255):
@@ -294,6 +354,8 @@ def _validate_composition(where: str, comp: CompositionConfig,
                 )
         if layer.kind == LayerKind.TWINKLE and not layer.palette:
             errors.append(f"{lwhere}: Twinkle needs at least one palette color.")
+        if layer.kind == LayerKind.TWINKLE:
+            errors.extend(_validate_bit_width(lwhere, layer.bit_width))
         if layer.kind == LayerKind.BITSCROLL:
             if not layer.segments:
                 errors.append(f"{lwhere}: Bitscroll needs at least one segment.")
@@ -317,8 +379,10 @@ def _validate_composition(where: str, comp: CompositionConfig,
                 )
         if not (0 <= layer.opacity <= 255):
             errors.append(f"{lwhere}: opacity must be 0-255 (got {layer.opacity}).")
-        if layer.start >= MAX_LEDS:
-            errors.append(f"{lwhere}: start pixel must be below {MAX_LEDS}.")
+        # A chain's limit, not a strip's: a composition plays across every
+        # strip of the chain it is on, so a layer can start on any of them.
+        if layer.start >= MAX_CHAIN_LEDS:
+            errors.append(f"{lwhere}: start pixel must be below {MAX_CHAIN_LEDS}.")
 
     for i, drv in enumerate(comp.drivers):
         dwhere = f'{label}, driver "{drv.name or i}"'
@@ -362,6 +426,22 @@ def _validate_splice(mode_name: str, phase_name: str | None, s: SpliceMaskConfig
         return []
     where = f'mode "{mode_name}"' + (f', phase "{phase_name}"' if phase_name else "")
     errors = []
+    if s.kind != MaskKind.SPLICE:
+        if s.needs_overlay():
+            errors.extend(_validate_overlay(f"{where}: overlay", s.overlay))
+        if s.kind == MaskKind.SPREAD:
+            if not (1 <= s.spread_speed <= 255):
+                errors.append(f"{where}: spread speed must be 1-255 (got {s.spread_speed}).")
+            if not (0 <= s.spread_step_ms <= 0xFFFF):
+                errors.append(f"{where}: spread step time must fit in 0-65535 ms "
+                              f"(got {s.spread_step_ms}).")
+        else:
+            if not (0 <= s.twinkle_density_pct <= 100):
+                errors.append(f"{where}: twinkle mask density must be 0-100%.")
+            if not (1 <= s.twinkle_fade_step <= 255):
+                errors.append(f"{where}: twinkle mask fade step must be 1-255.")
+            errors.extend(_validate_bit_width(f"{where}: twinkle mask", s.twinkle_bit_width))
+        return errors
     if s.mode == SpliceModeKind.SPLIT:
         if not (0 <= s.sections <= 255):
             errors.append(f"{where}: splice sections must be 0-255 (got {s.sections}).")
@@ -385,9 +465,36 @@ def _validate_overlay(where: str, o: OverlayAnimationConfig) -> list[str]:
     errors = []
     if o.kind == OverlayAnimationKind.TWINKLE and not o.palette:
         errors.append(f"{where}: Twinkle needs at least one palette color.")
+    if o.kind == OverlayAnimationKind.TWINKLE:
+        errors.extend(_validate_bit_width(where, o.bit_width))
     if o.kind == OverlayAnimationKind.BITSCROLL and o.segment_width < 1:
         errors.append(f"{where}: Bitscroll segment width must be >= 1.")
     errors.extend(_validate_gauge(where, o))
+    return errors
+
+
+def _validate_bit_width(where: str, bit_width: int) -> list[str]:
+    if not (1 <= bit_width <= MAX_LEDS):
+        return [f"{where}: twinkle bit width must be 1-{MAX_LEDS} (got {bit_width})."]
+    return []
+
+
+def _validate_phase_timing(mode_name: str, phase: PhaseConfig) -> list[str]:
+    """A phase's plays and transition: Sequencer::Phase::plays is a byte,
+    and Transition::durationMs a uint16_t."""
+    where = f'Mode "{mode_name}", phase "{phase.name}"'
+    errors = []
+    if not (0 <= phase.plays <= 255):
+        errors.append(f"{where}: plays must be 0-255 (got {phase.plays}).")
+    t = phase.transition
+    if t.kind != TransitionKind.CUT:
+        if not (0 <= t.duration_ms <= 0xFFFF):
+            errors.append(f"{where}: transition time must fit in 0-65535 ms "
+                          f"(got {t.duration_ms}).")
+        if t.kind == TransitionKind.TWINKLE:
+            errors.extend(_validate_bit_width(f"{where}: transition", t.bit_width))
+            if not (0 <= t.fade_step <= 255):
+                errors.append(f"{where}: transition fade step must be 0-255.")
     return errors
 
 
@@ -556,6 +663,45 @@ def _double(value: float) -> str:
 
 def _palette_literal(colors: list[int]) -> str:
     return "{" + ", ".join(_hex(c) for c in colors) + "}"
+
+
+def _bit_width_arg(bit_width: int) -> str:
+    """A twinkle call's trailing bitWidth argument - nothing at all for the
+    default one pixel, so a design that never widens a bit exports exactly
+    what it did before 1.6."""
+    return "" if bit_width == 1 else f", {bit_width}"
+
+
+def _invert_arg(invert: bool) -> str:
+    """A trailing invert argument that 1.6 added to a call - nothing at all
+    when it is off, as with _bit_width_arg()."""
+    return ", true" if invert else ""
+
+
+def _transition_literal(t: TransitionConfig) -> str | None:
+    """A LedStrand::Transition aggregate, or None for a cut. Every member
+    is written, in declaration order: C++11 has no designated initializers,
+    and VEXcode compiles C++11."""
+    if t.kind == TransitionKind.CUT or t.duration_ms <= 0:
+        return None
+    if t.kind == TransitionKind.SPREAD:
+        tail = f"LedStrand::SpreadOrigin::{t.origin.name}, {_bool(t.invert)}, 0, 0"
+    else:
+        tail = f"LedStrand::SpreadOrigin::EDGE, false, {t.bit_width}, {t.fade_step}"
+    return f"{{LedStrand::TransitionKind::{t.kind.name}, {t.duration_ms}, {tail}}}"
+
+
+def _phase_entry(fn: str, phase: PhaseConfig) -> str:
+    """One Sequencer::Phase aggregate. A phase that plays every time and
+    cuts in is written `{ms, fn}`, as it always was; the members 1.6 added
+    are written only when a phase uses them."""
+    parts = [str(phase.duration_ms), fn]
+    transition = _transition_literal(phase.transition)
+    if phase.plays or transition:
+        parts.append(str(phase.plays))
+    if transition:
+        parts.append(transition)
+    return "{" + ", ".join(parts) + "}"
 
 
 # ============================================================================
@@ -763,10 +909,11 @@ def _animation_statement(a: AnimationConfig, music: _MusicRef | None = None,
             f"{_bool(a.seamless)});"
         )
     if a.kind == AnimationKind.RAINBOW:
-        return f"s.rainbow({_speed(a.speed, a.step_ms)});"
+        return f"s.rainbow({_speed(a.speed, a.step_ms)}{_invert_arg(a.invert)});"
     if a.kind == AnimationKind.TWINKLE:
         return (
-            f"s.twinkle({_palette_literal(a.palette)}, {a.density_pct}, {a.fade_step}, {_hex(a.bg_color)});"
+            f"s.twinkle({_palette_literal(a.palette)}, {a.density_pct}, {a.fade_step}, "
+            f"{_hex(a.bg_color)}{_bit_width_arg(a.bit_width)});"
         )
     if a.kind == AnimationKind.BITSCROLL:
         segment = f"LedStrand::BitScrollSegment{{{_hex(a.color)}, {a.segment_width}}}"
@@ -805,18 +952,18 @@ def _overlay_statement(o: OverlayAnimationConfig) -> str:
         return f"s.overlaySetColor({_hex(o.color)});"
     if o.kind == OverlayAnimationKind.PULSE:
         return (f"s.overlayPulse({_hex(o.color)}, {o.run_length}, "
-                f"{_speed(o.speed, o.step_ms)}, {_hex(o.bg_color)});")
+                f"{_speed(o.speed, o.step_ms)}, {_hex(o.bg_color)}{_invert_arg(o.invert)});")
     if o.kind == OverlayAnimationKind.FLASH:
         return f"s.overlayFlash({_hex(o.color)}, {o.on_ms}, {o.off_ms}, {_hex(o.bg_color)});"
     if o.kind == OverlayAnimationKind.FLOW:
         return (f"s.overlayFlow({_hex(o.color)}, {_hex(o.color2)}, "
-                f"{_speed(o.speed, o.step_ms)}, {_bool(o.seamless)});")
+                f"{_speed(o.speed, o.step_ms)}, {_bool(o.seamless)}{_invert_arg(o.invert)});")
     if o.kind == OverlayAnimationKind.RAINBOW:
-        return f"s.overlayRainbow({_speed(o.speed, o.step_ms)});"
+        return f"s.overlayRainbow({_speed(o.speed, o.step_ms)}{_invert_arg(o.invert)});"
     if o.kind == OverlayAnimationKind.TWINKLE:
         return (
             f"s.overlayTwinkle({_palette_literal(o.palette)}, {o.density_pct}, {o.fade_step}, "
-            f"{_hex(o.bg_color)});"
+            f"{_hex(o.bg_color)}{_bit_width_arg(o.bit_width)});"
         )
     if o.kind == OverlayAnimationKind.BITSCROLL:
         segment = f"LedStrand::BitScrollSegment{{{_hex(o.color)}, {o.segment_width}}}"
@@ -865,12 +1012,16 @@ def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tup
         return fields
 
     if a.kind == OverlayAnimationKind.TWINKLE:
-        return fields + [
+        fields += [
             ("bgColor", _hex(a.bg_color)),
             ("palette", _palette_literal(a.palette)),
             ("densityPct", str(a.density_pct)),
             ("fadeStep", str(a.fade_step)),
         ]
+        # Last in SpliceRegion, where 1.6 added it, so last here too.
+        if a.bit_width != 1:
+            fields.append(("bitWidth", str(a.bit_width)))
+        return fields
 
     if a.kind == OverlayAnimationKind.BITSCROLL:
         return fields + [
@@ -883,7 +1034,7 @@ def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tup
             ("repeating", _bool(a.repeating)),
         ]
 
-    return fields + [
+    fields += [
         ("color", _hex(a.color)),
         ("color2", _hex(a.color2)),
         ("bgColor", _hex(a.bg_color)),
@@ -893,6 +1044,12 @@ def _region_fields(r: SpliceRegionConfig, reader: str | None = None) -> list[tup
         ("offMs", str(a.off_ms)),
         ("seamless", _bool(a.seamless)),
     ]
+    # Only when set, so a region exported before 1.6 gave these kinds a
+    # direction reads exactly as it did.
+    if a.invert and a.kind in (OverlayAnimationKind.PULSE, OverlayAnimationKind.FLOW,
+                               OverlayAnimationKind.RAINBOW):
+        fields.append(("invert", "true"))
+    return fields
 
 
 def _region_literal(r: SpliceRegionConfig, reader: str | None = None) -> str:
@@ -908,6 +1065,22 @@ def _splice_statements(
 ) -> list[str]:
     if not s.enabled:
         return []
+    if s.kind == MaskKind.SPREAD:
+        lines = [_overlay_statement(s.overlay)] if s.needs_overlay() else []
+        lines.append(
+            f"s.spreadMask({_speed(s.spread_speed, s.spread_step_ms)}, "
+            f"LedStrand::SpreadOrigin::{s.spread_origin.name}, {_bool(s.spread_invert)}, "
+            f"{_bool(s.spread_bounce)}, {_hex(s.bg_color)}, {_bool(s.use_overlay)});"
+        )
+        return lines
+    if s.kind == MaskKind.TWINKLE:
+        lines = [_overlay_statement(s.overlay)] if s.needs_overlay() else []
+        lines.append(
+            f"s.twinkleMask({s.twinkle_density_pct}, {s.twinkle_fade_step}, "
+            f"{s.twinkle_bit_width}, {_bool(s.twinkle_invert)}, {_hex(s.bg_color)}, "
+            f"{_bool(s.use_overlay)});"
+        )
+        return lines
     if s.mode == SpliceModeKind.SPLIT:
         lines: list[str] = []
         if s.needs_overlay():
@@ -953,11 +1126,18 @@ def _leaf_body(
     label: str = "",
     platform: Platform = Platform.PROS,
     comps: dict[int, str] | None = None,
+    clear_mask: bool = False,
 ) -> list[str]:
-    return [
-        *_animation_statements(a, music, sources, label, comps),
-        *_splice_statements(splice, sources, label, platform),
-    ]
+    """`clear_mask`: say so when this leaf has no mask. On the robot a mask
+    stays until something clears it - no animation call does - so a phase or
+    mode without one, after one with, went on masked there while the preview
+    showed it whole. Only asked for where another leaf has a mask, so a
+    design that uses none exports as it always did."""
+    lines = [*_animation_statements(a, music, sources, label, comps),
+             *_splice_statements(splice, sources, label, platform)]
+    if clear_mask and not splice.enabled:
+        lines.append("s.clearSpliceMask();")
+    return lines
 
 
 @dataclass
@@ -971,6 +1151,9 @@ class _StrandRender:
     var: str
     mode_names: list[str] = field(default_factory=list)
     lines: list[str] = field(default_factory=list)
+    #: The strands chained on after `config`, in pixel order. Empty for a
+    #: strand on its own.
+    chained: list[StrandConfig] = field(default_factory=list)
     #: This strand's Fill readers: the PROS headers they need, and the hooks
     #: the banner has to tell the user to assign.
     sources: _FillSourceSet = field(default_factory=_FillSourceSet)
@@ -997,6 +1180,27 @@ def _constructor_args(config: StrandConfig) -> str:
     parts = ["smartPort"] if config.smart_port else []
     parts += ["adiPort", "length", "refreshMs"]
     return ", ".join(parts)
+
+
+def _segment_literal(config: StrandConfig) -> str:
+    """One LedStrand::Segment: `{adi, length}`, or `{{smart, adi}, length}`
+    for a strip on an ADI expander."""
+    port = (f"{{{config.smart_port}, {config.adi_port}}}" if config.smart_port
+            else str(config.adi_port))
+    return f"{{{port}, {config.length}}}"
+
+
+def _strand_initializer(config: StrandConfig, chained: list[StrandConfig]) -> str:
+    """What follows the strand variable's name: the brace form for a strand
+    on its own, and the chain constructor for one with strands chained on.
+
+    The chain is written in parentheses: braced, `strand{{...}, refreshMs}`
+    reads as one more level of list than it is.
+    """
+    if not chained:
+        return f"{{{_constructor_args(config)}}}"
+    segments = ", ".join(_segment_literal(m) for m in [config, *chained])
+    return f"({{{segments}}}, refreshMs)"
 
 
 #: The banner marks its copy-paste block with this exact indent; prose asides
@@ -1128,7 +1332,9 @@ def _render_strand(
     music: _MusicRef | None = None,
     platform: Platform = Platform.PROS,
     comps: dict[int, str] | None = None,
+    chained: list[StrandConfig] | None = None,
 ) -> _StrandRender:
+    chained = chained or []
     modes = _effective_modes(config)
     display_name = config.name or "Profile"
     ns = ns_namer.make(display_name, "profile")
@@ -1143,9 +1349,13 @@ def _render_strand(
     mode_entries: list[str] = []
     mode_names: list[str] = []
 
+    # Whether any mode or phase masks: then each one that does not has to
+    # clear the mask a mode or phase before it may have left on.
+    clear_masks = any(m.splice.enabled or any(p.splice.enabled for p in m.phases)
+                      for m in modes)
     for mode in modes:
         activate_fn, tick_fn, blocks = _generate_mode(mode, fn_namer, music, sources,
-                                                      platform, comps)
+                                                      platform, comps, clear_masks)
         function_blocks.extend(blocks)
         tick_arg = f"detail::{tick_fn}" if tick_fn else "nullptr"
         mode_entries.append(
@@ -1157,11 +1367,24 @@ def _render_strand(
     lines.append(f'/// "{_escape(display_name)}" - exported from Pattern Studio.')
     lines.append(f"namespace {ns} {{")
     lines.append("")
-    lines.append("// --- Hardware: the strand this design was previewed against ---")
-    if config.smart_port:
-        lines.append(f"constexpr uint8_t  smartPort  = {config.smart_port};  // ADI expander")
-    lines.append(f"constexpr uint8_t  adiPort    = {config.adi_port};")
-    lines.append(f"constexpr uint8_t  length     = {config.length};")
+    if chained:
+        # One LedStrand across every strip, so there is no single port to
+        # name. The strips are listed where the constructor takes them.
+        members = [config, *chained]
+        lines.append("// --- Hardware: the strips this design was previewed against, chained ---")
+        lines.append("// end to end into one strand, in this order:")
+        for m in members:
+            where = f"ADI port {m.adi_port}" + (f" of the expander on Smart Port {m.smart_port}"
+                                               if m.smart_port else "")
+            lines.append(f'//   "{_escape(m.name)}": {m.length} LEDs on {where}')
+        lines.append(f"constexpr uint8_t  length     = {sum(m.length for m in members)};"
+                     f"  // across all {len(members)}")
+    else:
+        lines.append("// --- Hardware: the strand this design was previewed against ---")
+        if config.smart_port:
+            lines.append(f"constexpr uint8_t  smartPort  = {config.smart_port};  // ADI expander")
+        lines.append(f"constexpr uint8_t  adiPort    = {config.adi_port};")
+        lines.append(f"constexpr uint8_t  length     = {config.length};")
     lines.append(f"constexpr uint32_t refreshMs  = {config.refresh_ms};")
     lines.append(f"constexpr uint8_t  brightness = {config.brightness};")
     lines.append("")
@@ -1201,7 +1424,7 @@ def _render_strand(
     lines.append("/// The strand itself, built from the hardware constants above. An")
     lines.append("/// ordinary LedStrand: hitlib::studio::begin() starts it, and every API")
     lines.append("/// call works on it directly.")
-    lines.append(_variable(platform, "LedStrand", "strand", f"{{{_constructor_args(config)}}}"))
+    lines.append(_variable(platform, "LedStrand", "strand", _strand_initializer(config, chained)))
     lines.append("#endif")
     lines.append("")
     lines.append(f"}}  // namespace {ns}")
@@ -1213,6 +1436,7 @@ def _render_strand(
         mode_names=mode_names,
         lines=lines,
         sources=sources,
+        chained=list(chained),
     )
 
 
@@ -1323,7 +1547,7 @@ def _music_bands_used(configs: list[StrandConfig],
     file, and a design that pumps on the bass has no use for three more.
     """
     used: list[str] = []
-    for config in configs:
+    for config in _heads(configs):
         for mode in _effective_modes(config):
             leaves = [p.animation for p in mode.phases] if mode.phases else [mode.animation]
             for a in leaves:
@@ -1384,10 +1608,17 @@ def _render_music(
 
 
 
+def _heads(configs: list[StrandConfig]) -> list[StrandConfig]:
+    """The strands that become a LedStrand of their own: every one, bar
+    those chained onto the strand above them. What a chained strand plays is
+    its head's, so nothing it holds itself is exported."""
+    return [configs[group[0]] for group in chains(configs)]
+
+
 def _compositions_used(configs: list[StrandConfig]) -> set[int]:
     """Composition ids something in this export actually plays."""
     used: set[int] = set()
-    for cfg in configs:
+    for cfg in _heads(configs):
         for mode in _effective_modes(cfg):
             leaves = [p.animation for p in mode.phases] if mode.phases else [mode.animation]
             for a in leaves:
@@ -1452,7 +1683,7 @@ def _render_file(
     platform: Platform = Platform.PROS,
     compositions: list[CompositionConfig] | None = None,
 ) -> str:
-    single = len(configs) == 1
+    single = len(chains(configs)) == 1
     ns_namer = _UniqueNamer(reserved=_OWNED_NAMESPACES | _MAIN_CPP_NAMES)
 
     music_ref: _MusicRef | None = None
@@ -1475,7 +1706,11 @@ def _render_file(
         for name, label in sources.hooks
     ]
 
-    entries = [_render_strand(cfg, ns_namer, music_ref, platform, comp_names) for cfg in configs]
+    entries = [
+        _render_strand(configs[group[0]], ns_namer, music_ref, platform, comp_names,
+                       [configs[i] for i in group[1:]])
+        for group in chains(configs)
+    ]
 
     default_name = (
         suggested_header_name(configs[0].name, platform) if single else document_header_name(platform)
@@ -1539,15 +1774,20 @@ def generate_cpp(
     music: MusicConfig | None = None,
     platform: Platform = Platform.PROS,
     compositions: list[CompositionConfig] | None = None,
+    chained: list[StrandConfig] | None = None,
 ) -> str:
     """Render one strand as a standalone header.
 
     @p header_name is the filename the export will be saved as, it only
     feeds the #include line in the usage banner. @p music is the design's
     song, needed only when the strand actually has a Music Sync animation.
-    @p platform is the environment the robot's code is built in.
+    @p platform is the environment the robot's code is built in. @p chained
+    are the strands chained on after it, which export as part of it.
     """
-    return _render_file([config], header_name, music, platform, compositions)
+    # The first strand of a file always starts a chain, whatever its own
+    # flag says, so the ones after it are what join it.
+    members = [config, *(replace(m, chained=True) for m in (chained or []))]
+    return _render_file(members, header_name, music, platform, compositions)
 
 
 def generate_document_cpp(
@@ -1575,6 +1815,7 @@ def _generate_mode(
     sources: _FillSourceSet | None = None,
     platform: Platform = Platform.PROS,
     comps: dict[int, str] | None = None,
+    clear_masks: bool = False,
 ) -> tuple[str, str | None, list[str]]:
     blocks: list[str] = []
 
@@ -1583,7 +1824,7 @@ def _generate_mode(
         body = "\n".join(
             f"    {line}"
             for line in _leaf_body(mode.animation, mode.splice, music, sources,
-                                   mode.name, platform, comps)
+                                   mode.name, platform, comps, clear_masks)
         )
         blocks.append(f"inline void {activate_fn}(LedStrand& s) {{\n{body}\n}}")
         return activate_fn, None, blocks
@@ -1595,13 +1836,13 @@ def _generate_mode(
         body = "\n".join(
             f"    {line}"
             for line in _leaf_body(phase.animation, phase.splice, music, sources,
-                                   label, platform, comps)
+                                   label, platform, comps, clear_masks)
         )
         blocks.append(f"inline void {fn_name}(LedStrand& s) {{\n{body}\n}}")
-        phase_fn_names.append((fn_name, phase.duration_ms))
+        phase_fn_names.append((fn_name, phase))
 
     phases_array_name = namer.make(f"{mode.name} Phases", "phases")
-    phase_entries = "\n".join(f"    {{{dur}, {fn}}}," for fn, dur in phase_fn_names)
+    phase_entries = "\n".join(f"    {_phase_entry(fn, phase)}," for fn, phase in phase_fn_names)
     phases = f" = {{\n{phase_entries}\n}}"
     blocks.append(_variable(platform, "const Sequencer::Phase", phases_array_name, phases, len(phase_fn_names)))
 

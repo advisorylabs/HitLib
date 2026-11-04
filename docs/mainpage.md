@@ -30,9 +30,12 @@ LedGroup
       ├─ Base layer      ← flow / rainbow / pulse / bitscroll / twinkle, or a
       │                    level meter driven by hand, by a value, or by a song
       ├─ Overlay layer   ← second independent animation, shown where a
-      │                    splice mask asks for it
-      ├─ Splice mask     ← alternating sections, or arbitrary custom regions
-      │                    that each animate on their own
+      │                    mask asks for it
+      ├─ Mask            ← alternating sections, arbitrary custom regions
+      │                    that each animate on their own, a spreading
+      │                    wipe, or twinkling bits
+      ├─ Transition      ← the last frame, wiped away as the next
+      │                    animation comes in
       └─ Profile         ← priority-based mode stack for match events
 ```
 
@@ -45,12 +48,14 @@ LedGroup
 | **Animations** | Static, flow gradient, rainbow, pulse, flash, twinkle, bitscroll |
 | **Bounce variants** | Pulse bounce, bitscroll bounce |
 | **Overlay system** | A second animation layer, shown in a splice mask's masked bins |
-| **Splice mask** | Alternating sections sharing the overlay, or custom regions that each run their own animation |
+| **Masks** | Alternating sections sharing the overlay, custom regions that each run their own animation, a spread that wipes across and back, or twinkling bits |
+| **Transitions** | Spread or twinkle from one animation into the next, by hand or between sequenced phases |
+| **Chains** | Several strips on separate ports driven as one long strand |
 | **Level meter** | Fill the strip in proportion to a value - by hand, or tracking a motor, sensor or the battery on its own |
 | **Music sync** | Fill in time with a song - MP3/M4A/FLAC/OGG/WAV or MIDI, analysed by Pattern Studio |
 | **Gauges** | Several independent meters on one strip, each colored off its own scale - motorHeatGauge() ships with the V5's derating schedule |
 | **Profiles** | Priority mode stack, activateMode / activateModeTimed |
-| **Sequencer** | Multi-phase timed driver for endgame sequences |
+| **Sequencer** | Multi-phase timed driver for endgame sequences, with intros that play a set number of times |
 | **Groups** | One call fans out to every strand in the group |
 | **Brightness** | 0–100% applied non-destructively at flush time |
 

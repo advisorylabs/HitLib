@@ -26,9 +26,11 @@ FieldChange = tuple[FieldPath, Any]
 
 #: Top-level StrandConfig fields that are per-strand identity and must never
 #: be copied across a group edit: two strands can't share an ADI port, and one
-#: shared name would make the sidebar unreadable. Nested `name` fields (a
-#: mode's, a phase's) are shared content and do propagate.
-NON_SHARED_FIELDS = frozenset({"name", "adi_port"})
+#: shared name would make the sidebar unreadable. Whether a strand continues
+#: the one above it is about where it sits in the list, so it is not shared
+#: either. Nested `name` fields (a mode's, a phase's) are shared content and
+#: do propagate.
+NON_SHARED_FIELDS = frozenset({"name", "adi_port", "chained"})
 
 
 def diff_config(before: Any, after: Any) -> list[FieldChange]:

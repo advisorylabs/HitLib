@@ -258,6 +258,10 @@ class StrandListPanel(QWidget):
     add_requested = Signal()
     #: Remove every currently selected strand.
     remove_requested = Signal()
+    #: Chain the selected strands together, or unchain them - whichever the
+    #: Chain button currently offers. See set_chain_action().
+    chain_requested = Signal()
+    unchain_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -298,12 +302,34 @@ class StrandListPanel(QWidget):
         btn_row.addWidget(self.remove_btn)
         layout.addLayout(btn_row)
 
+        # One button that offers whichever of Chain and Unchain the selection
+        # allows, rather than two where one is always disabled.
+        self.chain_btn = QPushButton(" Chain")
+        self._chain_action = ""
+        layout.addWidget(self.chain_btn)
+
         self.add_btn.clicked.connect(self.add_requested)
         self.remove_btn.clicked.connect(self.remove_requested)
+        self.chain_btn.clicked.connect(self._on_chain_clicked)
         self.select_all_btn.clicked.connect(self.select_all)
         self.list_widget.settled.connect(self.selection_changed)
 
         self.set_group_size(0)
+        self.set_chain_action("", "")
+
+    def set_chain_action(self, action: str, tooltip: str) -> None:
+        """Offer "chain" or "unchain" on the Chain button, or nothing
+        ("") with `tooltip` saying what would make it available."""
+        self._chain_action = action
+        self.chain_btn.setText(" Unchain" if action == "unchain" else " Chain")
+        self.chain_btn.setEnabled(bool(action))
+        self.chain_btn.setToolTip(tooltip)
+
+    def _on_chain_clicked(self) -> None:
+        if self._chain_action == "chain":
+            self.chain_requested.emit()
+        elif self._chain_action == "unchain":
+            self.unchain_requested.emit()
 
     # ------------------------------------------------------------------
     # Selection
@@ -355,11 +381,17 @@ class StrandListPanel(QWidget):
     # Contents
     # ------------------------------------------------------------------
 
-    def set_names(self, names: list[str]) -> None:
+    def set_names(self, names: list[str], chained: list[bool] | None = None) -> None:
+        """Show `names`, one row each. A row whose `chained` entry is set
+        continues the row above it, and is drawn hanging off it."""
+        chained = chained or [False] * len(names)
         selected = self.selected_rows()
         current = self.list_widget.currentRow()
         self.list_widget.blockSignals(True)
         self.list_widget.clear()
-        self.list_widget.addItems(names)
+        self.list_widget.addItems([
+            ("  ↳ " if link else "") + name
+            for name, link in zip(names, chained)
+        ])
         restore_selection(self.list_widget, selected, current)
         self.list_widget.blockSignals(False)

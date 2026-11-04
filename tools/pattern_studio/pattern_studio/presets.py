@@ -84,6 +84,7 @@ def layer_for_animation(a: AnimationConfig,
         palette=list(a.palette),
         density_pct=a.density_pct,
         fade_step=a.fade_step,
+        bit_width=a.bit_width,
         # The preset has only ever offered one segment, even though the C++
         # has always taken a vector. A layer can hold several, and this is
         # where a converted preset stops being limited to one.

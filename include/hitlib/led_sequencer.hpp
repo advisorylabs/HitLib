@@ -1,4 +1,5 @@
 #pragma once
+#include "led_strand.hpp"
 #include <cstdint>
 
 /**
@@ -7,8 +8,6 @@
  */
 
 namespace hitlib {
-
-class LedStrand; ///< Forward declaration.
 
 // ============================================================================
 
@@ -42,6 +41,19 @@ class LedStrand; ///< Forward declaration.
  * };
  * @endcode
  *
+ * ### Intros and transitions
+ * A phase can play only the first time round the loop - an intro - or the
+ * first few times, and can wipe in over the phase before it rather than
+ * cutting to it:
+ * @code{.cpp}
+ * using LS = hitlib::LedStrand;
+ * static const hitlib::Sequencer::Phase phases[] = {
+ *     {1500, intro, 1},                                     // once, then skipped
+ *     {4000, rainbow, 0, {LS::TransitionKind::SPREAD, 500, LS::SpreadOrigin::CENTER}},
+ *     {4000, pulse,   0, {LS::TransitionKind::TWINKLE, 800, LS::SpreadOrigin::EDGE, false, 2}},
+ * };
+ * @endcode
+ *
  * @note start(), update() and stop() may be called from different tasks, as
  *       they are when two groups share a profile.  The phases' @c startFn
  *       runs with no lock held, so it is free to call any LedStrand method.
@@ -55,10 +67,28 @@ public:
 
     /**
      * @brief One phase in the animation sequence.
+     *
+     * Only the first two members are needed: `{2000, phase1}` is a phase
+     * that plays every time round and cuts straight in.
+     *
+     * @note No default member initializers, deliberately: that keeps this a
+     *       C++11 aggregate, so the members left out of a brace list are zero
+     *       on every platform, and zero is "every time" and "cut".
      */
     struct Phase {
         uint32_t durationMs;            ///< How long this phase runs (milliseconds).
         void (*startFn)(LedStrand&);    ///< Called once when the phase begins.
+        /// How many times round the loop this phase plays before it is
+        /// skipped: 1 is an intro that shows the first time only.  0 plays it
+        /// every time.  Counted from start(), so re-activating the mode plays
+        /// the intro again.
+        uint8_t  plays;
+        /// How this phase wipes in over a different phase before it.  Only
+        /// on a change of phase: not at start(), which has no phase before
+        /// it, and not when the loop comes round to this same phase again -
+        /// the only phase in it, or the only one left once the intros have
+        /// played.  Left out, it cuts.  See LedStrand::transition().
+        LedStrand::Transition transition;
     };
 
     // ------------------------------------------------------------------------
@@ -106,8 +136,11 @@ public:
      * @brief Advance the sequence, call every tick from an @c onTick callback.
      *
      * Checks whether @p strand's current phase has expired.  If so, advances
-     * it to the next phase (wrapping to 0) and calls that phase's @c startFn.
-     * Does nothing if the sequence is not running on @p strand.
+     * it to the next phase still due to play (wrapping to 0, and skipping any
+     * whose @c plays have run out), starts its transition if that is a
+     * different phase, and calls its @c startFn.  When every phase has run out of plays, the last one to
+     * play stays on.  Does nothing if the sequence is not running on
+     * @p strand.
      *
      * @param strand  The strand to animate.
      */
@@ -128,6 +161,7 @@ private:
         uint32_t         phaseStartMs;  ///< Timestamp when its phase began.
         uint32_t         lastTouch;     ///< @c touches at its last start() or update().
         uint8_t          phase;         ///< Index of its current phase.
+        uint8_t          lap;           ///< Times round the loop since start(), up to 255.
     };
 
     const Phase* phases;                 ///< Pointer to the phase array (not owned).
@@ -136,6 +170,8 @@ private:
     uint32_t     touches = 0;            ///< Bumped by every start() and update().
 
     int8_t indexOf(const LedStrand& strand) const;
+    bool   advance(Run& run) const;
+    static void begin(const Phase& phase, LedStrand& strand, bool wipe);
 };
 
 } // namespace hitlib

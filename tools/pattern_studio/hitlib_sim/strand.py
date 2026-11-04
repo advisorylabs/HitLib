@@ -35,7 +35,12 @@ from .colors import (
 )
 from .profile import Profile
 
+#: Most LEDs on one strip, i.e. one ADI port. LedStrand::MAX_LEDS.
 MAX_LEDS = 64
+#: Most strips one chained strand drives. LedStrand::MAX_SEGMENTS.
+MAX_SEGMENTS = 8
+#: Most LEDs one strand drives across a whole chain. LedStrand::MAX_CHAIN_LEDS.
+MAX_CHAIN_LEDS = 128
 _TWINKLE_HOLD_TICKS = 8
 
 
@@ -50,6 +55,61 @@ class AnimMode(Enum):
 class SpliceMode(Enum):
     SPLIT = auto()
     CUSTOM = auto()
+    SPREAD = auto()
+    TWINKLE = auto()
+
+
+@dataclass(frozen=True)
+class Segment:
+    """Port of LedStrand::Segment - one physical strip in a chain."""
+
+    adi_port: int
+    length: int
+    smart_port: int = 0
+
+
+class SpreadOrigin(Enum):
+    """Port of LedStrand::SpreadOrigin - where a spread starts."""
+
+    EDGE = 0    # from pixel 0 to the far end
+    CENTER = 1  # from the middle out to both ends at once
+
+
+class TransitionKind(Enum):
+    """Port of LedStrand::TransitionKind."""
+
+    CUT = 0
+    SPREAD = 1
+    TWINKLE = 2
+
+
+@dataclass(frozen=True)
+class Transition:
+    """Port of LedStrand::Transition - a wipe from whatever is showing into
+    whatever is set up next. The defaults are the C++ aggregate's zero values,
+    so Transition() is a cut."""
+
+    kind: TransitionKind = TransitionKind.CUT
+    duration_ms: int = 0
+    origin: SpreadOrigin = SpreadOrigin.EDGE
+    invert: bool = False
+    bit_width: int = 0   # TWINKLE: pixels per bit, 0 is one
+    fade_step: int = 0   # TWINKLE: brightness per tick, 0 lights a bit at once
+
+
+def spread_ranks(length: int, origin: SpreadOrigin) -> int:
+    """Steps a spread takes to cover `length` pixels. Mirrors
+    LedStrand::spreadRanks()."""
+    return (length + 1) // 2 if origin == SpreadOrigin.CENTER else length
+
+
+def spread_rank(i: int, length: int, origin: SpreadOrigin, invert: bool) -> int:
+    """The step at which a spread reaches pixel `i`. Mirrors
+    LedStrand::spreadRank()."""
+    if origin == SpreadOrigin.EDGE:
+        return length - 1 - i if invert else i
+    from_middle = abs(2 * i - (length - 1)) // 2
+    return spread_ranks(length, origin) - 1 - from_middle if invert else from_middle
 
 
 @dataclass(frozen=True)
@@ -201,8 +261,8 @@ class SpliceRegion:
     on_ms: int = 250
     off_ms: int = 250
     seamless: bool = True  # FLOW only.
-    # Reverse direction: a BITSCROLL scrolls the other way, a GAUGE BAR fills
-    # from the far end of the region.
+    # Reverse direction: a PULSE, FLOW, RAINBOW or BITSCROLL moves the other
+    # way, a GAUGE BAR fills from the far end of the region.
     invert: bool = False
     # TWINKLE only.
     palette: tuple[int, ...] = ()
@@ -224,6 +284,8 @@ class SpliceRegion:
     #: The scale, in the reading's own units. Empty falls back to `color` at
     #: `empty_at` blending to `color2` at `full_at`.
     stops: tuple[GaugeStop, ...] = ()
+    # TWINKLE: pixels per spark. Last, as in the C++, which added it in 1.6.
+    bit_width: int = 1
 
 
 @dataclass
@@ -237,24 +299,32 @@ class _TwinkleState:
     """
 
     palette: list[int] = field(default_factory=list)
+    # One entry per bit, not per pixel: pixel i belongs to bit i // bit_width.
     level: list[int] = field(default_factory=list)
     target: list[int] = field(default_factory=list)
     color_idx: list[int] = field(default_factory=list)
     hold_ticks: list[int] = field(default_factory=list)
     density_pct: int = 30
     fade_step: int = 16
+    bit_width: int = 1
     bg_color: int = 0x000000
 
     def reset(self, width: int, colors: Sequence[int], density_pct: int, fade_step: int,
-              bg_color: int) -> None:
+              bg_color: int, bit_width: int = 1) -> None:
         self.palette = list(colors)
-        self.level = [0] * width
-        self.target = [0] * width
-        self.color_idx = [0] * width
-        self.hold_ticks = [0] * width
+        self.bit_width = max(bit_width, 1)
+        count = self.bits_for(width)
+        self.level = [0] * count
+        self.target = [0] * count
+        self.color_idx = [0] * count
+        self.hold_ticks = [0] * count
         self.density_pct = min(density_pct, 100)
         self.fade_step = max(fade_step, 1)
         self.bg_color = bg_color
+
+    def bits_for(self, width: int) -> int:
+        """Bits it takes to cover `width` pixels, the last one possibly short."""
+        return (width + self.bit_width - 1) // self.bit_width
 
 
 def _advance_twinkle_into(t: _TwinkleState, buf: list[int], rng: random.Random) -> None:
@@ -262,7 +332,7 @@ def _advance_twinkle_into(t: _TwinkleState, buf: list[int], rng: random.Random) 
     LedStrand::advanceTwinkleInto(). The buffer is passed in rather than read
     off the strand so the base strand, the overlay and each custom region can
     all sparkle at once, each over its own pixels."""
-    width = min(len(t.level), len(buf))
+    width = min(len(t.level) * t.bit_width, len(buf))
     if width == 0:
         return
     _step_twinkle(t, width, rng)
@@ -274,17 +344,20 @@ def _step_twinkle(t: _TwinkleState, width: int, rng: random.Random) -> None:
     LedStrand::stepTwinkle(). Split out so a custom-animation layer can take
     `t.level` as per-pixel coverage and blend it over whatever is beneath,
     instead of over a single background color."""
-    if width == 0:
+    # Everything below walks bits, not pixels: a wide bit spawns, holds and
+    # fades as one.
+    bits = min(t.bits_for(width), len(t.level))
+    if bits == 0:
         return
 
-    active_count = sum(1 for i in range(width) if t.level[i] > 0 or t.hold_ticks[i] > 0)
-    target_count = (width * t.density_pct + 50) // 100
+    active_count = sum(1 for i in range(bits) if t.level[i] > 0 or t.hold_ticks[i] > 0)
+    target_count = (bits * t.density_pct + 50) // 100
 
     if active_count < target_count and t.palette:
-        # Reservoir-sample one idle pixel to spawn, at most one per tick.
+        # Reservoir-sample one idle bit to spawn, at most one per tick.
         chosen = -1
         idle_seen = 0
-        for i in range(width):
+        for i in range(bits):
             if t.level[i] == 0 and t.hold_ticks[i] == 0:
                 idle_seen += 1
                 if rng.randrange(idle_seen) == 0:
@@ -293,7 +366,7 @@ def _step_twinkle(t: _TwinkleState, width: int, rng: random.Random) -> None:
             t.color_idx[chosen] = rng.randrange(len(t.palette))
             t.target[chosen] = 255
 
-    for i in range(width):
+    for i in range(bits):
         if t.hold_ticks[i] > 0:
             t.hold_ticks[i] -= 1
             if t.hold_ticks[i] == 0:
@@ -310,8 +383,11 @@ def _paint_twinkle_into(t: _TwinkleState, buf: list[int], width: int) -> None:
     """Write the sparkle state into `buf` - mirrors
     LedStrand::paintTwinkleInto()."""
     for i in range(width):
-        fg = t.palette[t.color_idx[i]] if t.palette else 0
-        buf[i] = lerp_color(t.bg_color, fg, t.level[i])
+        b = i // t.bit_width
+        if b >= len(t.level):
+            break
+        fg = t.palette[t.color_idx[b]] if t.palette else 0
+        buf[i] = lerp_color(t.bg_color, fg, t.level[b])
 
 
 def _build_bitscroll_unit(segments: Sequence[BitScrollSegment], bg_color: int,
@@ -433,10 +509,27 @@ class _ModeEntry:
 
 
 class Strand:
-    def __init__(self, adi_port: int, length: int, refresh_ms: int = 20, smart_port: int = 0):
-        self.adi_port = adi_port
-        self.smart_port = smart_port
-        self.length = max(1, min(length, MAX_LEDS))
+    def __init__(self, adi_port: int, length: int, refresh_ms: int = 20, smart_port: int = 0,
+                 chain: Sequence[Segment] | None = None):
+        """A strand on one port, or with `chain`, one strand spread across
+        several strips end to end - LedStrand's chain constructor, in which
+        case `adi_port`, `length` and `smart_port` are ignored."""
+        if chain is None:
+            chain = [Segment(adi_port, length, smart_port)]
+        # Mirrors the C++ constructor: strips past MAX_SEGMENTS, and pixels
+        # past MAX_CHAIN_LEDS, are dropped.
+        self.segments: list[Segment] = []
+        total = 0
+        for seg in chain:
+            if len(self.segments) >= MAX_SEGMENTS or total >= MAX_CHAIN_LEDS:
+                break
+            n = min(max(1, min(seg.length, MAX_LEDS)), MAX_CHAIN_LEDS - total)
+            self.segments.append(Segment(seg.adi_port, n, seg.smart_port))
+            total += n
+        first = self.segments[0] if self.segments else Segment(adi_port, 1, smart_port)
+        self.adi_port = first.adi_port
+        self.smart_port = first.smart_port
+        self.length = max(1, total)
         self.refresh_ms = refresh_ms
         self.now_ms = 0
 
@@ -534,6 +627,32 @@ class Strand:
         self.splice_use_overlay = False
         self.splice_last_toggle_ms = 0
 
+        # Spread mask - how many ranks the spread covers, and which way it is
+        # going. splice_bg_color/splice_use_overlay say what shows outside it.
+        self.spread_origin = SpreadOrigin.EDGE
+        self.spread_invert = False
+        self.spread_bounce = False
+        self.spread_pos = 0
+        self.spread_dir = 1
+        self.spread_speed = 1
+        self.spread_pacer = _StepPacer()
+
+        # Twinkle mask - its levels are how much of the animation shows.
+        # splice_invert swaps that round.
+        self.mask_twinkle = _TwinkleState()
+
+        # Transition - the frame that was showing when transition() was
+        # called, and how far the wipe away from it has got.
+        self.trans_kind = TransitionKind.CUT
+        self.trans_origin = SpreadOrigin.EDGE
+        self.trans_invert = False
+        self.trans_bit_width = 1
+        self.trans_fade_step = 255
+        self.trans_ticks = 1
+        self.trans_elapsed = 0
+        self.trans_from: list[int] = []
+        self.trans_bit_start: list[int] = []
+
         # Overlay buffer
         self.overlay_anim_mode = AnimMode.STATIC
         self.overlay_shift_step = 0
@@ -595,10 +714,18 @@ class Strand:
 
         self._advance_splice_alternating(now)
         self._advance_splice_regions()
+        self._advance_spread_mask()
+        if self.splice_active and self.splice_mode == SpliceMode.TWINKLE:
+            _step_twinkle(self.mask_twinkle, self.length, self._rng)
 
         effective_idx = self._compute_effective_mode()
         mode_changed = effective_idx != self.last_mode_idx
         self.last_mode_idx = effective_idx
+
+        # A wipe already under way belongs to what was showing; one asked for
+        # since the last tick is the way into the new mode. Mirrors tick().
+        if mode_changed and self.trans_kind != TransitionKind.CUT and self.trans_elapsed > 0:
+            self.trans_kind = TransitionKind.CUT
 
         mode = None
         if effective_idx >= 0 and self.active_profile:
@@ -720,7 +847,7 @@ class Strand:
         self.shift_variant = ((self.length - sp) % self.length) if invert else sp
         self.anim_mode = AnimMode.SHIFT
 
-    def rainbow(self, speed: int | Speed) -> None:
+    def rainbow(self, speed: int | Speed, invert: bool = False) -> None:
         speed = as_speed(speed)
         self.composition = None  # a preset takes the base buffer over
         self.pulse_run_len = 0
@@ -728,15 +855,15 @@ class Strand:
         self.buffer = gen_rainbow(self.length)
         self.shift_step = 0
         self.shift_pacer.reset(self._step_ticks(speed))
-        self.shift_variant = speed.pixels
+        self.shift_variant = _shift_for(speed.pixels, self.length, invert)
         self.anim_mode = AnimMode.SHIFT
 
     def twinkle(self, colors: Sequence[int], density_pct: int = 30, fade_step: int = 16,
-                bg_color: int = 0) -> None:
+                bg_color: int = 0, bit_width: int = 1) -> None:
         self.composition = None  # a preset takes the base buffer over
         self.pulse_run_len = 0
         self.bitscroll_master = []
-        self.twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color)
+        self.twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color, bit_width)
         # Every spark starts at level 0, so this is exactly the first paint. A
         # call from a ProfileMode callback is flushed before the next advance,
         # and would otherwise show the previous animation for a frame.
@@ -1035,7 +1162,8 @@ class Strand:
                     rl = min(r.run_length, region_width)
                     for k in range(rl):
                         state.buffer[k] = r.color
-                    state.shift_speed = as_speed(r.speed).pixels
+                    state.shift_speed = _shift_for(as_speed(r.speed).pixels, region_width,
+                                                   r.invert)
                     state.shift_pacer.reset(self._step_ticks(as_speed(r.speed)))
                 elif r.kind == SpliceRegionAnimKind.FLASH:
                     # Mirrors flash(), scaled to this region: the whole region
@@ -1051,11 +1179,13 @@ class Strand:
                     state.flash_lit = True
                 elif r.kind == SpliceRegionAnimKind.FLOW:
                     state.buffer = gen_gradient(r.color, r.color2, region_width, r.seamless)
-                    state.shift_speed = as_speed(r.speed).pixels
+                    state.shift_speed = _shift_for(as_speed(r.speed).pixels, region_width,
+                                                   r.invert)
                     state.shift_pacer.reset(self._step_ticks(as_speed(r.speed)))
                 elif r.kind == SpliceRegionAnimKind.RAINBOW:
                     state.buffer = gen_rainbow(region_width)
-                    state.shift_speed = as_speed(r.speed).pixels
+                    state.shift_speed = _shift_for(as_speed(r.speed).pixels, region_width,
+                                                   r.invert)
                     state.shift_pacer.reset(self._step_ticks(as_speed(r.speed)))
                 elif r.kind == SpliceRegionAnimKind.TWINKLE:
                     # Repaints its own pixels every tick, like the strand-wide
@@ -1064,7 +1194,7 @@ class Strand:
                     state.shift_speed = 0
                     state.twinkling = True
                     state.twinkle.reset(region_width, r.palette, r.density_pct, r.fade_step,
-                                        r.bg_color)
+                                        r.bg_color, r.bit_width)
                 elif r.kind == SpliceRegionAnimKind.BITSCROLL:
                     # No bounce: a region's buffer scrolls, and bouncing needs a
                     # wider master pattern to slide a window over.
@@ -1122,8 +1252,121 @@ class Strand:
 
         self.splice_active = len(regions) > 0
 
+    def spread_mask(self, speed: int | Speed, origin: SpreadOrigin = SpreadOrigin.EDGE,
+                    invert: bool = False, bounce: bool = False, bg_color: int = 0,
+                    use_overlay: bool = False) -> None:
+        """Show the animation only across a stretch that spreads over the
+        strip and back. Mirrors LedStrand::spreadMask()."""
+        speed = as_speed(speed)
+        self.splice_mode = SpliceMode.SPREAD
+        self.splice_alternating = False
+        self.splice_regions = []
+        self.splice_bg_color = bg_color
+        self.splice_use_overlay = use_overlay
+        self.spread_origin = origin
+        self.spread_invert = invert
+        self.spread_bounce = bounce
+        self.spread_speed = max(speed.pixels, 1)
+        self.spread_pacer.reset(self._step_ticks(speed))
+        self.spread_pos = 0  # starts empty, and grows from there
+        self.spread_dir = 1
+        self.splice_active = True
+
+    def twinkle_mask(self, density_pct: int = 30, fade_step: int = 16, bit_width: int = 1,
+                     invert: bool = False, bg_color: int = 0, use_overlay: bool = False) -> None:
+        """Show the animation only through twinkling bits. Mirrors
+        LedStrand::twinkleMask()."""
+        self.splice_mode = SpliceMode.TWINKLE
+        self.splice_alternating = False
+        self.splice_regions = []
+        self.splice_invert = invert
+        self.splice_bg_color = bg_color
+        self.splice_use_overlay = use_overlay
+        # Only the levels are ever read; the palette just has to be non-empty.
+        self.mask_twinkle.reset(self.length, [0xFFFFFF], density_pct, fade_step, 0, bit_width)
+        self.splice_active = True
+
     def clear_splice_mask(self) -> None:
         self.splice_active = False
+
+    def _advance_spread_mask(self) -> None:
+        """Move the spread's edge a whole step at a time, held at each end
+        for exactly one. Mirrors LedStrand::advanceSpreadMask()."""
+        if (not self.splice_active or self.splice_mode != SpliceMode.SPREAD
+                or not self.spread_pacer.due()):
+            return
+        ranks = spread_ranks(self.length, self.spread_origin)
+        if self.spread_bounce:
+            pos = self.spread_pos + self.spread_dir * self.spread_speed
+            if pos >= ranks:
+                pos, self.spread_dir = ranks, -1
+            if pos <= 0:
+                pos, self.spread_dir = 0, 1
+            self.spread_pos = pos
+        elif self.spread_pos >= ranks:
+            self.spread_pos = 0
+        else:
+            self.spread_pos = min(self.spread_pos + self.spread_speed, ranks)
+
+    def _mask_coverage(self, i: int) -> int:
+        """How much of the animation a SPREAD or TWINKLE mask lets through at
+        pixel `i`, 0-255. Mirrors LedStrand::maskCoverage()."""
+        if self.splice_mode == SpliceMode.SPREAD:
+            rank = spread_rank(i, self.length, self.spread_origin, self.spread_invert)
+            return 255 if rank < self.spread_pos else 0
+        b = i // self.mask_twinkle.bit_width
+        level = self.mask_twinkle.level[b] if b < len(self.mask_twinkle.level) else 0
+        return 255 - level if self.splice_invert else level
+
+    # ========================================================================
+    # Transitions
+    # ========================================================================
+
+    def transition(self, t: Transition) -> None:
+        """Wipe from what is showing now into whatever is set up next.
+        Mirrors LedStrand::transition()."""
+        if t.kind == TransitionKind.CUT or t.duration_ms == 0:
+            self.trans_kind = TransitionKind.CUT
+            return
+        # What the strip is showing right now, wipe and all.
+        self.trans_from = list(self.pixels)
+        self.trans_kind = t.kind
+        self.trans_origin = t.origin
+        self.trans_invert = t.invert
+        self.trans_bit_width = t.bit_width or 1
+        self.trans_fade_step = t.fade_step or 255
+        self.trans_ticks = self._ms_to_ticks(t.duration_ms)
+        self.trans_elapsed = 0
+        if t.kind == TransitionKind.TWINKLE:
+            # Each bit takes fade_ticks to come in, so it has to start by
+            # trans_ticks - fade_ticks to be fully in when the wipe ends.
+            bits = (self.length + self.trans_bit_width - 1) // self.trans_bit_width
+            fade_ticks = (255 + self.trans_fade_step - 1) // self.trans_fade_step
+            # A wipe too short for its fade fades faster, taking half of it
+            # at most. Mirrors LedStrand::transition().
+            if fade_ticks > self.trans_ticks // 2:
+                fade_ticks = self.trans_ticks // 2 if self.trans_ticks >= 2 else 1
+                self.trans_fade_step = (255 + fade_ticks - 1) // fade_ticks
+            window = self.trans_ticks - fade_ticks if self.trans_ticks > fade_ticks else 0
+            self.trans_bit_start = [self._rng.randrange(window + 1) if window else 0
+                                    for _ in range(bits)]
+
+    @property
+    def transitioning(self) -> bool:
+        return self.trans_kind != TransitionKind.CUT
+
+    def _transition_coverage(self, i: int, full: int, frac: int) -> int:
+        """How much of the new frame a transition shows at pixel `i`, 0-255.
+        Mirrors LedStrand::transitionCoverage()."""
+        if self.trans_kind == TransitionKind.SPREAD:
+            rank = spread_rank(i, self.length, self.trans_origin, self.trans_invert)
+            if rank < full:
+                return 255
+            return frac if rank == full else 0
+        b = i // self.trans_bit_width
+        if b >= len(self.trans_bit_start) or self.trans_elapsed <= self.trans_bit_start[b]:
+            return 0
+        return min(255, (self.trans_elapsed - self.trans_bit_start[b]) * self.trans_fade_step)
 
     def _rebuild_splice_mask(self) -> None:
         bin_count = self.splice_sections + 1
@@ -1279,14 +1522,14 @@ class Strand:
         self.overlay_shift_speed = 0
 
     def overlay_pulse(self, color: int, run_length: int, speed: int | Speed,
-                      bg_color: int = 0) -> None:
+                      bg_color: int = 0, invert: bool = False) -> None:
         speed = as_speed(speed)
         self.overlay_buffer = [bg_color] * self.length
         rl = min(run_length, self.length)
         for i in range(rl):
             self.overlay_buffer[i] = color
         self.overlay_shift_step = 0
-        self.overlay_shift_speed = speed.pixels
+        self.overlay_shift_speed = _shift_for(speed.pixels, self.length, invert)
         self.overlay_shift_pacer.reset(self._step_ticks(speed))
         self.overlay_anim_mode = AnimMode.SHIFT
 
@@ -1315,25 +1558,26 @@ class Strand:
         self.overlay_flash_counter += 1
 
     def overlay_flow(self, color1: int, color2: int, speed: int | Speed,
-                     seamless: bool = True) -> None:
+                     seamless: bool = True, invert: bool = False) -> None:
         speed = as_speed(speed)
         self.overlay_buffer = gen_gradient(color1, color2, self.length, seamless)
         self.overlay_shift_step = 0
-        self.overlay_shift_speed = speed.pixels
+        self.overlay_shift_speed = _shift_for(speed.pixels, self.length, invert)
         self.overlay_shift_pacer.reset(self._step_ticks(speed))
         self.overlay_anim_mode = AnimMode.SHIFT
 
-    def overlay_rainbow(self, speed: int | Speed) -> None:
+    def overlay_rainbow(self, speed: int | Speed, invert: bool = False) -> None:
         speed = as_speed(speed)
         self.overlay_buffer = gen_rainbow(self.length)
         self.overlay_shift_step = 0
-        self.overlay_shift_speed = speed.pixels
+        self.overlay_shift_speed = _shift_for(speed.pixels, self.length, invert)
         self.overlay_shift_pacer.reset(self._step_ticks(speed))
         self.overlay_anim_mode = AnimMode.SHIFT
 
     def overlay_twinkle(self, colors: Sequence[int], density_pct: int = 30, fade_step: int = 16,
-                        bg_color: int = 0) -> None:
-        self.overlay_twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color)
+                        bg_color: int = 0, bit_width: int = 1) -> None:
+        self.overlay_twinkle_state.reset(self.length, colors, density_pct, fade_step, bg_color,
+                                         bit_width)
         self.overlay_buffer = [bg_color] * self.length
         self.overlay_shift_step = 0
         self.overlay_shift_speed = 0
@@ -1453,15 +1697,19 @@ class Strand:
         No firmware counterpart - it exists so Pattern Studio can scrub a
         paused strand and still see the frame that position lands on.
         """
-        self._flush_buffer()
+        self._flush_buffer(advance=False)
 
-    def _flush_buffer(self) -> None:
+    def _flush_buffer(self, advance: bool = True) -> None:
+        """`advance` False recomposites without moving a transition on,
+        which only render() wants."""
         # Meter fill cutoff, in whole pixels plus a fraction of the next one.
         # Constant across the frame, so it is worked out here rather than
         # inside the per-pixel loop.
         level_full, level_frac = divmod(self.level_value * self.length, 255)
         buf_size = len(self.buffer)
         overlay_buf_size = len(self.overlay_buffer)
+        wipe_mask = self.splice_active and self.splice_mode in (SpliceMode.SPREAD,
+                                                                SpliceMode.TWINKLE)
 
         pixels = []
         for i in range(self.length):
@@ -1483,7 +1731,11 @@ class Strand:
 
             color = base_color
 
-            if self.splice_active and not self.splice_show_anim[i]:
+            if wipe_mask:
+                # A soft mask: a half-faded twinkle bit shows half the animation.
+                masked = overlay_color if self.splice_use_overlay else self.splice_bg_color
+                color = lerp_color(masked, base_color, self._mask_coverage(i))
+            elif self.splice_active and not self.splice_show_anim[i]:
                 region_idx = self.splice_pixel_region_idx[i]
                 if region_idx >= 0:
                     state = self.splice_regions[region_idx]
@@ -1497,7 +1749,29 @@ class Strand:
                     color = overlay_color if self.splice_pixel_use_overlay[i] else self.splice_pixel_bg[i]
 
             pixels.append(self._apply_brightness(color))
+
+        # A transition wipes the finished frame in over the one it started
+        # from, after brightness on both sides, as the firmware does.
+        if self.trans_kind != TransitionKind.CUT:
+            elapsed = self.trans_elapsed + 1 if advance else self.trans_elapsed
+            self.trans_elapsed = elapsed
+            cover_q8 = (elapsed * spread_ranks(self.length, self.trans_origin) * 255
+                        // self.trans_ticks)
+            full, frac = divmod(cover_q8, 255)
+            for i in range(min(self.length, len(self.trans_from))):
+                pixels[i] = lerp_color(self.trans_from[i], pixels[i],
+                                       self._transition_coverage(i, full, frac))
+            if advance and elapsed >= self.trans_ticks:
+                self.trans_kind = TransitionKind.CUT
         self.pixels = pixels
+
+    def segment_pixels(self, index: int) -> list[int]:
+        """What strip `index` of a chain is sent, LED 0 first: its slice of
+        `pixels` - what the firmware hands that strip's AdiLed::write()."""
+        if index >= len(self.segments):
+            return []
+        start = sum(seg.length for seg in self.segments[:index])
+        return self.pixels[start:start + self.segments[index].length]
 
     # ========================================================================
     # Custom animations (Compositions) - mirror of src/led_custom.cpp
@@ -1745,7 +2019,7 @@ class Strand:
         if layer.kind == _comp.LayerKind.TWINKLE:
             # Every spark back to dark, on the palette _build_layer() set.
             st.twinkle.reset(self.length, st.twinkle.palette, layer.density_pct,
-                             layer.fade_step, layer.bg_color)
+                             layer.fade_step, layer.bg_color, layer.bit_width or 1)
 
         if layer.kind == _comp.LayerKind.FRAMES:
             self._decode_frame(layer, st)
@@ -2017,10 +2291,13 @@ class Strand:
             # _step_twinkle() has already moved level/target/hold this tick.
             # The spark's own brightness *is* its coverage, so a KEY twinkle
             # fades into what is under it rather than onto its own background.
-            if st.twinkle is None or k >= len(st.twinkle.level):
+            if st.twinkle is None:
                 return 0
-            fgc = st.twinkle.palette[st.twinkle.color_idx[k]] if st.twinkle.palette else 0
-            return (st.twinkle.level[k] << 24) | (fgc & 0xFFFFFF)
+            b = k // st.twinkle.bit_width
+            if b >= len(st.twinkle.level):
+                return 0
+            fgc = st.twinkle.palette[st.twinkle.color_idx[b]] if st.twinkle.palette else 0
+            return (st.twinkle.level[b] << 24) | (fgc & 0xFFFFFF)
 
         if kind == _comp.LayerKind.BITSCROLL:
             if not st.scratch:

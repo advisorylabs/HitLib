@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QDateTime, QEvent, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -30,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import __version__, deploy, presets, theme
+from . import __version__, deploy, presets, recovery, theme
 from .canvas import StripCanvas
 from .codegen import (
     generate_cpp,
@@ -47,11 +49,15 @@ from .envelope import BAND_BASS, bake
 from .group_edit import apply_changes, diff_config
 from .inspector import InspectorPanel
 from .models import (
+    MAX_CHAIN_LEDS,
+    MAX_SEGMENTS,
     AnimationKind,
     CompositionConfig,
     Document,
     MusicConfig,
     StrandConfig,
+    chain_of,
+    chains,
     composition_ids_named,
 )
 from .music_panel import MusicPanel
@@ -76,10 +82,24 @@ _SETTINGS_ORG = "AdvisoryLabs"
 _SETTINGS_APP = "HitLib Pattern Studio"
 _SETTINGS_PROJECT_KEY = "deploy/project_root"
 _SETTINGS_PLATFORM_KEY = "export/platform"
+_SETTINGS_RECENT_KEY = "file/recent"
+
+#: How many designs File > Open Recent remembers.
+RECENT_MAX = 8
+
+#: How often an unsaved design is autosaved for recovery after a crash.
+AUTOSAVE_MS = 30_000
+
+#: What follows the file name in the title while there are unsaved changes.
+_MODIFIED_MARK = " •"
 
 #: The StrandConfig fields an engine strand is built from. Changing one needs
 #: a new strand (StrandSession.rebuild); the rest of the settings strip does not.
 _STRAND_BUILD_FIELDS = ("length", "adi_port", "smart_port", "refresh_ms")
+
+#: The StrandConfig fields that describe a strip itself rather than what it
+#: plays: all a group edit changes on a strand chained onto another in the group.
+_STRIP_FIELDS = frozenset({"length", "smart_port"})
 
 
 def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:
@@ -189,6 +209,21 @@ class MainWindow(QMainWindow):
         self._undo_idle.setSingleShot(True)
         self._undo_idle.setInterval(700)
         self._undo_idle.timeout.connect(self._bump_undo_epoch)
+        # Unsaved changes are the undo stack away from where it was last
+        # saved, plus what it does not hold: a song loaded or reshaped, or a
+        # design brought back from an autosave, which is in no file yet.
+        self._untracked_changes = False
+        self.undo_stack.cleanChanged.connect(self._on_clean_changed)
+        # Autosave for recovery after a crash. Counted rather than compared:
+        # a burst of edits merges into one undo step without moving the
+        # stack's index, and still has to be written.
+        self._edit_generation = 0
+        self._autosaved_generation = 0
+        self._autosave = recovery.AutosaveSlot()
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(AUTOSAVE_MS)
+        self._autosave_timer.timeout.connect(self._autosave_now)
+        self._autosave_timer.start()
         # Frameless, with the logo/menus/title/caption buttons folded into one
         # row. See window_chrome for what that trades away and how it's
         # paid back. Built before _update_title(), which writes into it.
@@ -324,10 +359,13 @@ class MainWindow(QMainWindow):
 
         self.strand_list.add_requested.connect(self.add_strand)
         self.strand_list.remove_requested.connect(self.remove_selected_strands)
+        self.strand_list.chain_requested.connect(self._chain_selected)
+        self.strand_list.unchain_requested.connect(self._unchain_selected)
         self.strand_list.selection_changed.connect(self._on_selection_changed)
         self.inspector.strand_settings_changed.connect(self._on_strand_settings_changed)
         self.inspector.animation_changed.connect(self._on_animation_changed)
         self.inspector.anim_panel.open_as_custom.connect(self._open_as_custom)
+        self.inspector.modes_panel.preview_transition_requested.connect(self._preview_transition)
         self.music_panel.song_changed.connect(self._on_song_changed)
         self.music_panel.position_changed.connect(self._on_music_position)
         self.music_panel.playing_changed.connect(self._on_music_playing)
@@ -364,13 +402,29 @@ class MainWindow(QMainWindow):
         menu = self.title_bar.menu_bar.addMenu("&File")
         new_action = menu.addAction("&New", self._file_new)
         open_action = menu.addAction("&Open...", self._file_open)
+        # Filled each time it opens, so it is never stale - another window
+        # may have saved somewhere since this one built its menu.
+        self.recent_menu = menu.addMenu("Open &Recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         menu.addSeparator()
         save_action = menu.addAction("&Save", self._file_save)
         save_as_action = menu.addAction("Save &As...", self._file_save_as)
         menu.addSeparator()
         menu.addAction("&Import...", self._file_import)
+        # Every platform: New, Open and Close all ask before they throw away
+        # unsaved changes, so a stray keypress costs nothing.
+        for action, key in (
+            (new_action, QKeySequence.StandardKey.New),
+            (open_action, QKeySequence.StandardKey.Open),
+            (save_action, QKeySequence.StandardKey.Save),
+            (save_as_action, QKeySequence.StandardKey.SaveAs),
+        ):
+            action.setShortcuts(QKeySequence.keyBindings(key))
+        # Windows has no standard Save As chord, so Qt binds none there.
+        if not save_as_action.shortcuts():
+            save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         if window_chrome.IS_MAC:
-            self._add_mac_file_keys(menu, new_action, open_action, save_action, save_as_action)
+            self._add_mac_file_keys(menu)
 
         edit_menu = self.title_bar.menu_bar.addMenu("&Edit")
         self.undo_action = self.undo_stack.createUndoAction(self, "&Undo")
@@ -407,27 +461,18 @@ class MainWindow(QMainWindow):
         export_menu.addAction("Choose Robot Project...", self._choose_project)
         self._refresh_deploy_action()
 
-    def _add_mac_file_keys(self, menu, new_action, open_action, save_action, save_as_action) -> None:
+    def _add_mac_file_keys(self, menu) -> None:
         """What the File menu needs on macOS and nowhere else.
 
-        The menus live in the screen's menu bar there, where Alt mnemonics do
-        not exist, so without Cmd shortcuts File has no keyboard route at all.
-        Windows deliberately gets none of this: nothing in File asks before it
-        acts, and a new Ctrl+N or Ctrl+W there would throw the open design
-        away on a stray keypress where today it takes a click.
+        A Close Window item, which a Mac app is expected to have and a
+        Windows one is not - there the caption's close button and Alt+F4 are
+        the way out - and About, which AppKit moves into the application menu.
 
         There is no View menu with a full-screen item either. AppKit adds its
         own "Enter Full Screen" to any menu titled View, so one of ours would
         stand next to it as a second copy; the green button and Globe+F
         already cover it.
         """
-        for action, key in (
-            (new_action, QKeySequence.StandardKey.New),
-            (open_action, QKeySequence.StandardKey.Open),
-            (save_action, QKeySequence.StandardKey.Save),
-            (save_as_action, QKeySequence.StandardKey.SaveAs),
-        ):
-            action.setShortcut(key)
         menu.addSeparator()
         close_action = menu.addAction("Close Window", self.close)
         close_action.setShortcuts(QKeySequence.keyBindings(QKeySequence.StandardKey.Close))
@@ -451,7 +496,73 @@ class MainWindow(QMainWindow):
             "github.com/advisorylabs/HitLib</a>",
         )
 
+    # ------------------------------------------------------------------
+    # Unsaved changes
+    # ------------------------------------------------------------------
+
+    def is_modified(self) -> bool:
+        """Whether the design holds changes that are in no file yet."""
+        return self._untracked_changes or not self.undo_stack.isClean()
+
+    def _on_clean_changed(self, _clean: bool) -> None:
+        self._update_title()
+
+    def _note_edit(self) -> None:
+        """Something in the document changed: the next autosave has work."""
+        self._edit_generation += 1
+
+    def _mark_untracked_change(self) -> None:
+        self._untracked_changes = True
+        self._note_edit()
+        self._update_title()
+
+    def _mark_saved(self) -> None:
+        """The design as it is now is what the file holds."""
+        self._untracked_changes = False
+        self.undo_stack.setClean()
+        # Saved work has nothing left to recover.
+        self._autosave.discard()
+        self._autosaved_generation = self._edit_generation
+        self._update_title()
+
+    def _ask_save_changes(self, doing: str) -> QMessageBox.StandardButton:
+        """Save, Discard or Cancel, before `doing` drops unsaved changes."""
+        name = self._current_file_path.name if self._current_file_path else "this design"
+        box = QMessageBox(QMessageBox.Warning, "Unsaved Changes",
+                          f"Save the changes to {name} before {doing}?",
+                          QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, self)
+        box.setInformativeText("If you don't save, the changes are lost.")
+        box.setDefaultButton(QMessageBox.Save)
+        return QMessageBox.StandardButton(box.exec())
+
+    def _confirm_discard(self, doing: str) -> bool:
+        """Whether `doing` may go ahead: nothing is unsaved, the user saved
+        it, or the user said to throw it away."""
+        if not self.is_modified():
+            return True
+        answer = self._ask_save_changes(doing)
+        if answer == QMessageBox.Save:
+            # A Save As the user cancels has saved nothing, so neither is it
+            # a go-ahead.
+            return self._file_save()
+        return answer == QMessageBox.Discard
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if not self._confirm_discard("closing"):
+            event.ignore()
+            return
+        # Closed on purpose, saved or not, so there is nothing to recover.
+        self._autosave_timer.stop()
+        self._autosave.close()
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # File menu actions
+    # ------------------------------------------------------------------
+
     def _file_new(self) -> None:
+        if not self._confirm_discard("starting a new design"):
+            return
         self._clear_sessions()
         self.music = MusicConfig()
         self.compositions = []
@@ -459,11 +570,19 @@ class MainWindow(QMainWindow):
         self.inspector.set_compositions(self.compositions)
         self.music_panel.load(self.music)
         self._current_file_path = None
-        self._update_title()
         self.add_strand()
         self.animator.set_library(self.compositions, self._next_composition_id)
+        self._reset_history()
+
+    def _reset_history(self) -> None:
+        """A new starting point: nothing to undo, nothing unsaved, and no
+        autosave of whatever was open before."""
         self.undo_stack.clear()
         self._mark_undo()
+        self._untracked_changes = False
+        self._autosave.discard()
+        self._autosaved_generation = self._edit_generation
+        self._update_title()
 
     def _load_checked(self, path: str, title: str) -> Document | None:
         """`path` as a Document whose song bakes and whose every strand builds
@@ -492,11 +611,24 @@ class MainWindow(QMainWindow):
 
     def _file_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open Profile", "", _FILE_FILTER)
-        if not path:
-            return
-        document = self._load_checked(path, "Open Failed")
-        if document is None:
-            return
+        if path:
+            self._open_path(Path(path))
+
+    def _open_path(self, path: Path) -> bool:
+        """Open `path` in place of the design, once it has loaded and the
+        user has had the chance to save what it replaces."""
+        document = self._load_checked(str(path), "Open Failed")
+        # Asked after the load, not before: a file that turns out not to
+        # open costs the design nothing, so it should not cost a question.
+        if document is None or not self._confirm_discard("opening another design"):
+            return False
+        self._adopt_document(document, path)
+        self._reset_history()
+        self._remember_recent(path)
+        return True
+
+    def _adopt_document(self, document: Document, path: Path | None) -> None:
+        """Replace the open design with `document`, which Save writes to `path`."""
         self._clear_sessions()
         self.music = document.music
         self.compositions = document.compositions
@@ -509,30 +641,35 @@ class MainWindow(QMainWindow):
             self._add_session(cfg)
         if not self.sessions:
             self.add_strand()
-        self._current_file_path = Path(path)
-        self._update_title()
+        self._current_file_path = path
         self._note_composition_ids()
         self.animator.set_library(self.compositions, self._next_composition_id)
-        self.undo_stack.clear()
-        self._mark_undo()
 
-    def _file_save(self) -> None:
+    def _file_save(self) -> bool:
+        """Save to the design's file, asking where first if it has none.
+        Whether the design is now in a file."""
         if self._current_file_path is None:
-            self._file_save_as()
-            return
-        self._write_to(self._current_file_path)
+            return self._file_save_as()
+        if not self._write_to(self._current_file_path):
+            return False
+        self._mark_saved()
+        return True
 
-    def _file_save_as(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save Profile", "", _FILE_FILTER)
+    def _file_save_as(self) -> bool:
+        start = str(self._current_file_path) if self._current_file_path else ""
+        path, _ = QFileDialog.getSaveFileName(self, "Save Profile", start, _FILE_FILTER)
         if not path:
-            return
+            return False
         p = Path(path)
         if not p.suffix:
             p = p.with_suffix(_DEFAULT_SUFFIX)
         # Only a file that now holds the design becomes the one Save writes to.
-        if self._write_to(p):
-            self._current_file_path = p
-            self._update_title()
+        if not self._write_to(p):
+            return False
+        self._current_file_path = p
+        self._mark_saved()
+        self._remember_recent(p)
+        return True
 
     def _file_import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Import Profile", "", _FILE_FILTER)
@@ -547,21 +684,25 @@ class MainWindow(QMainWindow):
         self._adopt_music(document)
         self._adopt_compositions(document)
         self.inspector.set_compositions(self.compositions)
+        # Chains come in whole, but never joined onto a strand already here:
+        # nothing in the imported file meant that one.
+        if document.strands:
+            document.strands[0].chained = False
         for cfg in document.strands:
             self._add_session(cfg)
         self._sync_compositions()
         self.animator.set_library(self.compositions, self._next_composition_id)
         self._push_undo("Import")
 
+    def _document(self) -> Document:
+        return Document(strands=[s.config for s in self.sessions], music=self.music,
+                        compositions=self.compositions)
+
     def _write_to(self, path: Path) -> bool:
         """Save the document to `path`. False, once the user has been told,
         if it could not be written."""
         try:
-            save_document(
-                path,
-                Document(strands=[s.config for s in self.sessions], music=self.music,
-                         compositions=self.compositions),
-            )
+            save_document(path, self._document())
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"Couldn't save {path}:\n{exc}")
             return False
@@ -569,11 +710,137 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         name = self._current_file_path.name if self._current_file_path else None
+        if self.is_modified():
+            name = (name or "Untitled") + _MODIFIED_MARK
         suffix = f" - {name}" if name else ""
         # Both: the title bar is what's on screen, and the window title is
         # still what the taskbar and Alt-Tab read.
         self.setWindowTitle(f"HitLib Pattern Studio v{__version__}{suffix}")
         self.title_bar.set_title("HitLib Pattern Studio", __version__, name)
+
+    # ------------------------------------------------------------------
+    # Open Recent
+    # ------------------------------------------------------------------
+
+    def recent_files(self) -> list[Path]:
+        stored = self._settings().value(_SETTINGS_RECENT_KEY, [])
+        # QSettings hands back a lone string for a one-item list in some
+        # formats, and None for an empty one.
+        if isinstance(stored, str):
+            stored = [stored]
+        return [Path(p) for p in (stored or []) if p][:RECENT_MAX]
+
+    def _set_recent_files(self, paths: list[Path]) -> None:
+        self._settings().setValue(_SETTINGS_RECENT_KEY, [str(p) for p in paths[:RECENT_MAX]])
+
+    @staticmethod
+    def _same_file(a: Path, b: Path) -> bool:
+        return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+    def _remember_recent(self, path: Path) -> None:
+        """Put `path` at the top of Open Recent."""
+        kept = [p for p in self.recent_files() if not self._same_file(p, path)]
+        self._set_recent_files([path, *kept])
+
+    def _forget_recent(self, path: Path) -> None:
+        self._set_recent_files([p for p in self.recent_files() if not self._same_file(p, path)])
+
+    def _fill_recent_menu(self) -> None:
+        menu = self.recent_menu
+        menu.clear()
+        recent = self.recent_files()
+        if not recent:
+            menu.addAction("No Recent Designs").setEnabled(False)
+            return
+        for n, path in enumerate(recent, start=1):
+            # The number is a mnemonic for the first nine; "&&" keeps an
+            # ampersand in a file name from becoming one.
+            label = path.name.replace("&", "&&")
+            text = f"&{n}  {label}" if n <= 9 else label
+            action = menu.addAction(text)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda _checked=False, p=path: self._open_recent(p))
+        menu.setToolTipsVisible(True)
+        menu.addSeparator()
+        menu.addAction("Clear Recent Designs", lambda: self._set_recent_files([]))
+
+    def _open_recent(self, path: Path) -> None:
+        if not path.is_file():
+            QMessageBox.warning(
+                self, "Design Not Found",
+                f"{path} isn't there any more - it may have been moved, renamed or "
+                "deleted.\n\nIt has been taken off the recent list.")
+            self._forget_recent(path)
+            return
+        self._open_path(path)
+
+    # ------------------------------------------------------------------
+    # Autosave and recovery
+    # ------------------------------------------------------------------
+
+    def _autosave_now(self) -> None:
+        """Write unsaved work where a crash cannot take it. Quietly: a failed
+        autosave is tried again next time, and is no reason to interrupt."""
+        if not self.is_modified():
+            if self._autosave.has_autosave:
+                self._autosave.discard()
+            return
+        if self._autosaved_generation == self._edit_generation and self._autosave.has_autosave:
+            return
+        try:
+            self._autosave.write(self._document(), self._current_file_path)
+        except OSError as exc:
+            print(f"Pattern Studio: autosave failed: {exc}", file=sys.stderr)
+            return
+        self._autosaved_generation = self._edit_generation
+
+    def offer_recovery(self) -> None:
+        """Offer back work a window lost when Pattern Studio last closed
+        without saving - a crash, a power cut, a killed process.
+
+        Run by app.main() once the window is up, not by the constructor, so
+        building a window never stops to ask a question. The newest is
+        offered first; one restore fills this window, so whatever is left
+        waits for the next launch.
+        """
+        orphans = recovery.find_orphans()
+        for n, orphan in enumerate(orphans):
+            choice = self._ask_restore(orphan)
+            if choice == QMessageBox.Discard:
+                orphan.discard()
+            elif choice != QMessageBox.Yes:
+                orphan.release()
+            elif self._restore(orphan):
+                orphan.discard()
+                for rest in orphans[n + 1:]:
+                    rest.release()
+                return
+            else:
+                orphan.release()
+
+    def _ask_restore(self, orphan: recovery.Orphan) -> QMessageBox.StandardButton:
+        when = QDateTime.fromSecsSinceEpoch(int(orphan.saved_at)).toString("ddd d MMM, h:mm AP")
+        box = QMessageBox(QMessageBox.Question, "Restore Unsaved Work?",
+                          f"Pattern Studio closed without saving the changes to "
+                          f"{orphan.label}. They were autosaved {when}.",
+                          QMessageBox.Yes | QMessageBox.Discard | QMessageBox.Cancel, self)
+        box.button(QMessageBox.Yes).setText("Restore")
+        box.button(QMessageBox.Cancel).setText("Not Now")
+        box.setInformativeText("Restore brings them back as unsaved changes. Discard "
+                               "deletes them for good. Not Now asks again next launch.")
+        box.setDefaultButton(QMessageBox.Yes)
+        return QMessageBox.StandardButton(box.exec())
+
+    def _restore(self, orphan: recovery.Orphan) -> bool:
+        document = self._load_checked(str(orphan.design), "Restore Failed")
+        if document is None or not self._confirm_discard("restoring the autosave"):
+            return False
+        self._adopt_document(document, orphan.origin)
+        self._reset_history()
+        # In no file yet, so unsaved until it is saved - and autosaved again
+        # by this window in the meantime.
+        self._mark_untracked_change()
+        return True
 
     # ------------------------------------------------------------------
     # Window chrome
@@ -616,19 +883,26 @@ class MainWindow(QMainWindow):
             self, "Can't Export", "Fix these before exporting:\n\n" + "\n".join(f"- {e}" for e in errors)
         )
 
-    def _current_config_or_warn(self) -> StrandConfig | None:
+    def _current_chain_or_warn(self) -> tuple[StrandConfig, list[StrandConfig]] | None:
         """The selected strand's config, validated, with in-progress inspector
-        edits flushed into it first."""
+        edits flushed into it first - and the strands chained on after it.
+
+        A strand that is part of a chain exports as the whole chain, head
+        first: on the robot it is one LedStrand, and a strip on its own would
+        drive half of it."""
         session = self._current_session()
         if session is None:
             QMessageBox.warning(self, "No Strand Selected", "Select a strand to export first.")
             return None
         self.inspector.save(session.config)  # make sure in-progress edits are flushed
-        errors = validate_for_export(session.config, self.music, self.compositions)
+        configs = [s.config for s in self.sessions]
+        rows = chain_of(configs, self._current_index)
+        head, chained = configs[rows[0]], [configs[i] for i in rows[1:]]
+        errors = validate_for_export(head, self.music, self.compositions, chained)
         if errors:
             self._show_export_errors(errors)
             return None
-        return session.config
+        return head, chained
 
     def _all_configs_or_warn(self) -> list[StrandConfig] | None:
         if not self.sessions:
@@ -645,11 +919,12 @@ class MainWindow(QMainWindow):
         return configs
 
     def _generate_export_or_warn(self, header_name: str | None = None) -> str | None:
-        config = self._current_config_or_warn()
-        if config is None:
+        found = self._current_chain_or_warn()
+        if found is None:
             return None
+        config, chained = found
         return generate_cpp(config, header_name, self.music, self._platform,
-                            self.compositions)
+                            self.compositions, chained)
 
     def _write_export(self, code_for: Callable[[str], str], title: str, suggested: str) -> None:
         """Ask for a path, then generate. The chosen filename goes into the
@@ -671,12 +946,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed", f"Couldn't write {p}:\n{exc}")
 
     def _export_save(self) -> None:
-        config = self._current_config_or_warn()
-        if config is None:
+        found = self._current_chain_or_warn()
+        if found is None:
             return
+        config, chained = found
         self._write_export(
             lambda name: generate_cpp(config, name, self.music, self._platform,
-                                      self.compositions),
+                                      self.compositions, chained),
             "Export C++ Profile",
             suggested_header_name(config.name, self._platform),
         )
@@ -868,7 +1144,7 @@ class MainWindow(QMainWindow):
 
     def _clear_sessions(self) -> None:
         for session in self.sessions:
-            session.stop()
+            session.dispose()
             session.deleteLater()
         self.sessions.clear()
         self._current_index = -1
@@ -904,12 +1180,25 @@ class MainWindow(QMainWindow):
         if not valid:
             return
         self._bump_undo_epoch()
+        removed: list[StrandSession] = []
         # Highest row first, so each pop() can't shift the rows still to remove.
         for row in reversed(valid):
-            session = self.sessions.pop(row)
-            session.stop()
-            session.deleteLater()
+            # A head taken out leaves the strand under it heading what is left
+            # of its chain. Left chained, that strand continued whatever was
+            # above the head instead - another strand's chain, or a lone one.
+            is_head = row == 0 or not self.sessions[row].config.chained
+            below = row + 1 < len(self.sessions) and self.sessions[row + 1].config
+            if is_head and below and below.chained:
+                below.chained = False
+            removed.append(self.sessions.pop(row))
+        if self.sessions:
+            self.sessions[0].config.chained = False  # nothing above it to continue
+        # Relinked while the removed ones still run: a strand taking over a
+        # chain from its removed head plays on if that head was playing.
         self._refresh_list()
+        for session in removed:
+            session.dispose()
+            session.deleteLater()
         new_row = min(valid[0], len(self.sessions) - 1)
         self.strand_list.select(new_row)
         # setCurrentRow(-1) is a no-op (and won't fire selection_changed) when
@@ -921,7 +1210,96 @@ class MainWindow(QMainWindow):
         self._push_undo("Remove Strand" if len(valid) == 1 else "Remove Strands")
 
     def _refresh_list(self) -> None:
-        self.strand_list.set_names([s.config.name for s in self.sessions])
+        self._relink_chains()
+        self.strand_list.set_names([s.config.name for s in self.sessions],
+                                   [row > 0 and s.config.chained
+                                    for row, s in enumerate(self.sessions)])
+
+    # ------------------------------------------------------------------
+    # Chains
+    # ------------------------------------------------------------------
+
+    def _relink_chains(self) -> None:
+        """Point every session at the chain it is part of now.
+
+        Cheap when nothing changed - a head only rebuilds its engine strand
+        when the strips under it did - so it runs on every list refresh, which
+        is every add, remove, settings edit, undo and open.
+        """
+        configs = [s.config for s in self.sessions]
+        rebuilt: list[StrandSession] = []
+        for group in chains(configs):
+            head = self.sessions[group[0]]
+            if head.lead([configs[i] for i in group[1:]]):
+                rebuilt.append(head)
+            offset = head.config.length
+            for row in group[1:]:
+                self.sessions[row].follow(head, offset)
+                offset += configs[row].length
+        # A rebuilt head starts its song over: put it back where the Song
+        # bar is, or chaining a strip on mid-song rewinds the whole chain.
+        if rebuilt:
+            self._sync_music(rebuilt)
+        self.canvas.update()
+
+    def _chain_head_row(self, row: int) -> int:
+        configs = [s.config for s in self.sessions]
+        group = chain_of(configs, row)
+        return group[0] if group else row
+
+    def _update_chain_action(self) -> None:
+        """Offer Chain for a run of selected strands, Unchain for a selection
+        holding a chained one, and say what to select otherwise."""
+        rows = self._selected_indices
+        configs = [s.config for s in self.sessions]
+        contiguous = len(rows) >= 2 and rows == list(range(rows[0], rows[0] + len(rows)))
+        if contiguous and not all(configs[r].chained for r in rows[1:]):
+            self.strand_list.set_chain_action(
+                "chain",
+                "Chain these strands end to end, in list order, so the first one's "
+                "animation plays across all of them as one long strand.")
+        elif any(r > 0 and configs[r].chained for r in rows):
+            self.strand_list.set_chain_action(
+                "unchain",
+                "Take the selected strands off the strand above them, so each "
+                "plays an animation of its own again.")
+        else:
+            self.strand_list.set_chain_action(
+                "", "Select two or more strands next to each other to chain them "
+                    "into one long strand.")
+
+    def _chain_selected(self) -> None:
+        rows = self._selected_indices
+        if len(rows) < 2:
+            return
+        configs = [s.config for s in self.sessions]
+        # The whole chain the selection would make, including any strands the
+        # first selected one is already chained onto, or that already follow
+        # the last.
+        head = self._chain_head_row(rows[0])
+        tail = chain_of(configs, rows[-1])[-1]
+        members = configs[head:tail + 1]
+        total = sum(c.length for c in members)
+        if len(members) > MAX_SEGMENTS or total > MAX_CHAIN_LEDS:
+            QMessageBox.warning(
+                self, "Chain Too Long",
+                f"That chain would be {len(members)} strands and {total} LEDs. One chain "
+                f"drives at most {MAX_SEGMENTS} strands and {MAX_CHAIN_LEDS} LEDs.")
+            return
+        self._bump_undo_epoch()
+        for row in rows[1:]:
+            configs[row].chained = True
+        self._refresh_list()
+        self._on_selection_changed()
+        self._push_undo("Chain Strands")
+
+    def _unchain_selected(self) -> None:
+        self._bump_undo_epoch()
+        for row in self._selected_indices:
+            self.sessions[row].config.chained = False
+        self._refresh_list()
+        self._on_selection_changed()
+        self._push_undo("Unchain Strands")
 
     def _current_session(self) -> StrandSession | None:
         if 0 <= self._current_index < len(self.sessions):
@@ -955,8 +1333,11 @@ class MainWindow(QMainWindow):
         self.strand_list.set_group_size(len(rows))
         self.inspector.set_group_size(len(rows))
         self.canvas.set_selected(rows)
+        self._update_chain_action()
         if session is not None:
-            self.inspector.load(session.config)
+            head = session.head
+            self.inspector.set_chained_to(head.config.name if head is not None else None)
+            self.inspector.load(session.config, session.chain_length)
         self._sync_preview_band()
         self._capture_baseline()
         if not self._restoring and self._undo_mark is not None:
@@ -1029,6 +1410,10 @@ class MainWindow(QMainWindow):
         self.undo_stack.push(DocumentEdit(self, text, before, after, self._undo_epoch))
         self._undo_mark = after
         self._undo_idle.start()
+        self._note_edit()
+        # A merge into the step already on top moves neither the index nor
+        # the clean state, so the title is not told by cleanChanged.
+        self._update_title()
 
     def restore_snapshot(self, snap: Snapshot) -> None:
         """Put the document back to `snap`. Called only by DocumentEdit."""
@@ -1069,6 +1454,7 @@ class MainWindow(QMainWindow):
         # into the burst that was interrupted by it.
         self._undo_mark = self._snapshot()
         self._bump_undo_epoch()
+        self._note_edit()
 
     def _capture_baseline(self) -> None:
         """Snapshot the anchor's config so the *next* edit can be diffed
@@ -1090,10 +1476,6 @@ class MainWindow(QMainWindow):
         if anchor is None:
             return
         self.inspector.save(anchor.config)
-        # Divide shares out the strip as it is now, and Length may be what
-        # just changed. Nothing else tells the masks panels between loads.
-        self.inspector.masks_panel.set_strip_length(anchor.config.length)
-        self.inspector.modes_panel.masks_panel.set_strip_length(anchor.config.length)
 
         sessions = self._group_sessions()
         # A stale baseline (anchor moved without a selection signal) would diff
@@ -1101,9 +1483,20 @@ class MainWindow(QMainWindow):
         before = self._baseline if self._baseline_index == self._current_index else None
         if len(sessions) > 1 and before is not None:
             changes = diff_config(before, anchor.config)
+            # What a chained strip plays is its head's, so with the head in
+            # the group an edit to what it plays is the head's alone. The
+            # strip keeps its own, for Unchain to bring back; only its strip
+            # itself - length, expander - is still its own to change.
+            strip_only = [c for c in changes if c[0][0] in _STRIP_FIELDS]
             for session in sessions[1:]:
-                apply_changes(session.config, changes)
+                follows_group = session.head is not None and session.head in sessions
+                apply_changes(session.config, strip_only if follows_group else changes)
         self._capture_baseline()
+        # Divide shares out the strip as it is now, and Length may be what
+        # just changed. Nothing else tells the masks panels between loads.
+        # After the replay: a Length typed for a head and the strips chained
+        # on after it changes every one of them, and Divide spans them all.
+        self.inspector.set_strip_length(anchor.chain_length)
 
         settings_edit = rebuild
         reissue = True
@@ -1116,12 +1509,25 @@ class MainWindow(QMainWindow):
             reissue = rebuild or before.brightness != anchor.config.brightness
 
         if reissue:
+            # Once per engine strand: a chained strip's rebuild is its head's,
+            # and a chain selected whole rebuilt its head once per strip. A
+            # chained strip has no animation of its own to re-issue.
+            targets: list[StrandSession] = []
             for session in sessions:
                 if rebuild:
-                    session.rebuild()
+                    target = session.head or session
+                elif session.head is None:
+                    target = session
                 else:
-                    session.reapply_animation()
-            self._sync_music(sessions)
+                    continue
+                if target not in targets:
+                    targets.append(target)
+            for target in targets:
+                if rebuild:
+                    target.rebuild()
+                else:
+                    target.reapply_animation()
+            self._sync_music(targets)
         self._sync_preview_band()
         if settings_edit:
             self._refresh_list()
@@ -1206,7 +1612,7 @@ class MainWindow(QMainWindow):
         animation.composition_id = comp.id
 
         self._sync_compositions()
-        self.inspector.load(session.config)
+        self.inspector.load(session.config, session.chain_length)
         self._capture_baseline()
         self.animator.set_library(self.compositions, self._next_composition_id)
         self.animator.library.setCurrentRow(len(self.compositions) - 1)
@@ -1248,7 +1654,13 @@ class MainWindow(QMainWindow):
         The shortcut back out of the Animator: having built something, the
         next thing anyone wants is to see it on the strip they built it for.
         """
-        sessions = self._group_sessions()
+        sessions = []
+        for session in self._group_sessions():
+            # A chained strand plays its head's animation, so that is the one
+            # to point at the composition.
+            lead = session.head or session
+            if lead not in sessions:
+                sessions.append(lead)
         if not sessions:
             QMessageBox.information(
                 self, "No Strand Selected",
@@ -1276,7 +1688,7 @@ class MainWindow(QMainWindow):
         self._sync_compositions()
         session = self._current_session()
         if session is not None:
-            self.inspector.load(session.config)
+            self.inspector.load(session.config, session.chain_length)
         self._capture_baseline()
         self._push_undo("Play Custom Animation")
         self.tabs.go_to(DESIGN)
@@ -1375,6 +1787,8 @@ class MainWindow(QMainWindow):
         for session in self.sessions:
             session.set_music(binding)
         self._sync_music(self.sessions)
+        # The song is saved with the design but is not on the undo stack.
+        self._mark_untracked_change()
 
     def _on_music_position(self, position_ms: int) -> None:
         for session in self.sessions:
@@ -1422,3 +1836,10 @@ class MainWindow(QMainWindow):
     def _reset_selected(self) -> None:
         for session in self._group_sessions():
             session.reset()
+
+    def _preview_transition(self, mode_idx: int, phase_idx: int) -> None:
+        """Play a phase's transition now, on each selected strand that has
+        it: the group the editor replays its edits onto. Not an edit, so not
+        an undo step either."""
+        for session in self._group_sessions():
+            session.preview_transition(mode_idx, phase_idx)

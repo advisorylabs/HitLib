@@ -40,11 +40,13 @@ from PySide6.QtWidgets import (
 
 from .. import fill_sources, presets, theme
 from ..canvas import StripCanvas
-from ..inspector import GaugeStopsEditor, _reading_spin
+from ..inspector import GaugeStopsEditor, _reading_spin, bit_width_spin
 from ..models import (
     MAX_BINDINGS,
+    MAX_CHAIN_LEDS,
     MAX_DRIVERS,
     MAX_LAYERS,
+    MAX_LEDS,
     AnimationConfig,
     AnimationKind,
     BindingConfig,
@@ -71,9 +73,27 @@ from .pixel_grid import PixelGridEditor
 from .strips import SpanRuler, TimelineStrip
 
 #: What the scratch preview runs at when no strand says otherwise. Twenty is
-#: what a real strip is - HitLib caps at 64, but teams run a few short
-#: strands on separate ports rather than one long one.
+#: what a real strip is - HitLib caps one at 64, and a chain of them at 128,
+#: but teams run a few short strands on separate ports rather than one long
+#: one.
 DEFAULT_PREVIEW_LENGTH = 20
+
+
+class _PreviewSession(StrandSession):
+    """The scratch strand, drawn as one row however many strips it takes.
+
+    Past MAX_LEDS the preview is a chain, as a strand that long is on the
+    robot. A chain head draws only its own strip on the Design tab, where its
+    other strips are rows of their own; here there is one row, on the span
+    ruler's axis, so it draws the whole chain.
+    """
+
+    @property
+    def length(self) -> int:
+        return self.strand.length
+
+    def pixels(self) -> list[int]:
+        return list(self.strand.pixels)
 
 #: Which fields each layer kind actually uses. Anything not listed is hidden,
 #: which is what keeps a SOLID layer from showing a bitscroll's spacing.
@@ -84,7 +104,7 @@ _VISIBLE: dict[LayerKind, set[str]] = {
     LayerKind.FLASH: {"color", "bg", "on_ms", "off_ms"},
     LayerKind.FLOW: {"color", "color2", "speed", "invert", "seamless"},
     LayerKind.RAINBOW: {"speed", "invert"},
-    LayerKind.TWINKLE: {"bg", "palette", "density", "fade_step"},
+    LayerKind.TWINKLE: {"bg", "palette", "density", "fade_step", "bit_width"},
     LayerKind.BITSCROLL: {"bg", "segments", "spacing", "repeating", "speed",
                           "invert", "bounce"},
     LayerKind.GAUGE: {"color", "color2", "bg", "style", "gauge_blend", "stops",
@@ -456,12 +476,15 @@ class DriversPanel(QGroupBox):
     def load(self, comp: CompositionConfig | None) -> None:
         self._loading = True
         self._comp = comp
+        # Kept where it was, as the layer list keeps its row: an undo or a
+        # return to the tab reloads this, and must not move the selection.
+        row = self.list.currentRow()
         self.list.clear()
         if comp is not None:
             for drv in comp.drivers:
                 self.list.addItem(f"{drv.name}  ·  {DRIVER_KIND_LABELS[drv.kind]}")
             if comp.drivers:
-                self.list.setCurrentRow(0)
+                self.list.setCurrentRow(min(max(row, 0), len(comp.drivers) - 1))
         self._loading = False
         self._show_selected()
 
@@ -617,7 +640,11 @@ class LayerInspector(QWidget):
         self.color_btn = ColorButton(0xFFFFFF)
         self.color2_btn = ColorButton(0x0000FF)
         self.bg_btn = ColorButton(0x000000)
-        self.run_length_spin = _spin(1, 64, 5, " px")
+        # A chain's, not one strip's: a composition can play on the head of
+        # a chain, and the firmware runs a pulse or places a layer anywhere
+        # along it. Bitscroll's Spacing stays at a strip, which is as wide as
+        # the firmware lets one tile of its pattern get.
+        self.run_length_spin = _spin(1, MAX_CHAIN_LEDS, 5, " px")
         # Pixels every so often, as the Design tab's presets. 0 px holds a
         # layer still; a binding on SPEED moves the pixels, not the time.
         self.speed_edit = SpeedEdit(min_pixels=0, max_pixels=255)
@@ -631,6 +658,7 @@ class LayerInspector(QWidget):
         self.palette_edit.setToolTip("Comma-separated hex colors, e.g. FF0000, 00FF00")
         self.density_spin = _spin(0, 100, 30, " %")
         self.fade_spin = _spin(1, 255, 16)
+        self.bit_width_spin = bit_width_spin()
         self.segments_editor = SegmentsEditor()
         self.spacing_spin = _spin(0, 64, 5, " px")
         self.repeating_check = QCheckBox()
@@ -670,6 +698,7 @@ class LayerInspector(QWidget):
         gen_row("palette", "Palette", self.palette_edit)
         gen_row("density", "Density", self.density_spin)
         gen_row("fade_step", "Fade Step", self.fade_spin)
+        gen_row("bit_width", "Bit Width", self.bit_width_spin)
         gen_row("segments", "Segments", self.segments_editor)
         gen_row("spacing", "Spacing", self.spacing_spin)
         gen_row("repeating", "Tile", self.repeating_check)
@@ -684,10 +713,10 @@ class LayerInspector(QWidget):
         # -- where it lands
         place = QGroupBox("Placement")
         place_form = _form(place)
-        self.start_spin = _spin(0, 63, 0, " px")
-        self.width_spin = _spin(0, 64, 0, " px")
+        self.start_spin = _spin(0, MAX_CHAIN_LEDS - 1, 0, " px")
+        self.width_spin = _spin(0, MAX_CHAIN_LEDS, 0, " px")
         self.width_spin.setSpecialValueText("to end")
-        self.stride_spin = _spin(0, 64, 0, " px")
+        self.stride_spin = _spin(0, MAX_CHAIN_LEDS, 0, " px")
         self.stride_spin.setSpecialValueText("once")
         self.stride_spin.setToolTip("Repeat this layer every N pixels along the strip")
         self.continuous_check = QCheckBox()
@@ -762,7 +791,7 @@ class LayerInspector(QWidget):
         self.speed_edit.changed.connect(self._emit)
         for w in (self.run_length_spin, self.on_ms_spin,
                   self.off_ms_spin, self.density_spin, self.fade_spin,
-                  self.spacing_spin, self.start_spin, self.width_spin,
+                  self.bit_width_spin, self.spacing_spin, self.start_spin, self.width_spin,
                   self.stride_spin, self.opacity_spin, self.start_ms_spin,
                   self.end_ms_spin, self.fade_in_spin, self.fade_out_spin):
             w.valueChanged.connect(self._emit)
@@ -867,6 +896,7 @@ class LayerInspector(QWidget):
         self.palette_edit.setText(format_palette(layer.palette))
         self.density_spin.setValue(layer.density_pct)
         self.fade_spin.setValue(layer.fade_step)
+        self.bit_width_spin.setValue(layer.bit_width)
         self.segments_editor.set_segments(layer.segments)
         self.spacing_spin.setValue(layer.spacing)
         self.repeating_check.setChecked(layer.repeating)
@@ -941,6 +971,7 @@ class LayerInspector(QWidget):
             layer.palette = parsed
         layer.density_pct = self.density_spin.value()
         layer.fade_step = self.fade_spin.value()
+        layer.bit_width = self.bit_width_spin.value()
         layer.segments = self.segments_editor.segments()
         layer.spacing = self.spacing_spin.value()
         layer.repeating = self.repeating_check.isChecked()
@@ -1065,8 +1096,10 @@ class AnimatorPanel(QWidget):
             "How long the timeline is before it repeats. Layers with a timing "
             "window are placed inside it.")
         self.bg_btn = ColorButton(0x000000)
-        self.length_spin = _spin(1, 64, DEFAULT_PREVIEW_LENGTH, " px")
-        self.length_spin.setToolTip("Preview length. A real strip is about 20.")
+        self.length_spin = _spin(1, MAX_CHAIN_LEDS, DEFAULT_PREVIEW_LENGTH, " px")
+        self.length_spin.setToolTip(
+            "Preview length. A real strip is about 20; past 64 the preview is "
+            "a chain of strips, as it would be on the robot.")
         self.use_btn = QPushButton("Use on Strand")
         self.use_btn.setToolTip(
             "Play this animation on the strand selected in the Design tab")
@@ -1112,7 +1145,8 @@ class AnimatorPanel(QWidget):
         settings_row.addSpacing(8)
         length_label = QLabel("Length")
         length_label.setToolTip("How long the preview strip is. A real strip "
-                                "is about 20 pixels.")
+                                "is about 20 pixels, and a chain of them up "
+                                f"to {MAX_CHAIN_LEDS}.")
         settings_row.addWidget(length_label)
         settings_row.addWidget(self.length_spin)
         settings_row.addStretch(1)
@@ -1697,12 +1731,19 @@ class AnimatorPanel(QWidget):
             self.canvas.update()
             return
 
+        # One strip holds MAX_LEDS, so a longer preview is a chain of full
+        # strips and whatever is left over, as it would be built on the robot.
+        length = self.length_spin.value()
+        strips = [min(MAX_LEDS, length - at) for at in range(0, length, MAX_LEDS)]
         cfg = StrandConfig(
             name=comp.name or "Preview",
-            length=self.length_spin.value(),
+            length=strips[0],
             animation=AnimationConfig(kind=AnimationKind.CUSTOM, composition_id=comp.id),
         )
-        self._session = StrandSession(cfg, parent=self, compositions={comp.id: comp})
+        self._session = _PreviewSession(cfg, parent=self, compositions={comp.id: comp})
+        if len(strips) > 1:
+            self._session.lead([StrandConfig(adi_port=i + 2, length=n, chained=True)
+                                for i, n in enumerate(strips[1:])])
         self._session.ticked.connect(self.canvas.update)
         # The playhead rides the preview's own clock rather than a timer of
         # its own, so what the bar says and what the strip shows cannot drift.

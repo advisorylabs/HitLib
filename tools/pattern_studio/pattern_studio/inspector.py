@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,17 +37,21 @@ from .models import (
     ANIMATION_KIND_LABELS,
     GAUGE_BLEND_LABELS,
     GAUGE_STYLE_LABELS,
+    MAX_CHAIN_LEDS,
     OVERLAY_ANIMATION_KIND_LABELS,
+    SPREAD_DIRECTION_LABELS,
     AnimationConfig,
     AnimationKind,
     GaugeBlendKind,
     GaugeStopConfig,
     GaugeStyleKind,
+    MaskKind,
     OverlayAnimationConfig,
     OverlayAnimationKind,
     SpliceMaskConfig,
     SpliceModeKind,
     SpliceRegionConfig,
+    SpreadOriginKind,
     StrandConfig,
 )
 from . import theme
@@ -63,6 +67,42 @@ def _duration_spin() -> QSpinBox:
     spin.setSingleStep(10)
     spin.setSuffix(" ms")
     return spin
+
+
+def bit_width_spin() -> QSpinBox:
+    """A twinkle's Bit Width field: pixels per spark."""
+    spin = QSpinBox()
+    spin.setRange(1, 64)
+    spin.setSuffix(" px")
+    spin.setToolTip(
+        "How many pixels each sparkle lights at once. Wider bits read from "
+        "further away; the strip is cut into bits from its first pixel."
+    )
+    return spin
+
+
+#: The four ways a spread can go, in the order spread_direction_combo()
+#: lists them. Kept out of the combo's item data: Qt hands a tuple back as None.
+_SPREAD_DIRECTIONS = list(SPREAD_DIRECTION_LABELS)
+
+
+def spread_direction_combo() -> QComboBox:
+    """The four ways a spread can go. Read and set it with spread_direction()
+    and set_spread_direction()."""
+    combo = QComboBox()
+    for direction in _SPREAD_DIRECTIONS:
+        combo.addItem(SPREAD_DIRECTION_LABELS[direction])
+    return combo
+
+
+def spread_direction(combo: QComboBox) -> tuple[SpreadOriginKind, bool]:
+    """The (origin, invert) a spread_direction_combo() shows."""
+    return _SPREAD_DIRECTIONS[max(0, combo.currentIndex())]
+
+
+def set_spread_direction(combo: QComboBox, origin: SpreadOriginKind, invert: bool) -> None:
+    key = (SpreadOriginKind(origin), bool(invert))
+    combo.setCurrentIndex(_SPREAD_DIRECTIONS.index(key) if key in _SPREAD_DIRECTIONS else 0)
 
 
 def _reading_spin() -> QSpinBox:
@@ -86,8 +126,8 @@ _VISIBLE_FIELDS: dict[AnimationKind, set[str]] = {
     AnimationKind.PULSE: {"color", "bg_color", "run_length", "speed", "invert", "bounce"},
     AnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
     AnimationKind.FLOW: {"color", "color2", "speed", "invert", "seamless"},
-    AnimationKind.RAINBOW: {"speed"},
-    AnimationKind.TWINKLE: {"palette", "bg_color", "density_pct", "fade_step"},
+    AnimationKind.RAINBOW: {"speed", "invert"},
+    AnimationKind.TWINKLE: {"palette", "bg_color", "density_pct", "fade_step", "bit_width"},
     AnimationKind.BITSCROLL: {
         "color", "bg_color", "segment_width", "spacing", "speed", "invert", "bounce", "repeating",
     },
@@ -169,6 +209,14 @@ class StrandSettingsPanel(QWidget):
         if not self._suspend:
             self.changed.emit()
 
+    def set_chained(self, chained: bool) -> None:
+        """A chained strand runs at its head's refresh rate and brightness:
+        it is one LedStrand with it on the robot."""
+        why = "Set on the first strand of the chain." if chained else ""
+        for spin in (self.refresh_spin, self.brightness_spin):
+            spin.setEnabled(not chained)
+            spin.setToolTip(why)
+
     def load(self, cfg: StrandConfig) -> None:
         self._suspend = True
         self.name_edit.setText(cfg.name)
@@ -233,7 +281,8 @@ class AnimationPanel(QGroupBox):
         self.color2_btn = ColorButton(0x0000FF)
         self.bg_btn = ColorButton(0x000000)
         self.run_length_spin = QSpinBox()
-        self.run_length_spin.setRange(1, 64)
+        # A pulse runs the length of the whole chain, not of one strip.
+        self.run_length_spin.setRange(1, MAX_CHAIN_LEDS)
         # "1 px every refresh" is the old Speed 1; a time is what goes slower.
         # speed_spin stays the name of the pixel count, which it always was.
         self.speed_edit = SpeedEdit()
@@ -249,6 +298,7 @@ class AnimationPanel(QGroupBox):
         self.density_spin.setSuffix(" %")
         self.fade_spin = QSpinBox()
         self.fade_spin.setRange(1, 255)
+        self.bit_width_spin = bit_width_spin()
         self.palette_edit = QLineEdit()
         self.palette_edit.setToolTip("Comma-separated hex colors, e.g. FF0000, 00FF00, 0000FF")
         self.segment_width_spin = QSpinBox()
@@ -375,6 +425,7 @@ class AnimationPanel(QGroupBox):
         add_row("seamless", "Seamless", self.seamless_check)
         add_row("density_pct", "Density", self.density_spin)
         add_row("fade_step", "Fade Step", self.fade_spin)
+        add_row("bit_width", "Bit Width", self.bit_width_spin)
         add_row("palette", "Palette", self.palette_edit)
         add_row("segment_width", "Seg. Width", self.segment_width_spin)
         add_row("spacing", "Spacing", self.spacing_spin)
@@ -412,6 +463,7 @@ class AnimationPanel(QGroupBox):
             (self.seamless_check, "toggled"),
             (self.density_spin, "valueChanged"),
             (self.fade_spin, "valueChanged"),
+            (self.bit_width_spin, "valueChanged"),
             (self.palette_edit, "textChanged"),
             (self.segment_width_spin, "valueChanged"),
             (self.spacing_spin, "valueChanged"),
@@ -607,6 +659,7 @@ class AnimationPanel(QGroupBox):
         self.seamless_check.setChecked(a.seamless)
         self.density_spin.setValue(a.density_pct)
         self.fade_spin.setValue(a.fade_step)
+        self.bit_width_spin.setValue(a.bit_width)
         self.palette_edit.setText(format_palette(a.palette))
         self.segment_width_spin.setValue(a.segment_width)
         self.spacing_spin.setValue(a.spacing)
@@ -651,6 +704,7 @@ class AnimationPanel(QGroupBox):
         a.seamless = self.seamless_check.isChecked()
         a.density_pct = self.density_spin.value()
         a.fade_step = self.fade_spin.value()
+        a.bit_width = self.bit_width_spin.value()
         parsed = parse_palette(self.palette_edit.text())
         if parsed:
             a.palette = parsed
@@ -673,11 +727,11 @@ class AnimationPanel(QGroupBox):
 _OVERLAY_VISIBLE_FIELDS: dict[OverlayAnimationKind, set[str]] = {
     OverlayAnimationKind.OFF: set(),
     OverlayAnimationKind.SOLID: {"color"},
-    OverlayAnimationKind.PULSE: {"color", "bg_color", "run_length", "speed"},
+    OverlayAnimationKind.PULSE: {"color", "bg_color", "run_length", "speed", "invert"},
     OverlayAnimationKind.FLASH: {"color", "bg_color", "on_ms", "off_ms"},
-    OverlayAnimationKind.FLOW: {"color", "color2", "speed", "seamless"},
-    OverlayAnimationKind.RAINBOW: {"speed"},
-    OverlayAnimationKind.TWINKLE: {"bg_color", "density_pct", "fade_step", "palette"},
+    OverlayAnimationKind.FLOW: {"color", "color2", "speed", "invert", "seamless"},
+    OverlayAnimationKind.RAINBOW: {"speed", "invert"},
+    OverlayAnimationKind.TWINKLE: {"bg_color", "density_pct", "fade_step", "bit_width", "palette"},
     OverlayAnimationKind.BITSCROLL: {
         "color", "bg_color", "speed", "invert", "segment_width", "spacing", "repeating",
     },
@@ -839,7 +893,8 @@ class OverlayAnimationPanel(QGroupBox):
         self.color2_btn = ColorButton(0x0000FF)
         self.bg_btn = ColorButton(0x000000)
         self.run_length_spin = QSpinBox()
-        self.run_length_spin.setRange(1, 64)
+        # The overlay spans the whole chain, and a region can now too.
+        self.run_length_spin.setRange(1, MAX_CHAIN_LEDS)
         # "1 px every refresh" is the old Speed 1; a time is what goes slower.
         # speed_spin stays the name of the pixel count, which it always was.
         self.speed_edit = SpeedEdit()
@@ -860,6 +915,7 @@ class OverlayAnimationPanel(QGroupBox):
         self.density_spin.setSuffix(" %")
         self.fade_spin = QSpinBox()
         self.fade_spin.setRange(1, 255)
+        self.bit_width_spin = bit_width_spin()
         self.palette_edit = QLineEdit()
         self.palette_edit.setToolTip("Comma-separated hex colors, e.g. FF0000, 00FF00, 0000FF")
         self.segment_width_spin = QSpinBox()
@@ -923,8 +979,8 @@ class OverlayAnimationPanel(QGroupBox):
         )
         self.invert_check = QCheckBox()
         self.invert_check.setToolTip(
-            "Reverse the direction: a bitscroll scrolls the other way, a gauge "
-            "bar fills from the far end of the segment."
+            "Reverse the direction: a pulse, flow, rainbow or bitscroll moves the "
+            "other way, a gauge bar fills from the far end of the segment."
         )
         self.fill_hint = QLabel()
         self.fill_hint.setWordWrap(True)
@@ -946,6 +1002,7 @@ class OverlayAnimationPanel(QGroupBox):
         add_row("seamless", "Seamless", self.seamless_check)
         add_row("density_pct", "Density", self.density_spin)
         add_row("fade_step", "Fade Step", self.fade_spin)
+        add_row("bit_width", "Bit Width", self.bit_width_spin)
         add_row("palette", "Palette", self.palette_edit)
         add_row("segment_width", "Seg. Width", self.segment_width_spin)
         add_row("spacing", "Spacing", self.spacing_spin)
@@ -976,6 +1033,7 @@ class OverlayAnimationPanel(QGroupBox):
             (self.off_ms_spin, "valueChanged"),
             (self.density_spin, "valueChanged"),
             (self.fade_spin, "valueChanged"),
+            (self.bit_width_spin, "valueChanged"),
             (self.palette_edit, "textChanged"),
             (self.segment_width_spin, "valueChanged"),
             (self.spacing_spin, "valueChanged"),
@@ -1134,6 +1192,7 @@ class OverlayAnimationPanel(QGroupBox):
         self.seamless_check.setChecked(o.seamless)
         self.density_spin.setValue(o.density_pct)
         self.fade_spin.setValue(o.fade_step)
+        self.bit_width_spin.setValue(o.bit_width)
         self.palette_edit.setText(format_palette(o.palette))
         self.segment_width_spin.setValue(o.segment_width)
         self.spacing_spin.setValue(o.spacing)
@@ -1177,6 +1236,7 @@ class OverlayAnimationPanel(QGroupBox):
         o.seamless = self.seamless_check.isChecked()
         o.density_pct = self.density_spin.value()
         o.fade_step = self.fade_spin.value()
+        o.bit_width = self.bit_width_spin.value()
         parsed = parse_palette(self.palette_edit.text())
         if parsed:
             o.palette = parsed
@@ -1195,6 +1255,76 @@ class OverlayAnimationPanel(QGroupBox):
         o.stops = self.stops_editor.stops()
         o.preview_sweep = self.preview_sweep_check.isChecked()
         o.preview_level = self.preview_level_spin.value()
+
+
+class MaskFill(QObject):
+    """What a mask shows where it hides the animation: a solid color, or the
+    strand's one shared overlay animation (SpliceMaskConfig's bg_color,
+    use_overlay and overlay).
+
+    Split mode, the spread mask and the twinkle mask all show the same
+    thing there, from the same three fields, so each of their panels holds
+    one of these rather than a copy of the controls. Not a widget of its own:
+    install() puts its two rows into the panel's form, so their labels line up
+    with the rest of it, and the overlay editor under the form.
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._suspend = False
+        self._form: QFormLayout | None = None
+        self.content_combo = QComboBox()
+        self.content_combo.addItem("Solid Color", False)
+        self.content_combo.addItem("Animation", True)
+        self.content_combo.setToolTip(
+            "What shows where the mask hides the animation: one color, or the "
+            "overlay animation below.")
+        self.bg_btn = ColorButton(0x000000)
+        self.overlay_panel = OverlayAnimationPanel("Overlay Animation")
+
+        self.content_combo.currentIndexChanged.connect(self._on_content_changed)
+        self.bg_btn.color_changed.connect(self._emit_changed)
+        self.overlay_panel.changed.connect(self._emit_changed)
+
+    def install(self, form: QFormLayout, layout: QVBoxLayout) -> None:
+        self._form = form
+        form.addRow("Content", self.content_combo)
+        form.addRow("Background", self.bg_btn)
+        layout.addWidget(self.overlay_panel)
+        self._update_visibility()
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
+
+    def _on_content_changed(self, *_args) -> None:
+        self._update_visibility()
+        self._emit_changed()
+
+    def _update_visibility(self) -> None:
+        animation = bool(self.content_combo.currentData())
+        self.bg_btn.setVisible(not animation)
+        label = self._form.labelForField(self.bg_btn) if self._form is not None else None
+        if label is not None:
+            label.setVisible(not animation)
+        self.overlay_panel.setVisible(animation)
+
+    def load(self, s: SpliceMaskConfig) -> None:
+        self._suspend = True
+        idx = self.content_combo.findData(s.use_overlay)
+        if idx >= 0:
+            self.content_combo.setCurrentIndex(idx)
+        self.bg_btn.set_color(s.bg_color)
+        self.overlay_panel.load(s.overlay)
+        self._update_visibility()
+        self._suspend = False
+
+    def save(self, s: SpliceMaskConfig) -> None:
+        s.use_overlay = bool(self.content_combo.currentData())
+        s.bg_color = self.bg_btn.color()
+        self.overlay_panel.save(s.overlay)
 
 
 class SpliceMaskPanel(QGroupBox):
@@ -1230,8 +1360,13 @@ class SpliceMaskPanel(QGroupBox):
         # The anchor's animation as it stood before the edit in progress -
         # see _on_region_anim_changed() for why a diff and not a copy.
         self._region_baseline: OverlayAnimationConfig | None = None
-        # What Divide splits up. The panel edits a mask, not a strand, so the
-        # length has to be handed to it - see set_strip_length().
+        # The region each mask last showed, by the mask's id(), so moving
+        # between strands - or from a group to one of its strands - comes
+        # back to it rather than to the first region.
+        self._region_memory: dict[int, int] = {}
+        # What Divide splits up, and the end a group of regions is held back
+        # at. The panel edits a mask, not a strand, so the length has to be
+        # handed to it - see set_strip_length().
         self._strip_length = 64
         outer = QVBoxLayout(self)
 
@@ -1257,20 +1392,18 @@ class SpliceMaskPanel(QGroupBox):
         self.alt_period_spin = QSpinBox()
         self.alt_period_spin.setRange(50, 5000)
         self.alt_period_spin.setSuffix(" ms")
-        self.split_content_combo = QComboBox()
-        self.split_content_combo.addItem("Solid Color", False)
-        self.split_content_combo.addItem("Animation", True)
-        self.split_bg_btn = ColorButton(0x000000)
         split_form.addRow("Sections", self.sections_spin)
         split_form.addRow("Invert", self.invert_check)
         split_form.addRow("Alternating", self.alternating_check)
         split_form.addRow("Alt. Period", self.alt_period_spin)
-        split_form.addRow("Content", self.split_content_combo)
-        split_form.addRow("Background", self.split_bg_btn)
         split_layout.addLayout(split_form)
-        # Shared overlay animation, shown only when Content == "Animation".
-        self.overlay_panel = OverlayAnimationPanel("Overlay Animation")
-        split_layout.addWidget(self.overlay_panel)
+        # What the masked bins show: a color, or the shared overlay animation
+        # (shown only when Content == "Animation").
+        self.split_fill = MaskFill(self)
+        self.split_fill.install(split_form, split_layout)
+        self.split_content_combo = self.split_fill.content_combo
+        self.split_bg_btn = self.split_fill.bg_btn
+        self.overlay_panel = self.split_fill.overlay_panel
         outer.addWidget(self.split_widget)
 
         # --- Custom mode: arbitrarily placed/sized regions, each with its
@@ -1348,10 +1481,15 @@ class SpliceMaskPanel(QGroupBox):
         self.region_group_banner.setVisible(False)
         region_editor_layout.addWidget(self.region_group_banner)
         region_form = QFormLayout()
+        # A chain's, not one strip's: a mask on the head of a chain places
+        # regions along every strip in it, and capping these at one strip left
+        # nothing past pixel 63 reachable - or editable, once Divide put
+        # regions there, since the field clamped what it showed and an edit
+        # wrote the clamped value back.
         self.region_start_spin = QSpinBox()
-        self.region_start_spin.setRange(0, 63)
+        self.region_start_spin.setRange(0, MAX_CHAIN_LEDS - 1)
         self.region_width_spin = QSpinBox()
-        self.region_width_spin.setRange(1, 64)
+        self.region_width_spin.setRange(1, MAX_CHAIN_LEDS)
         region_form.addRow("Start", self.region_start_spin)
         region_form.addRow("Width", self.region_width_spin)
         region_editor_layout.addLayout(region_form)
@@ -1368,9 +1506,7 @@ class SpliceMaskPanel(QGroupBox):
         self.invert_check.toggled.connect(self._emit_changed)
         self.alternating_check.toggled.connect(self._emit_changed)
         self.alt_period_spin.valueChanged.connect(self._emit_changed)
-        self.split_content_combo.currentIndexChanged.connect(self._on_split_content_changed)
-        self.split_bg_btn.color_changed.connect(self._emit_changed)
-        self.overlay_panel.changed.connect(self._emit_changed)
+        self.split_fill.changed.connect(self._emit_changed)
 
         self.region_list.currentRowChanged.connect(self._on_region_selection_changed)
         self.region_list.itemSelectionChanged.connect(self._on_region_selection_changed)
@@ -1383,7 +1519,7 @@ class SpliceMaskPanel(QGroupBox):
         self.region_anim_panel.changed.connect(self._on_region_anim_changed)
 
         self._update_mode_visibility()
-        self._update_overlay_visibility()
+        self._size_region_list()
 
     def _emit_changed(self, *_args) -> None:
         if not self._suspend:
@@ -1395,25 +1531,12 @@ class SpliceMaskPanel(QGroupBox):
 
     def _on_mode_changed(self, *_args) -> None:
         self._update_mode_visibility()
-        self._update_overlay_visibility()
         self._emit_changed()
 
     def _update_mode_visibility(self) -> None:
         is_split = self.mode_combo.currentData() == SpliceModeKind.SPLIT
         self.split_widget.setVisible(is_split)
         self.custom_widget.setVisible(not is_split)
-
-    def _update_overlay_visibility(self) -> None:
-        # Custom mode's per-region animation lives inside region_editor and
-        # is always relevant there, only Split's shared overlay needs to
-        # hide/show based on the Content choice.
-        self.overlay_panel.setVisible(bool(self.split_content_combo.currentData()))
-
-    def _on_split_content_changed(self, *_args) -> None:
-        is_animation = bool(self.split_content_combo.currentData())
-        self.split_bg_btn.setVisible(not is_animation)
-        self._update_overlay_visibility()
-        self._emit_changed()
 
     # ------------------------------------------------------------------
     # Custom region list
@@ -1434,6 +1557,35 @@ class SpliceMaskPanel(QGroupBox):
                 self.region_list.addItem(self._region_label(r))
         restore_selection(self.region_list, selected, current)
         self.region_list.blockSignals(False)
+        self._size_region_list()
+
+    #: The most rows the region list grows to before it scrolls.
+    REGION_ROWS_SHOWN = 6
+
+    def _size_region_list(self) -> None:
+        """Fit the list to its regions: one row tall for one region, a row
+        taller for each one added, up to REGION_ROWS_SHOWN.
+
+        Fixed rather than left to the layout, which gave it whatever the
+        column had spare: a sliver while one region was selected, and a tall
+        box mostly of empty space once several were and the group banner
+        changed what the column wanted.
+        """
+        view = self.region_list
+        rows = max(1, min(view.count(), self.REGION_ROWS_SHOWN))
+        row_h = view.sizeHintForRow(0) if view.count() else -1
+        if row_h <= 0:
+            # Nothing to measure yet: what one row of this font, with the
+            # stylesheet's 6px of padding above and below, comes to.
+            row_h = view.fontMetrics().height() + 12
+        # The frame and the stylesheet's padding, measured off the list as it
+        # stands once it has been laid out, and estimated until then.
+        if view.viewport().height() > 0 and view.height() > view.viewport().height():
+            chrome = view.height() - view.viewport().height()
+        else:
+            margins = view.contentsMargins()
+            chrome = margins.top() + margins.bottom() + 2 * view.frameWidth()
+        view.setFixedHeight(rows * row_h + chrome + 2)
 
     def _selected_region_rows(self) -> list[int]:
         return sorted({index.row() for index in self.region_list.selectedIndexes()})
@@ -1486,11 +1638,13 @@ class SpliceMaskPanel(QGroupBox):
         self._emit_changed()
 
     def set_strip_length(self, length: int) -> None:
-        """Tell the panel how many pixels Divide has to share out."""
+        """Tell the panel how many pixels Divide has to share out: the whole
+        chain's when the strand heads one (StrandSession.chain_length)."""
         self._strip_length = max(1, length)
 
     def _divide_strip(self) -> None:
-        """Replace the regions with N equal segments spanning the strip.
+        """Replace the regions with N equal segments spanning the strip - or
+        the chain, for a strand at the head of one.
 
         Each segment keeps the animation the region in its place already had,
         so dividing again after a length change re-spaces them without losing
@@ -1592,9 +1746,13 @@ class SpliceMaskPanel(QGroupBox):
             # back at either end of the strip so the spacing between them is
             # never what gives. Setting every Start to one number would stack
             # them all on the same pixel, which nobody selects six regions for.
+            # The far end is the strip's (the chain's), not the field's
+            # maximum, which is the longest chain there can be. A group
+            # already past it may still come back, but is never pushed back
+            # by an edit that did not move it - a Width change, say.
             shift = start - anchor.start
-            shift = max(-min(r.start for r in group),
-                        min(self.region_start_spin.maximum() - max(r.start for r in group), shift))
+            room = max(0, self._strip_length - 1 - max(r.start for r in group))
+            shift = max(-min(r.start for r in group), min(room, shift))
             if width != anchor.width:
                 for r in group:
                     r.width = width
@@ -1637,6 +1795,11 @@ class SpliceMaskPanel(QGroupBox):
 
     def load(self, s: SpliceMaskConfig) -> None:
         self._suspend = True
+        # Which region was showing, so coming back to this mask - or moving
+        # from a group of strands to one of them - keeps it.
+        if self._splice is not None and self._region_idx >= 0:
+            self._region_memory[id(self._splice)] = self._region_idx
+        previous = self._region_idx
         self._splice = s
         self._region_idx = -1
         idx = self.mode_combo.findData(s.mode)
@@ -1646,12 +1809,7 @@ class SpliceMaskPanel(QGroupBox):
         self.invert_check.setChecked(s.invert)
         self.alternating_check.setChecked(s.alternating)
         self.alt_period_spin.setValue(s.alt_period_ms)
-        content_idx = self.split_content_combo.findData(s.use_overlay)
-        if content_idx >= 0:
-            self.split_content_combo.setCurrentIndex(content_idx)
-        self.split_bg_btn.set_color(s.bg_color)
-        self.split_bg_btn.setVisible(not s.use_overlay)
-        self.overlay_panel.load(s.overlay)
+        self.split_fill.load(s)
         self.region_list.blockSignals(True)
         self.region_list.clearSelection()
         self.region_list.blockSignals(False)
@@ -1659,9 +1817,9 @@ class SpliceMaskPanel(QGroupBox):
         # Always re-shown, not left to the list's signals: a strand whose
         # first region lands on the row that was already current would emit
         # nothing, and the editor would go on showing the last strand's.
-        self.select_region(0 if s.regions else -1)
+        row = self._region_memory.get(id(s), previous)
+        self.select_region(min(max(row, 0), len(s.regions) - 1) if s.regions else -1)
         self._update_mode_visibility()
-        self._update_overlay_visibility()
         self._suspend = False
 
     def save(self, s: SpliceMaskConfig) -> None:
@@ -1670,25 +1828,149 @@ class SpliceMaskPanel(QGroupBox):
         s.invert = self.invert_check.isChecked()
         s.alternating = self.alternating_check.isChecked()
         s.alt_period_ms = self.alt_period_spin.value()
-        s.use_overlay = bool(self.split_content_combo.currentData())
-        s.bg_color = self.split_bg_btn.color()
-        self.overlay_panel.save(s.overlay)
+        self.split_fill.save(s)
         # s.regions is not touched here - see class docstring.
+
+
+class SpreadMaskPanel(QGroupBox):
+    """LedStrand::spreadMask(): the animation shows across a stretch that
+    spreads over the strip and back, and the rest shows what MaskFill says.
+
+    The direction is one dropdown of the four ways a spread can go rather
+    than an origin plus an Invert box: "Edges Inward" says what it does, and
+    "Center, inverted" makes the user work it out.
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__("Spread Mask", parent)
+        self._suspend = False
+        outer = QVBoxLayout(self)
+        hint = QLabel(
+            "Shows the animation across a stretch that spreads over the strip, "
+            "then starts over - or, with Bounce, shrinks back the way it came."
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("role", "hint")
+        outer.addWidget(hint)
+
+        form = QFormLayout()
+        self.direction_combo = spread_direction_combo()
+        self.bounce_check = QCheckBox()
+        self.bounce_check.setToolTip("Once it covers the strip, shrink back instead of starting over.")
+        self.speed_edit = SpeedEdit()
+        form.addRow("Direction", self.direction_combo)
+        form.addRow("Bounce", self.bounce_check)
+        form.addRow("Speed", self.speed_edit)
+        outer.addLayout(form)
+        self.fill = MaskFill(self)
+        self.fill.install(form, outer)
+
+        self.direction_combo.currentIndexChanged.connect(self._emit_changed)
+        self.bounce_check.toggled.connect(self._emit_changed)
+        self.speed_edit.changed.connect(self._emit_changed)
+        self.fill.changed.connect(self._emit_changed)
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
+
+    def load(self, s: SpliceMaskConfig) -> None:
+        self._suspend = True
+        set_spread_direction(self.direction_combo, s.spread_origin, s.spread_invert)
+        self.bounce_check.setChecked(s.spread_bounce)
+        self.speed_edit.set_speed(s.spread_speed, s.spread_step_ms)
+        self.fill.load(s)
+        self._suspend = False
+
+    def save(self, s: SpliceMaskConfig) -> None:
+        s.spread_origin, s.spread_invert = spread_direction(self.direction_combo)
+        s.spread_bounce = self.bounce_check.isChecked()
+        s.spread_speed = self.speed_edit.pixels()
+        s.spread_step_ms = self.speed_edit.step_ms()
+        self.fill.save(s)
+
+
+class TwinkleMaskPanel(QGroupBox):
+    """LedStrand::twinkleMask(): the animation shows through twinkling bits,
+    each fading in, holding, and fading back out to what MaskFill says."""
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__("Twinkle Mask", parent)
+        self._suspend = False
+        outer = QVBoxLayout(self)
+        hint = QLabel(
+            "Shows the animation only through twinkling bits. Invert turns it "
+            "round, so the bits hide the animation instead."
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("role", "hint")
+        outer.addWidget(hint)
+
+        form = QFormLayout()
+        self.density_spin = QSpinBox()
+        self.density_spin.setRange(0, 100)
+        self.density_spin.setSuffix(" %")
+        self.density_spin.setToolTip("How much of the strip shows through at once.")
+        self.fade_spin = QSpinBox()
+        self.fade_spin.setRange(1, 255)
+        self.fade_spin.setToolTip("Brightness each bit gains or loses per tick, so bigger is faster.")
+        self.bit_width_spin = bit_width_spin()
+        self.invert_check = QCheckBox()
+        self.invert_check.setToolTip("Bits hide the animation instead of revealing it.")
+        form.addRow("Density", self.density_spin)
+        form.addRow("Fade Step", self.fade_spin)
+        form.addRow("Bit Width", self.bit_width_spin)
+        form.addRow("Invert", self.invert_check)
+        outer.addLayout(form)
+        self.fill = MaskFill(self)
+        self.fill.install(form, outer)
+
+        for spin in (self.density_spin, self.fade_spin, self.bit_width_spin):
+            spin.valueChanged.connect(self._emit_changed)
+        self.invert_check.toggled.connect(self._emit_changed)
+        self.fill.changed.connect(self._emit_changed)
+
+    def _emit_changed(self, *_args) -> None:
+        if not self._suspend:
+            self.changed.emit()
+
+    def load(self, s: SpliceMaskConfig) -> None:
+        self._suspend = True
+        self.density_spin.setValue(s.twinkle_density_pct)
+        self.fade_spin.setValue(s.twinkle_fade_step)
+        self.bit_width_spin.setValue(s.twinkle_bit_width)
+        self.invert_check.setChecked(s.twinkle_invert)
+        self.fill.load(s)
+        self._suspend = False
+
+    def save(self, s: SpliceMaskConfig) -> None:
+        s.twinkle_density_pct = self.density_spin.value()
+        s.twinkle_fade_step = self.fade_spin.value()
+        s.twinkle_bit_width = self.bit_width_spin.value()
+        s.twinkle_invert = self.invert_check.isChecked()
+        self.fill.save(s)
 
 
 # A strand has exactly one mask active at a time (or none), despite `enabled`
 # being an independent flag on the model (that is what LedStrand's API takes)
 # - MasksPanel is what enforces that at the UI level, the same way
 # AnimationPanel's kind_combo makes only one AnimationKind selectable even
-# though nothing stops hand-edited JSON from doing otherwise. Kept as its own
-# dropdown-plus-panel structure (rather than folding straight into
-# SpliceMaskPanel) so a future second mask kind has somewhere to go.
+# though nothing stops hand-edited JSON from doing otherwise. Each entry but
+# None is a MaskKind, which is what SpliceMaskConfig.kind stores.
 MASK_NONE = "none"
-MASK_SPLICE = "splice"
+MASK_SPLICE = MaskKind.SPLICE
+MASK_SPREAD = MaskKind.SPREAD
+MASK_TWINKLE = MaskKind.TWINKLE
 
 MASK_KIND_LABELS = {
     MASK_NONE: "None",
     MASK_SPLICE: "Splice Mask",
+    MASK_SPREAD: "Spread Mask",
+    MASK_TWINKLE: "Twinkle Mask",
 }
 
 
@@ -1699,8 +1981,13 @@ class MasksPanel(QGroupBox):
 
     SpliceMaskConfig still carries its own `enabled` flag on the model (that
     is what LedStrand's API takes), but this panel owns that decision - save()
-    sets it to match whatever the dropdown shows. SpliceMaskPanel no longer
-    owns that decision itself (see its docstring).
+    sets it, and `kind`, to match whatever the dropdown shows. SpliceMaskPanel
+    no longer owns that decision itself (see its docstring).
+
+    Split mode, the spread mask and the twinkle mask each have a MaskFill for
+    what shows where they hide the animation, and all three edit the same
+    fields. Picking a different mask hands the one being left's values to the
+    one being shown, so neither a stale copy nor a lost edit can surface.
     """
 
     changed = Signal()
@@ -1711,15 +1998,24 @@ class MasksPanel(QGroupBox):
         outer = QVBoxLayout(self)
 
         self.mask_kind_combo = QComboBox()
-        for kind in (MASK_NONE, MASK_SPLICE):
+        for kind in (MASK_NONE, MASK_SPLICE, MASK_SPREAD, MASK_TWINKLE):
             self.mask_kind_combo.addItem(MASK_KIND_LABELS[kind], kind)
         outer.addWidget(self.mask_kind_combo)
 
         self.splice_panel = SpliceMaskPanel()
+        self.spread_panel = SpreadMaskPanel()
+        self.twinkle_panel = TwinkleMaskPanel()
         outer.addWidget(self.splice_panel)
+        outer.addWidget(self.spread_panel)
+        outer.addWidget(self.twinkle_panel)
+        # The mask last picked, which None leaves as it was: what `kind` is
+        # saved as, and which panel's copy of the shared fields is current.
+        self._shown = MASK_SPLICE
 
         self.mask_kind_combo.currentIndexChanged.connect(self._on_kind_changed)
         self.splice_panel.changed.connect(self._emit_changed)
+        self.spread_panel.changed.connect(self._emit_changed)
+        self.twinkle_panel.changed.connect(self._emit_changed)
 
         self._update_visibility()
 
@@ -1727,13 +2023,30 @@ class MasksPanel(QGroupBox):
         if not self._suspend:
             self.changed.emit()
 
+    def _fill_for(self, kind) -> MaskFill | None:
+        return {
+            MASK_SPLICE: self.splice_panel.split_fill,
+            MASK_SPREAD: self.spread_panel.fill,
+            MASK_TWINKLE: self.twinkle_panel.fill,
+        }.get(kind)
+
     def _on_kind_changed(self, *_args) -> None:
+        kind = self.mask_kind_combo.currentData()
+        before, after = self._fill_for(self._shown), self._fill_for(kind)
+        if before is not None and after is not None and before is not after:
+            carried = SpliceMaskConfig()
+            before.save(carried)
+            after.load(carried)
+        if kind != MASK_NONE:
+            self._shown = kind
         self._update_visibility()
         self._emit_changed()
 
     def _update_visibility(self) -> None:
         kind = self.mask_kind_combo.currentData()
         self.splice_panel.setVisible(kind == MASK_SPLICE)
+        self.spread_panel.setVisible(kind == MASK_SPREAD)
+        self.twinkle_panel.setVisible(kind == MASK_TWINKLE)
 
     def set_strip_length(self, length: int) -> None:
         """Forwarded to SpliceMaskPanel - see its own set_strip_length()."""
@@ -1741,17 +2054,28 @@ class MasksPanel(QGroupBox):
 
     def load(self, splice: SpliceMaskConfig) -> None:
         self._suspend = True
-        kind = MASK_SPLICE if splice.enabled else MASK_NONE
+        kind = splice.kind if splice.enabled else MASK_NONE
         idx = self.mask_kind_combo.findData(kind)
         if idx >= 0:
             self.mask_kind_combo.setCurrentIndex(idx)
+        self._shown = splice.kind
         self.splice_panel.load(splice)
+        self.spread_panel.load(splice)
+        self.twinkle_panel.load(splice)
         self._update_visibility()
         self._suspend = False
 
     def save(self, splice: SpliceMaskConfig) -> None:
+        # Splice first, for the fields only it has; then the mask last shown,
+        # so its copy of the shared fields is the one that lands - still with
+        # None picked, where it is the copy a re-enable will show.
         self.splice_panel.save(splice)
-        splice.enabled = self.mask_kind_combo.currentData() == MASK_SPLICE
+        if self._shown == MASK_SPREAD:
+            self.spread_panel.save(splice)
+        elif self._shown == MASK_TWINKLE:
+            self.twinkle_panel.save(splice)
+        splice.enabled = self.mask_kind_combo.currentData() != MASK_NONE
+        splice.kind = MaskKind(self._shown)
 
 
 class InspectorPanel(QWidget):
@@ -1789,6 +2113,14 @@ class InspectorPanel(QWidget):
         theme.bloom(self.group_banner, theme.ACCENT, radius=22, alpha=70)
         self.group_banner.setVisible(False)
 
+        # Shown in place of the animation editors while the strand is chained
+        # onto another: what it plays is that strand's, edited there.
+        self.chain_banner = QLabel()
+        self.chain_banner.setObjectName("groupBanner")
+        self.chain_banner.setWordWrap(True)
+        self.chain_banner.setVisible(False)
+        self._chained_to: str | None = None
+
         self.use_profile_check = QCheckBox("Use Profile")
         self.use_profile_check.setToolTip(
             "Switch this strand from a single animation to a prioritized list of modes"
@@ -1798,6 +2130,7 @@ class InspectorPanel(QWidget):
         self.modes_panel = ModesPanel()
 
         layout.addWidget(self.group_banner)
+        layout.addWidget(self.chain_banner)
         layout.addWidget(self.use_profile_check)
         layout.addWidget(self.anim_panel)
         layout.addWidget(self.masks_panel)
@@ -1831,19 +2164,51 @@ class InspectorPanel(QWidget):
         if not self._loading:
             self.animation_changed.emit()
 
-    def _apply_mode_visibility(self, use_profile: bool) -> None:
-        self.anim_panel.setVisible(not use_profile)
-        self.masks_panel.setVisible(not use_profile)
-        self.modes_panel.setVisible(use_profile)
+    def set_chained_to(self, head_name: str | None) -> None:
+        """Say the strand on show is chained after `head_name`, or None
+        for a strand that plays its own animation.
 
-    def load(self, cfg: StrandConfig) -> None:
+        A chained strand's animation, masks and profile are its head's, so
+        they are hidden rather than left editable with no effect; so are the
+        refresh rate and brightness, which are the head's too. Port, length
+        and name stay its own.
+        """
+        self._chained_to = head_name
+        if head_name is not None:
+            self.chain_banner.setText(
+                f'Chained after "{head_name}": the chain plays as one long strand, '
+                f'so this strand shows its share of whatever "{head_name}" plays. '
+                f'Select "{head_name}" to change the animation, or Unchain this '
+                f"strand to give it one of its own."
+            )
+        self.chain_banner.setVisible(head_name is not None)
+        self.strand_panel.set_chained(head_name is not None)
+        self._apply_mode_visibility(self.use_profile_check.isChecked())
+
+    def _apply_mode_visibility(self, use_profile: bool) -> None:
+        chained = self._chained_to is not None
+        self.use_profile_check.setVisible(not chained)
+        self.anim_panel.setVisible(not use_profile and not chained)
+        self.masks_panel.setVisible(not use_profile and not chained)
+        self.modes_panel.setVisible(use_profile and not chained)
+
+    def set_strip_length(self, length: int) -> None:
+        """How many pixels this strand's masks are placed along - the whole
+        chain's for a chain head - handed to both masks panels' Divide."""
+        self.masks_panel.set_strip_length(length)
+        self.modes_panel.masks_panel.set_strip_length(length)
+
+    def load(self, cfg: StrandConfig, chain_length: int | None = None) -> None:
+        """Show `cfg`. `chain_length` is what its animation plays across
+        (StrandSession.chain_length): its own strip's unless given, which is
+        wrong for the head of a chain."""
         self._loading = True
         self.strand_panel.load(cfg)
         self.use_profile_check.setChecked(cfg.use_profile)
         self._apply_mode_visibility(cfg.use_profile)
         self.anim_panel.load(cfg.animation)
         # Before load(): Divide shares out this strand's pixels, not the last one's.
-        self.masks_panel.set_strip_length(cfg.length)
+        self.set_strip_length(cfg.length if chain_length is None else chain_length)
         self.masks_panel.load(cfg.splice)
         self.modes_panel.load(cfg)
         self._loading = False

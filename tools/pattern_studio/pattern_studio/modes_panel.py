@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -31,12 +32,29 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
-from .inspector import AnimationPanel, MasksPanel
-from .models import ModeConfig, PhaseConfig, StrandConfig
+from .inspector import (
+    AnimationPanel,
+    MasksPanel,
+    bit_width_spin,
+    set_spread_direction,
+    spread_direction,
+    spread_direction_combo,
+)
+from .models import (
+    TRANSITION_KIND_LABELS,
+    ModeConfig,
+    PhaseConfig,
+    StrandConfig,
+    TransitionKind,
+)
+from .strand_list import RowDelegate
+from .widgets import enum_data
 
 
 class ModesPanel(QWidget):
     changed = Signal()
+    #: (mode, phase): play that phase's transition on the preview now.
+    preview_transition_requested = Signal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +62,10 @@ class ModesPanel(QWidget):
         self._loading = False
         self._mode_idx = -1
         self._phase_idx = -1
+        # The (mode, phase) each strand last showed, by the config's id(), so
+        # moving between strands - or from a group to one of its strands -
+        # comes back to it rather than to the first mode.
+        self._memory: dict[int, tuple[int, int]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -52,6 +74,10 @@ class ModesPanel(QWidget):
         modes_label.setProperty("role", "sectionHeader")
         layout.addWidget(modes_label)
         self.mode_list = QListWidget()
+        # The strand list's selected-row look, so the mode being edited is
+        # marked the same way the strand being edited is. Checked says which
+        # modes are active; the highlight says which one is in the editor.
+        self.mode_list.setItemDelegate(RowDelegate(self.mode_list))
         layout.addWidget(self.mode_list)
 
         mode_btn_row = QHBoxLayout()
@@ -97,6 +123,7 @@ class ModesPanel(QWidget):
         phases_label.setProperty("role", "sectionHeader")
         phase_layout.addWidget(phases_label)
         self.phase_list = QListWidget()
+        self.phase_list.setItemDelegate(RowDelegate(self.phase_list))
         phase_layout.addWidget(self.phase_list)
         phase_btn_row = QHBoxLayout()
         self.add_phase_btn = QPushButton(theme.icon("plus"), " Add")
@@ -116,8 +143,52 @@ class ModesPanel(QWidget):
         self.phase_duration_spin = QSpinBox()
         self.phase_duration_spin.setRange(20, 60000)
         self.phase_duration_spin.setSuffix(" ms")
+        # How many times round the loop it plays: 0 is every time.
+        self.phase_plays_spin = QSpinBox()
+        self.phase_plays_spin.setRange(0, 255)
+        self.phase_plays_spin.setSpecialValueText("Every loop")
+        self.phase_plays_spin.setToolTip(
+            "How many times round the loop this phase plays before it is "
+            "skipped. 1 makes it an intro: it plays once each time the mode "
+            "starts, and the loop carries on without it."
+        )
+        # How it takes over from the phase before it.
+        self.transition_combo = QComboBox()
+        for kind in TransitionKind:
+            self.transition_combo.addItem(TRANSITION_KIND_LABELS[kind], kind)
+        self.transition_combo.setToolTip(
+            "How this phase comes in over a different phase before it. The "
+            "outgoing frame holds while this phase's animation, already running, "
+            "wipes in. It does not play when the mode starts, or when the loop "
+            "comes back round to this same phase."
+        )
+        self.transition_ms_spin = QSpinBox()
+        self.transition_ms_spin.setRange(20, 10000)
+        self.transition_ms_spin.setSingleStep(50)
+        self.transition_ms_spin.setSuffix(" ms")
+        self.transition_direction_combo = spread_direction_combo()
+        self.transition_bit_width_spin = bit_width_spin()
+        self.transition_fade_spin = QSpinBox()
+        self.transition_fade_spin.setRange(0, 255)
+        self.transition_fade_spin.setSpecialValueText("Instant")
+        self.transition_fade_spin.setToolTip(
+            "Brightness each bit gains per tick as it comes in, so bigger is "
+            "quicker. Instant lights each bit all at once."
+        )
         phase_form.addRow("Phase Name", self.phase_name_edit)
         phase_form.addRow("Duration", self.phase_duration_spin)
+        phase_form.addRow("Plays", self.phase_plays_spin)
+        phase_form.addRow("Transition In", self.transition_combo)
+        phase_form.addRow("Over", self.transition_ms_spin)
+        phase_form.addRow("Direction", self.transition_direction_combo)
+        phase_form.addRow("Bit Width", self.transition_bit_width_spin)
+        phase_form.addRow("Fade Step", self.transition_fade_spin)
+        # A wipe only plays when the loop moves into this phase, which can be
+        # most of a cycle away. This plays it on the preview now.
+        self.preview_transition_btn = QPushButton(theme.icon("play"), " Preview Transition")
+        theme.HoverBloom(self.preview_transition_btn, theme.FOCUS)
+        phase_form.addRow("", self.preview_transition_btn)
+        self._phase_form = phase_form
         phase_layout.addLayout(phase_form)
         editor_layout.addWidget(self.phase_container)
 
@@ -148,6 +219,17 @@ class ModesPanel(QWidget):
         self.phase_down_btn.clicked.connect(lambda: self._move_phase(1))
         self.phase_name_edit.textChanged.connect(self._on_phase_field_changed)
         self.phase_duration_spin.valueChanged.connect(self._on_phase_field_changed)
+        self.phase_plays_spin.valueChanged.connect(self._on_plays_changed)
+        self.transition_combo.currentIndexChanged.connect(self._on_transition_kind_changed)
+        for widget, signal_name in (
+            (self.transition_ms_spin, "valueChanged"),
+            (self.transition_direction_combo, "currentIndexChanged"),
+            (self.transition_bit_width_spin, "valueChanged"),
+            (self.transition_fade_spin, "valueChanged"),
+        ):
+            getattr(widget, signal_name).connect(self._on_phase_field_changed)
+        self.preview_transition_btn.clicked.connect(self._on_preview_transition)
+        self._update_transition_visibility()
 
     # ------------------------------------------------------------------
     # Load / emit
@@ -155,14 +237,27 @@ class ModesPanel(QWidget):
 
     def load(self, config: StrandConfig) -> None:
         self._loading = True
+        self._remember()
+        # A strand seen before comes back to what it showed. One that has not
+        # been - the rest of a group the anchor was just edited as - carries
+        # on from where the editor is, rather than jumping to the first mode.
+        mode_row, phase_row = self._memory.get(id(config), (self._mode_idx, self._phase_idx))
         self._config = config
-        # Divide shares out this strand's pixels, not the last one's.
-        self.masks_panel.set_strip_length(config.length)
+        # Divide's length is not taken from config here: for the head of a
+        # chain it is the chain's, which only the window knows, and
+        # InspectorPanel.load() hands it to masks_panel just before this.
         self._mode_idx = -1
         self._phase_idx = -1
         self._refresh_mode_list()
-        self._select_mode(0 if config.profile_modes else -1)
+        if config.profile_modes:
+            self._select_mode(min(max(mode_row, 0), len(config.profile_modes) - 1), phase_row)
+        else:
+            self._select_mode(-1)
         self._loading = False
+
+    def _remember(self) -> None:
+        if self._config is not None and self._mode_idx >= 0:
+            self._memory[id(self._config)] = (self._mode_idx, self._phase_idx)
 
     def save(self, config: StrandConfig) -> None:
         # profile_modes / active_mode_indices are mutated in place as the
@@ -190,7 +285,7 @@ class ModesPanel(QWidget):
             self.mode_list.setCurrentRow(current)
         self.mode_list.blockSignals(False)
 
-    def _select_mode(self, row: int) -> None:
+    def _select_mode(self, row: int, phase_row: int = 0) -> None:
         """Make @p row current and show it in the editor.
 
         Always re-shown, not left to the list's signals: _refresh_mode_list()
@@ -201,7 +296,7 @@ class ModesPanel(QWidget):
         self.mode_list.blockSignals(True)
         self.mode_list.setCurrentRow(row)
         self.mode_list.blockSignals(False)
-        self._on_mode_selected(row)
+        self._on_mode_selected(row, phase_row)
 
     def _on_mode_item_changed(self, item: QListWidgetItem) -> None:
         if self._loading or self._config is None:
@@ -252,7 +347,7 @@ class ModesPanel(QWidget):
         self.mode_list.setCurrentRow(j)
         self._emit_changed()
 
-    def _on_mode_selected(self, row: int) -> None:
+    def _on_mode_selected(self, row: int, phase_row: int = 0) -> None:
         self._mode_idx = row
         self._phase_idx = -1
         if self._config is None or not (0 <= row < len(self._config.profile_modes)):
@@ -277,11 +372,12 @@ class ModesPanel(QWidget):
             self._update_sequenced_visibility()
             self._refresh_phase_list()
             if mode.phases:
-                self._select_phase(0)
+                self._select_phase(min(max(phase_row, 0), len(mode.phases) - 1))
             else:
                 self._bind_leaf(mode.animation, mode.splice)
         finally:
             self._loading = was_loading
+        self._remember()
 
     def _on_mode_field_changed(self, *_args) -> None:
         if self._loading or self._config is None or not (0 <= self._mode_idx < len(self._config.profile_modes)):
@@ -338,10 +434,13 @@ class ModesPanel(QWidget):
         self.phase_list.clear()
         if mode:
             for phase in mode.phases:
-                self.phase_list.addItem(f"{phase.name}  ({phase.duration_ms} ms)")
+                plays = f", {phase.plays}x" if phase.plays else ""
+                self.phase_list.addItem(f"{phase.name}  ({phase.duration_ms} ms{plays})")
         if 0 <= current < self.phase_list.count():
             self.phase_list.setCurrentRow(current)
         self.phase_list.blockSignals(False)
+        # A second phase is what gives a transition something to come in over.
+        self._update_preview_button()
 
     def _select_phase(self, row: int) -> None:
         """Make @p row current and show it - see _select_mode() for why the
@@ -401,9 +500,19 @@ class ModesPanel(QWidget):
         try:
             self.phase_name_edit.setText(phase.name)
             self.phase_duration_spin.setValue(phase.duration_ms)
+            self.phase_plays_spin.setValue(phase.plays)
+            self._sync_plays_suffix()
+            t = phase.transition
+            self.transition_combo.setCurrentIndex(max(0, self.transition_combo.findData(t.kind)))
+            self.transition_ms_spin.setValue(t.duration_ms)
+            set_spread_direction(self.transition_direction_combo, t.origin, t.invert)
+            self.transition_bit_width_spin.setValue(t.bit_width)
+            self.transition_fade_spin.setValue(t.fade_step)
+            self._update_transition_visibility()
         finally:
             self._loading = was_loading
         self._bind_leaf(phase.animation, phase.splice)
+        self._remember()
 
     def _on_phase_field_changed(self, *_args) -> None:
         mode = self._current_mode()
@@ -412,9 +521,65 @@ class ModesPanel(QWidget):
         phase = mode.phases[self._phase_idx]
         phase.name = self.phase_name_edit.text().strip() or "Phase"
         phase.duration_ms = self.phase_duration_spin.value()
+        phase.plays = self.phase_plays_spin.value()
+        t = phase.transition
+        t.kind = enum_data(self.transition_combo, TransitionKind)
+        t.duration_ms = self.transition_ms_spin.value()
+        t.origin, t.invert = spread_direction(self.transition_direction_combo)
+        t.bit_width = self.transition_bit_width_spin.value()
+        t.fade_step = self.transition_fade_spin.value()
         self._refresh_phase_list()
         self.phase_list.setCurrentRow(self._phase_idx)
         self._emit_changed()
+
+    def _on_plays_changed(self, *_args) -> None:
+        self._sync_plays_suffix()
+        self._on_phase_field_changed()
+
+    def _sync_plays_suffix(self) -> None:
+        """"1 time", "3 times" - Every loop is the special value, at 0."""
+        self.phase_plays_spin.setSuffix(" time" if self.phase_plays_spin.value() == 1 else " times")
+
+    def _on_transition_kind_changed(self, *_args) -> None:
+        self._update_transition_visibility()
+        self._on_phase_field_changed()
+
+    def _update_transition_visibility(self) -> None:
+        """Only the fields the picked transition reads."""
+        kind = self.transition_combo.currentData()
+        shown = {
+            self.transition_ms_spin: kind != TransitionKind.CUT,
+            self.transition_direction_combo: kind == TransitionKind.SPREAD,
+            self.transition_bit_width_spin: kind == TransitionKind.TWINKLE,
+            self.transition_fade_spin: kind == TransitionKind.TWINKLE,
+        }
+        for widget, show in shown.items():
+            widget.setVisible(show)
+            label = self._phase_form.labelForField(widget)
+            if label is not None:
+                label.setVisible(show)
+        self._update_preview_button()
+
+    def _update_preview_button(self) -> None:
+        """Offer Preview Transition only where there is a wipe to see."""
+        mode = self._current_mode()
+        cut = self.transition_combo.currentData() == TransitionKind.CUT
+        lone = mode is None or len(mode.phases) < 2
+        self.preview_transition_btn.setEnabled(not cut and not lone)
+        if cut:
+            why = "Pick a transition first - a cut has nothing to preview."
+        elif lone:
+            why = ("A transition plays coming in from a different phase, so it "
+                   "needs a second phase to come in over.")
+        else:
+            why = ("Play this phase coming in over the one before it on the "
+                   "preview now, then go back to what the strand plays.")
+        self.preview_transition_btn.setToolTip(why)
+
+    def _on_preview_transition(self) -> None:
+        mode = self._current_mode()
+        if mode is not None and 0 <= self._phase_idx < len(mode.phases):
+            self.preview_transition_requested.emit(self._mode_idx, self._phase_idx)
 
     # ------------------------------------------------------------------
     # Shared animation/splice editor rebinding

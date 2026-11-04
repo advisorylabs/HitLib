@@ -117,11 +117,11 @@ public:
               bool seamless = true);
 
     /** @copydoc LedStrand::rainbow */
-    void rainbow(LedStrand::Speed speed);
+    void rainbow(LedStrand::Speed speed, bool invert = false);
 
     /** @copydoc LedStrand::twinkle */
     void twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
-                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000, uint8_t bitWidth = 1);
 
     /** @copydoc LedStrand::bitscroll */
     void bitscroll(const std::vector<LedStrand::BitScrollSegment>& segments, LedStrand::Speed speed,
@@ -164,8 +164,21 @@ public:
     /** @copydoc LedStrand::spliceMaskCustom */
     void spliceMaskCustom(const std::vector<LedStrand::SpliceRegion>& regions);
 
+    /** @copydoc LedStrand::spreadMask */
+    void spreadMask(LedStrand::Speed speed,
+                    LedStrand::SpreadOrigin origin = LedStrand::SpreadOrigin::EDGE,
+                    bool invert = false, bool bounce = false, uint32_t bgColor = 0x000000,
+                    bool useOverlay = false);
+
+    /** @copydoc LedStrand::twinkleMask */
+    void twinkleMask(uint8_t densityPct = 30, uint8_t fadeStep = 16, uint8_t bitWidth = 1,
+                     bool invert = false, uint32_t bgColor = 0x000000, bool useOverlay = false);
+
     /** @copydoc LedStrand::clearSpliceMask */
     void clearSpliceMask();
+
+    /** @copydoc LedStrand::transition */
+    void transition(const LedStrand::Transition& t);
 
     /** @copydoc LedStrand::setBrightness */
     void setBrightness(uint8_t pct);
@@ -181,17 +194,18 @@ public:
 
     /** @copydoc LedStrand::overlayPulse */
     void overlayPulse(uint32_t color, uint8_t runLength, LedStrand::Speed speed,
-                      uint32_t bgColor = 0x000000);
+                      uint32_t bgColor = 0x000000, bool invert = false);
 
     /** @copydoc LedStrand::overlayFlash */
     void overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs,
                       uint32_t bgColor = 0x000000);
 
     /** @copydoc LedStrand::overlayFlow */
-    void overlayFlow(uint32_t color1, uint32_t color2, LedStrand::Speed speed, bool seamless = true);
+    void overlayFlow(uint32_t color1, uint32_t color2, LedStrand::Speed speed, bool seamless = true,
+                     bool invert = false);
 
     /** @copydoc LedStrand::overlayRainbow */
-    void overlayRainbow(LedStrand::Speed speed);
+    void overlayRainbow(LedStrand::Speed speed, bool invert = false);
 
     /// @}
 

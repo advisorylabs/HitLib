@@ -496,7 +496,7 @@ void LedStrand::resetLayerStateNL(const Layer& l, LayerState& st, uint8_t ring) 
     // they already have, so a retrigger never reaches the heap.
     if (l.kind == LayerKind::TWINKLE)
         st.twinkle.reset(length, st.twinkle.palette, l.sparkle.densityPct, l.sparkle.fadeStep,
-                         l.paint.bgColor);
+                         l.paint.bgColor, l.sparkle.bitWidth);
 
     if (l.kind == LayerKind::FRAMES) decodeFrameNL(l, st);
 }
@@ -772,10 +772,11 @@ uint32_t LedStrand::layerPixel(const Layer& l, const LayerState& st, const Resol
         // stepTwinkle() has already moved level/target/hold this tick. The
         // spark's own brightness *is* its coverage, so a KEY twinkle layer
         // fades into what is under it rather than onto its own background.
-        if (k >= st.twinkle.level.size()) return 0u;
+        size_t b = k / st.twinkle.bitWidth;
+        if (b >= st.twinkle.level.size()) return 0u;
         uint32_t fgc = st.twinkle.palette.empty() ? 0u
-                     : st.twinkle.palette[st.twinkle.colorIdx[k]];
-        return ((uint32_t)st.twinkle.level[k] << 24) | (fgc & 0xFFFFFFu);
+                     : st.twinkle.palette[st.twinkle.colorIdx[b]];
+        return ((uint32_t)st.twinkle.level[b] << 24) | (fgc & 0xFFFFFFu);
     }
 
     case LayerKind::BITSCROLL: {

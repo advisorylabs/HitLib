@@ -177,6 +177,7 @@ class Layer:
     palette: tuple[int, ...] = ()
     density_pct: int = 30
     fade_step: int = 16
+    bit_width: int = 1   # pixels per spark; 0, as in an old table, is one
 
     # pattern
     segments: tuple[BitScrollSegment, ...] = ()

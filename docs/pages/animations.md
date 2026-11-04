@@ -71,9 +71,10 @@ color back to the first at the wrap.
 
 ```cpp
 strand.rainbow(/*speed*/ 1);
+strand.rainbow(/*speed*/ 1, /*invert*/ true);
 ```
 
-Full HSV rainbow scrolled across the strip.
+Full HSV rainbow scrolled across the strip. `invert` scrolls it the other way.
 
 ---
 
@@ -120,11 +121,18 @@ strand.twinkle(
     {0xFFFFFF, 0xFFDD88},   // color palette
     /*densityPct*/ 30,       // 0–100, percentage of LEDs lit at once
     /*fadeStep*/   16,        // brightness step per tick (higher = faster fade)
-    /*bgColor*/    0x000000
+    /*bgColor*/    0x000000,
+    /*bitWidth*/   1          // pixels per sparkle
 );
 ```
 
 Randomly spawns sparkles from the palette that fade in, hold briefly, then fade out.
+
+`bitWidth` (added in 1.6, default 1) makes each sparkle that many pixels wide,
+so it reads from across the field. The strip is cut into bits from pixel 0, and
+a bit lights, holds and fades as one; density counts bits, not pixels. The same
+parameter is on `overlayTwinkle()`, a custom splice region's `bitWidth`, and a
+custom animation's TWINKLE layer.
 
 ---
 
@@ -166,6 +174,7 @@ strand.overlayRainbow(1);
 strand.overlayPulse(0x0000FF, 5, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1);
 strand.overlayFlow(0xFF0000, 0x0000FF, 1, /*seamless*/ false);
+strand.overlayFlow(0xFF0000, 0x0000FF, 1, /*seamless*/ true, /*invert*/ true);
 strand.overlayFlash(0xFFFFFF, 100, 100);
 strand.overlayTwinkle({0xFFFFFF, 0x88CCFF}, 30, 16);
 strand.overlayBitscroll({{0x00FFAA, 3}}, 1);
@@ -174,6 +183,10 @@ strand.overlayBitscroll({{0x00FFAA, 3}}, 1);
 The overlay carries the same vocabulary as the base animations, minus `bounce`:
 it is a single scrolling buffer, and bouncing needs a wider master pattern to
 slide a window over. Use the base animation when you want that.
+
+`overlayPulse()`, `overlayFlow()` and `overlayRainbow()` take `invert` as their
+last argument, after everything they took before 1.6 - so for `overlayFlow()` it
+comes after `seamless`, the other way round from `flow()`.
 
 ---
 
@@ -366,9 +379,64 @@ strand.spliceMaskCustom({
     {.start = 40, .width = 8, .kind = Kind::BITSCROLL, .color = 0x00FFAA, .speed = 1},
 });
 
-// Clear (either kind)
+// Clear (any kind, including the two below)
 strand.clearSpliceMask();
 ```
+
+### Spread mask
+
+`spreadMask()` shows the animation only across a stretch that spreads over the
+strip; outside it the strip shows `bgColor`, or the overlay with `useOverlay`.
+The spread starts empty and grows by `speed` until it covers the strip, then
+starts over - or, with `bounce`, shrinks back the way it came.
+
+```cpp
+using LS = hitlib::LedStrand;
+strand.rainbow(1);
+
+strand.spreadMask(1);                                                  // left to right
+strand.spreadMask(1, LS::SpreadOrigin::EDGE, /*invert*/ true);         // right to left
+strand.spreadMask(LS::Speed::everyMs(40), LS::SpreadOrigin::CENTER);   // center outward
+strand.spreadMask(2, LS::SpreadOrigin::CENTER, true, /*bounce*/ true); // edges inward, and back
+```
+
+A `CENTER` spread moves both of its edges by `speed` each step.
+
+### Twinkle mask
+
+`twinkleMask()` is Twinkle used as a mask: each bit fades in to show the
+animation underneath, holds, and fades back out. With `invert` the bits hide
+the animation instead.
+
+```cpp
+strand.rainbow(1);
+strand.twinkleMask(/*densityPct*/ 40, /*fadeStep*/ 24, /*bitWidth*/ 2);
+```
+
+The spread and twinkle masks take the splice mask's place - a strand has one
+mask at a time, whichever was called most recently.
+
+---
+
+## Transitions
+
+`transition()` wipes from whatever the strip is showing into whatever is set up
+next. Call it, then start the new animation:
+
+```cpp
+using LS = hitlib::LedStrand;
+strand.transition({LS::TransitionKind::SPREAD, 600, LS::SpreadOrigin::CENTER});
+strand.rainbow(2);   // spreads out from the middle over 600 ms
+
+// Twinkle: bits of the new animation appear at random and stay, until it is
+// all there. Here two pixels a bit, each fading in at 64 a tick.
+strand.transition({LS::TransitionKind::TWINKLE, 800, LS::SpreadOrigin::EDGE, false, 2, 64});
+strand.setColor(0x00FF00);
+```
+
+The outgoing frame holds still while the incoming animation, already running,
+is wiped in over it. A Sequencer phase can carry a transition of its own - see
+[Profiles](\ref profiles_page).
 
 ### Region animation kinds
 
@@ -379,17 +447,17 @@ kind uses, so the rest can be left at their defaults:
 |---|---|---|
 | `OFF` | Nothing - the region stays dark. The default. | - |
 | `SOLID` | One flat color. | `color` |
-| `PULSE` | A run of color travelling over a background. | `color`, `bgColor`, `runLength`, `speed` |
+| `PULSE` | A run of color travelling over a background. | `color`, `bgColor`, `runLength`, `speed`, `invert` |
 | `FLASH` | The whole region blinking on and off. | `color`, `bgColor`, `onMs`, `offMs` |
-| `FLOW` | A two-color gradient scrolling through the region. | `color`, `color2`, `speed`, `seamless` |
-| `RAINBOW` | A full HSV rainbow across the region. | `speed` |
-| `TWINKLE` | Sparkles drawn from a palette. | `palette`, `densityPct`, `fadeStep`, `bgColor` |
+| `FLOW` | A two-color gradient scrolling through the region. | `color`, `color2`, `speed`, `seamless`, `invert` |
+| `RAINBOW` | A full HSV rainbow across the region. | `speed`, `invert` |
+| `TWINKLE` | Sparkles drawn from a palette. | `palette`, `densityPct`, `fadeStep`, `bgColor`, `bitWidth` |
 | `BITSCROLL` | Evenly sized runs scrolling through the region. | `color`, `bgColor`, `segmentWidth`, `spacing`, `repeating`, `speed`, `invert` |
 | `GAUGE` | A meter colored off its own scale. See below. | `read`, `emptyAt`, `fullAt`, `wrap`, `smoothing`, `stops`, `style`, `blend`, `bgColor`, `invert` |
 
-`invert` is narrower here than on the base animations: it reverses a
-`BITSCROLL`'s scroll direction and picks which end a `GAUGE` `BAR` fills from,
-and every other kind ignores it. There is no `bounce` at all - a region scrolls
+`invert` reverses the direction a `PULSE`, `FLOW`, `RAINBOW` or `BITSCROLL`
+moves in, and picks which end a `GAUGE` `BAR` fills from; every other kind
+ignores it. There is no `bounce` at all - a region scrolls
 a buffer its own width, and bouncing needs a wider master pattern to slide a
 window over.
 
@@ -490,7 +558,8 @@ between them.
 Pattern Studio builds the whole thing without any of this being typed: set one
 region up as a Gauge on Motor Temperature (which brings the six stops with it),
 then press **Divide** to lay out however many equal segments the strip holds and
-change each one's port.
+change each one's port. On the first strand of a chain, Divide shares out the
+whole chain, not just that strand's strip.
 
 ---
 

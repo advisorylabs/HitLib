@@ -24,6 +24,19 @@ uint8_t  s_frameCount = 0;
 bool     s_wrote      = false;
 uint32_t s_writeCount = 0;
 
+// The same, per port: Smart Ports 0 (the brain) to 21, ADI ports 1 to 8.
+constexpr uint8_t SMART_PORTS = 22;
+constexpr uint8_t ADI_PORTS   = 9;
+uint32_t s_portFrame[SMART_PORTS][ADI_PORTS][64];
+uint8_t  s_portCount[SMART_PORTS][ADI_PORTS];
+bool     s_portWrote[SMART_PORTS][ADI_PORTS];
+
+// What an AdiLed's impl points at on the host: the port it writes to.
+struct Port {
+    uint8_t smart;
+    uint8_t adi;
+};
+
 void (*s_onWrite)()         = nullptr;
 void (*s_onDelay)(uint32_t) = nullptr;
 
@@ -92,8 +105,8 @@ void Mutex::give() {
     if (--depth == 0) --s_heldMutexes;
 }
 
-AdiLed::AdiLed(uint8_t, uint8_t, uint8_t) : impl(nullptr) {}
-AdiLed::~AdiLed() {}
+AdiLed::AdiLed(uint8_t smartPort, uint8_t adiPort, uint8_t) : impl(new Port{smartPort, adiPort}) {}
+AdiLed::~AdiLed() { delete static_cast<Port*>(impl); }
 
 void AdiLed::write(const uint32_t* pixels, uint8_t count) {
     if (count > 64) count = 64;
@@ -101,6 +114,15 @@ void AdiLed::write(const uint32_t* pixels, uint8_t count) {
         std::memcpy(s_frame, pixels, (size_t)count * sizeof(uint32_t));
     }
     s_frameCount = count;
+    const Port* port = static_cast<const Port*>(impl);
+    if (port->smart < SMART_PORTS && port->adi < ADI_PORTS) {
+        if (pixels != nullptr && count > 0) {
+            std::memcpy(s_portFrame[port->smart][port->adi], pixels,
+                        (size_t)count * sizeof(uint32_t));
+        }
+        s_portCount[port->smart][port->adi] = count;
+        s_portWrote[port->smart][port->adi] = true;
+    }
     s_wrote      = true;
     ++s_writeCount;
     if (s_onWrite) s_onWrite();
@@ -117,6 +139,8 @@ void reset() {
     s_frameCount     = 0;
     s_wrote          = false;
     s_writeCount     = 0;
+    std::memset(s_portCount, 0, sizeof(s_portCount));
+    std::memset(s_portWrote, 0, sizeof(s_portWrote));
     s_onWrite        = nullptr;
     s_onDelay        = nullptr;
     s_contendedTake  = 0;
@@ -126,6 +150,16 @@ void reset() {
 const uint32_t* lastFrame() { return s_wrote ? s_frame : nullptr; }
 
 uint8_t lastFrameCount() { return s_frameCount; }
+
+const uint32_t* lastFrameOn(uint8_t smartPort, uint8_t adiPort) {
+    if (smartPort >= SMART_PORTS || adiPort >= ADI_PORTS) return nullptr;
+    return s_portWrote[smartPort][adiPort] ? s_portFrame[smartPort][adiPort] : nullptr;
+}
+
+uint8_t lastFrameCountOn(uint8_t smartPort, uint8_t adiPort) {
+    if (smartPort >= SMART_PORTS || adiPort >= ADI_PORTS) return 0;
+    return s_portCount[smartPort][adiPort];
+}
 
 uint32_t writeCount() { return s_writeCount; }
 

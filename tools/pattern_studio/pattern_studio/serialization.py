@@ -26,6 +26,7 @@ from . import frame_codec
 from .envelope import EnvelopeSettings, TrackAnalysis
 from .models import (
     AnimationConfig,
+    AnimationKind,
     BindingConfig,
     BitScrollSegmentConfig,
     CompositionConfig,
@@ -36,10 +37,12 @@ from .models import (
     ModeConfig,
     MusicConfig,
     OverlayAnimationConfig,
+    OverlayAnimationKind,
     PhaseConfig,
     SpliceMaskConfig,
     SpliceRegionConfig,
     StrandConfig,
+    TransitionConfig,
 )
 
 # 2 added the document-level `music` block. 3 replaced its single baked table
@@ -73,10 +76,22 @@ from .models import (
 # (LedStrand::Speed), and each drawn frame a scroll flag; a file without them
 # means a step every refresh tick, exactly as `speed` always did.
 #
+# 8 is HitLib 1.6: chained strands, the spread and twinkle masks,
+# phases that play a set number of times and wipe in with a transition, and a
+# bit width on every twinkle. Each defaults to what a file without it meant -
+# unchained, the splice mask, every time round with a
+# cut, one pixel per bit - so an older file loads unchanged. The other
+# direction is why it is a bump: a schema-7 reader would load a chained design
+# as separate strands and a spread mask as a splice mask, without a word.
+# 8 also gave a direction to the rainbow, and to an overlay's or a Custom
+# region's pulse, flow and rainbow. Their Invert box was hidden until then, so
+# an older file can hold one left over from a kind it used to be; loading it
+# clears those, or the design would come back running the other way.
+#
 # A file newer than SCHEMA_VERSION is refused rather than read. Its additions
 # may be nothing but new keys, which would load without complaint - and the
 # next Save would write it back as this version with them gone.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 # ============================================================================
@@ -116,6 +131,13 @@ def _as_int(v) -> int | None:
 def _int(d: dict, key: str, default: int) -> int:
     v = _as_int(d.get(key))
     return default if v is None else v
+
+
+def _byte(d: dict, key: str, default: int, low: int = 0) -> int:
+    """An int the firmware holds in a uint8_t, kept to `low`..255. A
+    hand-edited -1 bit width loaded as-is and raised on every preview tick
+    once a twinkle used it, and could not have been written as C++ at all."""
+    return min(255, max(low, _int(d, key, default)))
 
 
 def _ints(d: dict, key: str, default: list[int]) -> list[int]:
@@ -171,6 +193,7 @@ def _animation_to_dict(a: AnimationConfig) -> dict:
         "seamless": a.seamless,
         "density_pct": a.density_pct,
         "fade_step": a.fade_step,
+        "bit_width": a.bit_width,
         "palette": list(a.palette),
         "segment_width": a.segment_width,
         "spacing": a.spacing,
@@ -207,6 +230,7 @@ def _animation_from_dict(d: dict) -> AnimationConfig:
         seamless=_bool(d, "seamless", default.seamless),
         density_pct=_int(d, "density_pct", default.density_pct),
         fade_step=_int(d, "fade_step", default.fade_step),
+        bit_width=_byte(d, "bit_width", default.bit_width, 1),
         palette=_ints(d, "palette", default.palette),
         segment_width=_int(d, "segment_width", default.segment_width),
         spacing=_int(d, "spacing", default.spacing),
@@ -249,6 +273,7 @@ def _overlay_to_dict(o: OverlayAnimationConfig) -> dict:
         "seamless": o.seamless,
         "density_pct": o.density_pct,
         "fade_step": o.fade_step,
+        "bit_width": o.bit_width,
         "palette": list(o.palette),
         "segment_width": o.segment_width,
         "spacing": o.spacing,
@@ -283,6 +308,7 @@ def _overlay_from_dict(d: dict) -> OverlayAnimationConfig:
         seamless=_bool(d, "seamless", default.seamless),
         density_pct=_int(d, "density_pct", default.density_pct),
         fade_step=_int(d, "fade_step", default.fade_step),
+        bit_width=_byte(d, "bit_width", default.bit_width, 1),
         palette=_ints(d, "palette", default.palette),
         segment_width=_int(d, "segment_width", default.segment_width),
         spacing=_int(d, "spacing", default.spacing),
@@ -331,6 +357,16 @@ def _splice_to_dict(s: SpliceMaskConfig) -> dict:
         "use_overlay": s.use_overlay,
         "regions": [_region_to_dict(r) for r in s.regions],
         "overlay": _overlay_to_dict(s.overlay),
+        "kind": s.kind.value,
+        "spread_origin": s.spread_origin.value,
+        "spread_invert": s.spread_invert,
+        "spread_bounce": s.spread_bounce,
+        "spread_speed": s.spread_speed,
+        "spread_step_ms": s.spread_step_ms,
+        "twinkle_density_pct": s.twinkle_density_pct,
+        "twinkle_fade_step": s.twinkle_fade_step,
+        "twinkle_bit_width": s.twinkle_bit_width,
+        "twinkle_invert": s.twinkle_invert,
     }
 
 
@@ -347,6 +383,39 @@ def _splice_from_dict(d: dict) -> SpliceMaskConfig:
         use_overlay=_bool(d, "use_overlay", default.use_overlay),
         regions=[_region_from_dict(r) for r in _objs(d, "regions")],
         overlay=_overlay_from_dict(_obj(d, "overlay")),
+        kind=_enum(d, "kind", default.kind),
+        spread_origin=_enum(d, "spread_origin", default.spread_origin),
+        spread_invert=_bool(d, "spread_invert", default.spread_invert),
+        spread_bounce=_bool(d, "spread_bounce", default.spread_bounce),
+        spread_speed=_int(d, "spread_speed", default.spread_speed),
+        spread_step_ms=_int(d, "spread_step_ms", default.spread_step_ms),
+        twinkle_density_pct=_int(d, "twinkle_density_pct", default.twinkle_density_pct),
+        twinkle_fade_step=_int(d, "twinkle_fade_step", default.twinkle_fade_step),
+        twinkle_bit_width=_byte(d, "twinkle_bit_width", default.twinkle_bit_width, 1),
+        twinkle_invert=_bool(d, "twinkle_invert", default.twinkle_invert),
+    )
+
+
+def _transition_to_dict(t: TransitionConfig) -> dict:
+    return {
+        "kind": t.kind.value,
+        "duration_ms": t.duration_ms,
+        "origin": t.origin.value,
+        "invert": t.invert,
+        "bit_width": t.bit_width,
+        "fade_step": t.fade_step,
+    }
+
+
+def _transition_from_dict(d: dict) -> TransitionConfig:
+    default = TransitionConfig()
+    return TransitionConfig(
+        kind=_enum(d, "kind", default.kind),
+        duration_ms=_int(d, "duration_ms", default.duration_ms),
+        origin=_enum(d, "origin", default.origin),
+        invert=_bool(d, "invert", default.invert),
+        bit_width=_byte(d, "bit_width", default.bit_width, 1),
+        fade_step=_byte(d, "fade_step", default.fade_step),
     )
 
 
@@ -356,6 +425,8 @@ def _phase_to_dict(p: PhaseConfig) -> dict:
         "duration_ms": p.duration_ms,
         "animation": _animation_to_dict(p.animation),
         "splice": _splice_to_dict(p.splice),
+        "plays": p.plays,
+        "transition": _transition_to_dict(p.transition),
     }
 
 
@@ -366,6 +437,8 @@ def _phase_from_dict(d: dict) -> PhaseConfig:
         duration_ms=_int(d, "duration_ms", default.duration_ms),
         animation=_animation_from_dict(_obj(d, "animation")),
         splice=_splice_from_dict(_obj(d, "splice")),
+        plays=_int(d, "plays", default.plays),
+        transition=_transition_from_dict(_obj(d, "transition")),
     )
 
 
@@ -403,6 +476,7 @@ def strand_to_dict(cfg: StrandConfig) -> dict:
         "use_profile": cfg.use_profile,
         "profile_modes": [_mode_to_dict(m) for m in cfg.profile_modes],
         "active_mode_indices": list(cfg.active_mode_indices),
+        "chained": cfg.chained,
     }
 
 
@@ -420,6 +494,7 @@ def strand_from_dict(d: dict) -> StrandConfig:
         use_profile=_bool(d, "use_profile", default.use_profile),
         profile_modes=[_mode_from_dict(m) for m in _objs(d, "profile_modes")],
         active_mode_indices=_ints(d, "active_mode_indices", []),
+        chained=_bool(d, "chained", default.chained),
     )
 
 
@@ -597,6 +672,7 @@ def _layer_to_dict(layer: LayerConfig) -> dict:
         "palette": list(layer.palette),
         "density_pct": layer.density_pct,
         "fade_step": layer.fade_step,
+        "bit_width": layer.bit_width,
         "segments": [_segment_to_dict(s) for s in layer.segments],
         "spacing": layer.spacing,
         "repeating": layer.repeating,
@@ -669,6 +745,7 @@ def _layer_from_dict(d: dict) -> LayerConfig:
         palette=_ints(d, "palette", ref.palette),
         density_pct=_int(d, "density_pct", ref.density_pct),
         fade_step=_int(d, "fade_step", ref.fade_step),
+        bit_width=_byte(d, "bit_width", ref.bit_width, 1),
         segments=[_segment_from_dict(s) for s in _objs(d, "segments")],
         spacing=_int(d, "spacing", ref.spacing),
         repeating=_bool(d, "repeating", ref.repeating),
@@ -774,16 +851,39 @@ def document_from_dict(d: dict) -> Document:
             f"version reads up to schema {SCHEMA_VERSION}. Update Pattern Studio to open it."
         )
     try:
-        return Document(
+        doc = Document(
             strands=[strand_from_dict(s) for s in _objs(d, "strands")],
             music=_music_from_dict(_obj(d, "music")),
             compositions=[composition_from_dict(c) for c in _objs(d, "compositions")],
         )
+        if version is None or version < 8:
+            _drop_hidden_inverts(doc)
+        return doc
     except (TypeError, AttributeError, LookupError) as exc:
         # The getters above cover what a hand edit usually gets wrong. This is
         # whatever they don't, such as a drawn frame's index pointing outside
         # its own data.
         raise ValueError(f"This profile is damaged and can't be read ({exc}).") from exc
+
+
+#: What had no direction before schema 8, where an Invert did nothing.
+_INVERT_ADDED_IN_8 = {AnimationKind.RAINBOW}
+_OVERLAY_INVERT_ADDED_IN_8 = {
+    OverlayAnimationKind.PULSE, OverlayAnimationKind.FLOW, OverlayAnimationKind.RAINBOW,
+}
+
+
+def _drop_hidden_inverts(doc: Document) -> None:
+    """Clear the Invert an older file kept on a kind that ignored it - see
+    the schema 8 note above."""
+    for strand in doc.strands:
+        for a in strand.animations():
+            if a.kind in _INVERT_ADDED_IN_8:
+                a.invert = False
+        for s in strand.splices():
+            for o in [s.overlay, *(r.animation for r in s.regions)]:
+                if o.kind in _OVERLAY_INVERT_ADDED_IN_8:
+                    o.invert = False
 
 
 def save_document(path: str | Path, doc: Document) -> None:

@@ -176,7 +176,7 @@ def _layer_literal(prefix: str, i: int, layer: LayerConfig, names: dict) -> str:
         f"     /* time    */ {{{layer.loop_ms}, {layer.start_ms}, {layer.end_ms}, "
         f"{layer.fade_in_ms}, {layer.fade_out_ms}, {_bool(layer.retrigger)}}},",
         f"     /* sparkle */ {{{names['palette']}, {len(layer.palette)}, "
-        f"{layer.density_pct}, {layer.fade_step}}},",
+        f"{layer.density_pct}, {layer.fade_step}, {layer.bit_width}}},",
         f"     /* pattern */ {{{names['segments']}, {len(layer.segments)}, "
         f"{layer.spacing}, {_bool(layer.repeating)}}},",
         f"     /* gauge   */ {{{layer.level}, {_bool(layer.gradient)}, "

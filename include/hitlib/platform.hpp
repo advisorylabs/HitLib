@@ -163,6 +163,22 @@ const uint32_t* lastFrame();
 /** @brief How many pixels lastFrame() holds. */
 uint8_t lastFrameCount();
 
+/**
+ * @brief The most recent frame written to one port, or @c nullptr before the
+ *        first.
+ *
+ * What a chained strand's harness reads: a chain writes each of its strips
+ * separately, so lastFrame() only ever holds the last strip's part.  Valid
+ * until the next write to that port.
+ *
+ * @param smartPort  The expander's Smart Port, or 0 for the brain's own ports.
+ * @param adiPort    The ADI port (1-8).
+ */
+const uint32_t* lastFrameOn(uint8_t smartPort, uint8_t adiPort);
+
+/** @brief How many pixels lastFrameOn() holds for that port. */
+uint8_t lastFrameCountOn(uint8_t smartPort, uint8_t adiPort);
+
 /** @brief How many times write() has been called, so a test can tell a
  *         repeated frame from no frame at all. */
 uint32_t writeCount();

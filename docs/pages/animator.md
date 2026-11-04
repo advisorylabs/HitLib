@@ -155,7 +155,7 @@ Pattern Studio's test suite.
 | `pulse`, incl. bounce and invert | **exact** |
 | `flash`, incl. sub-tick periods | **exact** |
 | `flow`, both seam modes, both directions | **exact** |
-| `rainbow`, any speed | **exact** (and a layer can reverse it, which the preset cannot) |
+| `rainbow`, any speed, both directions | **exact** |
 | `bitscroll`, all tiling and bounce modes | **exact** |
 | `levelFill` + `setLevel` / `levelSource` | **exact**, partial edge pixel included |
 | `musicSync` | **exact** |

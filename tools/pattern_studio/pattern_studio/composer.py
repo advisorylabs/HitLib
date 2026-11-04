@@ -87,6 +87,7 @@ def _layer(cfg: LayerConfig) -> Layer:
         palette=tuple(cfg.palette),
         density_pct=cfg.density_pct,
         fade_step=cfg.fade_step,
+        bit_width=cfg.bit_width,
         segments=tuple(BitScrollSegment(color=s.color, width=s.width) for s in cfg.segments),
         spacing=cfg.spacing,
         repeating=cfg.repeating,

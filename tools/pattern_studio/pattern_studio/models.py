@@ -70,6 +70,8 @@ class AnimationConfig:
     seamless: bool = True
     density_pct: int = 30
     fade_step: int = 16
+    # TWINKLE: pixels per spark, so a sparkle can be wider than one LED.
+    bit_width: int = 1
     palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
     segment_width: int = 3
     spacing: int = 5
@@ -212,13 +214,14 @@ class OverlayAnimationConfig:
     # FLOW only: loop the gradient back to `color` instead of cutting straight
     # from `color2` to `color` at the wrap.
     seamless: bool = True
-    # Reverse direction: a BITSCROLL scrolls the other way, a GAUGE bar fills
-    # from the far end of the region.
+    # Reverse direction: a PULSE, FLOW, RAINBOW or BITSCROLL moves the other
+    # way, a GAUGE bar fills from the far end of the region.
     invert: bool = False
 
     # TWINKLE.
     density_pct: int = 30
     fade_step: int = 16
+    bit_width: int = 1
     palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
 
     # BITSCROLL.
@@ -250,6 +253,32 @@ class OverlayAnimationConfig:
 class SpliceModeKind(str, Enum):
     SPLIT = "split"
     CUSTOM = "custom"
+
+
+class MaskKind(str, Enum):
+    """Which mask a strand's mask block turns on. One at a time, as on the
+    robot: spreadMask() and twinkleMask() take the splice mask's place."""
+
+    SPLICE = "splice"
+    SPREAD = "spread"
+    TWINKLE = "twinkle"
+
+
+class SpreadOriginKind(str, Enum):
+    """Mirrors LedStrand::SpreadOrigin."""
+
+    EDGE = "edge"      # from pixel 0 to the far end
+    CENTER = "center"  # from the middle out to both ends
+
+
+#: What each origin reads as, with and without Invert - the four ways a
+#: spread can go.
+SPREAD_DIRECTION_LABELS: dict[tuple[SpreadOriginKind, bool], str] = {
+    (SpreadOriginKind.EDGE, False): "Left to Right",
+    (SpreadOriginKind.EDGE, True): "Right to Left",
+    (SpreadOriginKind.CENTER, False): "Center Outward",
+    (SpreadOriginKind.CENTER, True): "Edges Inward",
+}
 
 
 @dataclass
@@ -286,11 +315,64 @@ class SpliceMaskConfig:
     # SpliceRegionConfig.animation.
     overlay: OverlayAnimationConfig = field(default_factory=OverlayAnimationConfig)
 
+    # Which mask `enabled` turns on. The splice fields above stay put while
+    # another kind is picked, so switching back finds them as they were.
+    # bg_color, use_overlay and overlay are shared: they are what every mask
+    # but Custom shows where it hides the animation.
+    kind: MaskKind = MaskKind.SPLICE
+
+    # SPREAD - LedStrand::spreadMask(). `spread_speed` pixels every
+    # `spread_step_ms`, as an animation's Speed.
+    spread_origin: SpreadOriginKind = SpreadOriginKind.EDGE
+    spread_invert: bool = False
+    spread_bounce: bool = False
+    spread_speed: int = 1
+    spread_step_ms: int = 40
+
+    # TWINKLE - LedStrand::twinkleMask().
+    twinkle_density_pct: int = 30
+    twinkle_fade_step: int = 16
+    twinkle_bit_width: int = 1
+    twinkle_invert: bool = False
+
     def needs_overlay(self) -> bool:
-        """Whether Split mode's shared overlay animation actually needs to be
-        set up, i.e. its masked bins are configured to show it. Not
-        meaningful for Custom mode, where each region owns its animation."""
-        return self.mode == SpliceModeKind.SPLIT and self.use_overlay
+        """Whether the shared overlay animation actually needs to be set up,
+        i.e. the mask is configured to show it where it hides the animation.
+        Never for Custom mode, where each region owns its animation."""
+        if not self.use_overlay:
+            return False
+        return self.kind != MaskKind.SPLICE or self.mode == SpliceModeKind.SPLIT
+
+
+class TransitionKind(str, Enum):
+    """Mirrors LedStrand::TransitionKind."""
+
+    CUT = "cut"
+    SPREAD = "spread"
+    TWINKLE = "twinkle"
+
+
+TRANSITION_KIND_LABELS: dict[TransitionKind, str] = {
+    TransitionKind.CUT: "None (Cut)",
+    TransitionKind.SPREAD: "Spread",
+    TransitionKind.TWINKLE: "Twinkle",
+}
+
+
+@dataclass
+class TransitionConfig:
+    """How a phase wipes in over whatever showed before it - mirrors
+    LedStrand::Transition. A CUT has no wipe, whatever the rest says."""
+
+    kind: TransitionKind = TransitionKind.CUT
+    duration_ms: int = 500
+    # SPREAD.
+    origin: SpreadOriginKind = SpreadOriginKind.EDGE
+    invert: bool = False
+    # TWINKLE. Each bit appears and then stays, until the whole new
+    # animation is in.
+    bit_width: int = 1
+    fade_step: int = 64
 
 
 @dataclass
@@ -301,6 +383,12 @@ class PhaseConfig:
     duration_ms: int = 1000
     animation: AnimationConfig = field(default_factory=AnimationConfig)
     splice: SpliceMaskConfig = field(default_factory=SpliceMaskConfig)
+    #: Times round the loop this phase plays before it is skipped. 0 plays it
+    #: every time; 1 is an intro.
+    plays: int = 0
+    #: How it wipes in over a different phase before it. Never at the mode's
+    #: start, nor when the loop comes back round to this same phase.
+    transition: TransitionConfig = field(default_factory=TransitionConfig)
 
 
 @dataclass
@@ -331,6 +419,14 @@ class StrandConfig:
     animation: AnimationConfig = field(default_factory=AnimationConfig)
     splice: SpliceMaskConfig = field(default_factory=SpliceMaskConfig)
 
+    #: This strand continues the one above it in the list: on the robot the
+    #: two are one LedStrand built from a chain of segments, and whatever the
+    #: first strand of the chain plays runs across all of them. A chained
+    #: strand's own animation, profile, refresh and brightness are unused
+    #: while it is chained - they are the head's - and come back if it is
+    #: unchained.
+    chained: bool = False
+
     # Profile mode: when use_profile is True, `animation`/`splice` above are
     # ignored in favor of `profile_modes`, with `active_mode_indices` driving
     # the same activate_mode()/priority-stack behavior LedStrand uses on
@@ -347,6 +443,14 @@ class StrandConfig:
         for mode in self.profile_modes:
             found.append(mode.animation)
             found.extend(p.animation for p in mode.phases)
+        return found
+
+    def splices(self) -> list[SpliceMaskConfig]:
+        """Every mask this strand holds, as animations() finds them."""
+        found = [self.splice]
+        for mode in self.profile_modes:
+            found.append(mode.splice)
+            found.extend(p.splice for p in mode.phases)
         return found
 
 
@@ -659,6 +763,7 @@ class LayerConfig:
     palette: list[int] = field(default_factory=lambda: [0xFF0000, 0x00FF00, 0x0000FF])
     density_pct: int = 30
     fade_step: int = 16
+    bit_width: int = 1
 
     # BITSCROLL. Several segments, unlike the preset - which has always taken
     # a vector in C++ but has never been offered more than one here.
@@ -749,6 +854,51 @@ class CompositionConfig:
     drivers: list[DriverConfig] = field(default_factory=list)
     loop_ms: int = 0
     bg_color: int = 0x000000
+
+
+#: LedStrand::MAX_SEGMENTS / MAX_CHAIN_LEDS: the most strips one chain can
+#: drive, and the most pixels across all of them.
+MAX_SEGMENTS = 8
+MAX_CHAIN_LEDS = 128
+
+
+def chains(strands: list[StrandConfig]) -> list[list[int]]:
+    """The strands as the robot builds them: one list of row indices per
+    LedStrand, head first. A strand on its own is a chain of one.
+
+    A chained strand continues the row above it, so a chain is a run of rows;
+    row 0 has nothing above it to continue and always starts one.
+    """
+    groups: list[list[int]] = []
+    for row, cfg in enumerate(strands):
+        if cfg.chained and groups:
+            groups[-1].append(row)
+        else:
+            groups.append([row])
+    return groups
+
+
+def chain_of(strands: list[StrandConfig], row: int) -> list[int]:
+    """The rows of the chain `row` belongs to, head first."""
+    for group in chains(strands):
+        if row in group:
+            return group
+    return []
+
+
+def chain_length(members: list[StrandConfig]) -> int:
+    """How many pixels one LedStrand built from `members`, head first, plays
+    across - what a mask's pixel positions count along, so the whole chain's
+    and not its head strip's. Clamped as the chain constructor clamps it: each
+    strip to MAX_LEDS, the strips past MAX_SEGMENTS dropped, and the whole
+    chain to MAX_CHAIN_LEDS.
+    """
+    total = 0
+    for m in members[:MAX_SEGMENTS]:
+        if total >= MAX_CHAIN_LEDS:
+            break
+        total += min(max(1, min(m.length, MAX_LEDS)), MAX_CHAIN_LEDS - total)
+    return max(1, total)
 
 
 def composition_ids_named(strands: list[StrandConfig]) -> set[int]:

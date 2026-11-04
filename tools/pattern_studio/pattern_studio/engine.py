@@ -15,10 +15,14 @@ from hitlib_sim import (
     Phase,
     Profile,
     ProfileMode,
+    Segment,
     Sequencer,
     SpliceRegion,
     SpliceRegionAnimKind,
+    SpreadOrigin,
     Strand,
+    Transition,
+    TransitionKind as SimTransitionKind,
 )
 
 from . import composer
@@ -29,6 +33,7 @@ from .models import (
     DriverKind,
     GaugeBlendKind,
     GaugeStyleKind,
+    MaskKind,
     ModeConfig,
     MusicConfig,
     OverlayAnimationConfig,
@@ -37,7 +42,10 @@ from .models import (
     SpliceMaskConfig,
     SpliceModeKind,
     SpliceRegionConfig,
+    SpreadOriginKind,
     StrandConfig,
+    TransitionConfig,
+    TransitionKind,
 )
 
 # OverlayAnimationConfig.kind (the serializable model) -> the sim/C++
@@ -63,6 +71,17 @@ _GAUGE_STYLE = {
 _GAUGE_BLEND = {
     GaugeBlendKind.LERP: GaugeBlend.LERP,
     GaugeBlendKind.STEP: GaugeBlend.STEP,
+}
+
+_SPREAD_ORIGIN = {
+    SpreadOriginKind.EDGE: SpreadOrigin.EDGE,
+    SpreadOriginKind.CENTER: SpreadOrigin.CENTER,
+}
+
+_TRANSITION_KIND = {
+    TransitionKind.CUT: SimTransitionKind.CUT,
+    TransitionKind.SPREAD: SimTransitionKind.SPREAD,
+    TransitionKind.TWINKLE: SimTransitionKind.TWINKLE,
 }
 
 
@@ -108,12 +127,18 @@ def make_music_binding(music: MusicConfig | None) -> MusicBinding | None:
 
 
 def make_strand(config: StrandConfig, music: MusicBinding | None = None,
-                compositions: dict[int, CompositionConfig] | None = None) -> Strand:
+                compositions: dict[int, CompositionConfig] | None = None,
+                chained: list[StrandConfig] | None = None) -> Strand:
+    """The engine strand for `config`. With `chained` - the strands that
+    continue it, in order - one strand across all of their strips, as the
+    chain constructor builds on the robot."""
+    members = [config, *(chained or [])]
     strand = Strand(
         adi_port=config.adi_port,
         length=config.length,
         refresh_ms=config.refresh_ms,
         smart_port=config.smart_port,
+        chain=[Segment(m.adi_port, m.length, m.smart_port) for m in members],
     )
     apply_strand_config(strand, config, music, compositions)
     return strand
@@ -159,7 +184,8 @@ def _build_profile_mode(mc: ModeConfig, music: MusicBinding | None = None,
                         flattened: dict[int, Composition] | None = None) -> ProfileMode:
     if mc.phases:
         sequencer = Sequencer([Phase(p.duration_ms,
-                                     _make_phase_start_fn(p, music, compositions, flattened))
+                                     _make_phase_start_fn(p, music, compositions, flattened),
+                                     plays=p.plays, transition=make_transition(p.transition))
                                for p in mc.phases])
 
         def on_activate(strand: Strand, seq: Sequencer = sequencer) -> None:
@@ -177,6 +203,20 @@ def _build_profile_mode(mc: ModeConfig, music: MusicBinding | None = None,
     return ProfileMode(name=mc.name, priority=mc.priority, on_activate=on_activate, on_tick=None)
 
 
+def make_transition(t: TransitionConfig) -> Transition | None:
+    """The sim's Transition for `t`, or None for a cut."""
+    if t.kind == TransitionKind.CUT or t.duration_ms <= 0:
+        return None
+    return Transition(
+        kind=_TRANSITION_KIND[t.kind],
+        duration_ms=t.duration_ms,
+        origin=_SPREAD_ORIGIN[t.origin],
+        invert=t.invert,
+        bit_width=t.bit_width,
+        fade_step=t.fade_step,
+    )
+
+
 def _make_phase_start_fn(p: PhaseConfig, music: MusicBinding | None = None,
                          compositions: dict[int, CompositionConfig] | None = None,
                          flattened: dict[int, Composition] | None = None):
@@ -185,6 +225,13 @@ def _make_phase_start_fn(p: PhaseConfig, music: MusicBinding | None = None,
         _apply_splice(strand, p.splice)
 
     return start_fn
+
+
+def apply_phase(strand: Strand, p: PhaseConfig, music: MusicBinding | None = None,
+                compositions: dict[int, CompositionConfig] | None = None) -> None:
+    """Start `p` on `strand` as its Sequencer would: animation, then mask.
+    Not the transition - that is the caller's, and has to come first."""
+    _make_phase_start_fn(p, music, compositions, {})(strand)
 
 
 def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | None = None,
@@ -204,9 +251,9 @@ def _apply_animation(strand: Strand, a: AnimationConfig, music: MusicBinding | N
     elif a.kind == AnimationKind.FLOW:
         strand.flow(a.color, a.color2, Speed(a.speed, a.step_ms), a.invert, a.seamless)
     elif a.kind == AnimationKind.RAINBOW:
-        strand.rainbow(Speed(a.speed, a.step_ms))
+        strand.rainbow(Speed(a.speed, a.step_ms), a.invert)
     elif a.kind == AnimationKind.TWINKLE:
-        strand.twinkle(a.palette, a.density_pct, a.fade_step, a.bg_color)
+        strand.twinkle(a.palette, a.density_pct, a.fade_step, a.bg_color, a.bit_width)
     elif a.kind == AnimationKind.BITSCROLL:
         segments = [BitScrollSegment(color=a.color, width=a.segment_width)]
         strand.bitscroll(segments, Speed(a.speed, a.step_ms), a.invert, a.bg_color, a.bounce,
@@ -323,15 +370,16 @@ def _apply_overlay(strand: Strand, o: OverlayAnimationConfig) -> None:
     elif o.kind == OverlayAnimationKind.SOLID:
         strand.overlay_set_color(o.color)
     elif o.kind == OverlayAnimationKind.PULSE:
-        strand.overlay_pulse(o.color, o.run_length, Speed(o.speed, o.step_ms), o.bg_color)
+        strand.overlay_pulse(o.color, o.run_length, Speed(o.speed, o.step_ms), o.bg_color,
+                             o.invert)
     elif o.kind == OverlayAnimationKind.FLASH:
         strand.overlay_flash(o.color, o.on_ms, o.off_ms, o.bg_color)
     elif o.kind == OverlayAnimationKind.FLOW:
-        strand.overlay_flow(o.color, o.color2, Speed(o.speed, o.step_ms), o.seamless)
+        strand.overlay_flow(o.color, o.color2, Speed(o.speed, o.step_ms), o.seamless, o.invert)
     elif o.kind == OverlayAnimationKind.RAINBOW:
-        strand.overlay_rainbow(Speed(o.speed, o.step_ms))
+        strand.overlay_rainbow(Speed(o.speed, o.step_ms), o.invert)
     elif o.kind == OverlayAnimationKind.TWINKLE:
-        strand.overlay_twinkle(o.palette, o.density_pct, o.fade_step, o.bg_color)
+        strand.overlay_twinkle(o.palette, o.density_pct, o.fade_step, o.bg_color, o.bit_width)
     elif o.kind == OverlayAnimationKind.BITSCROLL:
         segments = [BitScrollSegment(color=o.color, width=o.segment_width)]
         strand.overlay_bitscroll(segments, Speed(o.speed, o.step_ms), o.invert, o.bg_color,
@@ -378,6 +426,7 @@ def _make_sim_region(strand: Strand, r: SpliceRegionConfig,
         palette=tuple(a.palette),
         density_pct=a.density_pct,
         fade_step=a.fade_step,
+        bit_width=a.bit_width,
         segment_width=a.segment_width,
         spacing=a.spacing,
         repeating=a.repeating,
@@ -389,7 +438,17 @@ def _apply_splice(strand: Strand, s: SpliceMaskConfig) -> None:
         strand.clear_splice_mask()
         return
 
-    if s.mode == SpliceModeKind.SPLIT:
+    if s.kind == MaskKind.SPREAD:
+        if s.needs_overlay():
+            _apply_overlay(strand, s.overlay)
+        strand.spread_mask(Speed(s.spread_speed, s.spread_step_ms), _SPREAD_ORIGIN[s.spread_origin],
+                           s.spread_invert, s.spread_bounce, s.bg_color, s.use_overlay)
+    elif s.kind == MaskKind.TWINKLE:
+        if s.needs_overlay():
+            _apply_overlay(strand, s.overlay)
+        strand.twinkle_mask(s.twinkle_density_pct, s.twinkle_fade_step, s.twinkle_bit_width,
+                            s.twinkle_invert, s.bg_color, s.use_overlay)
+    elif s.mode == SpliceModeKind.SPLIT:
         if s.needs_overlay():
             _apply_overlay(strand, s.overlay)
         strand.splice_mask(s.sections, s.invert, s.alternating, s.alt_period_ms, s.bg_color, s.use_overlay)

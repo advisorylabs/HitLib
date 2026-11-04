@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from .. import theme
 from ..frame_codec import MAX_DRAWN_FRAMES, MAX_FRAME_COLORS
-from ..models import MAX_LEDS, LayerKind
+from ..models import MAX_CHAIN_LEDS, LayerKind
 from ..widgets import ColorPicker
 
 #: How wide a cell is drawn. Small enough that twenty pixels across and a
@@ -610,7 +610,8 @@ class PixelGridEditor(QWidget):
             "can be lined up against where it just was. The first frame shows "
             "the last one, which is the step a loop wraps around on.")
         self.width_spin = QSpinBox()
-        self.width_spin.setRange(1, MAX_LEDS)
+        # As wide as a chain: a drawing can span every strip of one.
+        self.width_spin.setRange(1, MAX_CHAIN_LEDS)
         self.width_spin.setValue(20)
         self.width_spin.setSuffix(" px wide")
         self.width_spin.setToolTip(
@@ -698,7 +699,7 @@ class PixelGridEditor(QWidget):
         yet follows it, so a new drawing is as wide as the strip it plays on;
         one that has been drawn, or given a width by hand, keeps its width
         until Fit is pressed."""
-        self._fit_width = max(1, min(width, MAX_LEDS))
+        self._fit_width = max(1, min(width, MAX_CHAIN_LEDS))
         where = f"on the {strip_length} px preview strip" if strip_length else "on the strip"
         self.fit_btn.setToolTip(f"Make every frame {self._fit_width} px wide - as wide "
                                 f"as this layer is {where}")

@@ -3,12 +3,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEventLoop
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import error_dialog, theme
 from .main_window import MainWindow
+from .widgets import install_wheel_guard
 from .splash import SplashScreen
 
 # Identifies this app to the Windows shell. Reverse-DNS-ish and stable:
@@ -51,6 +52,9 @@ def main() -> None:
     # Before any window exists, so nothing ever paints in the default style
     # and then restyles itself a frame later.
     theme.apply_theme(app)
+    # Number fields and dropdowns change only when typed in, stepped or
+    # picked from, never because a trackpad scroll passed over one.
+    install_wheel_guard(app)
     # Before anything can raise into the event loop, where a build without a
     # console would otherwise drop the error without a word.
     error_dialog.install(app)
@@ -65,7 +69,7 @@ def main() -> None:
     if "--no-splash" in sys.argv:
         window = MainWindow()
         window.setWindowIcon(icon)
-        window.show()
+        _show(window)
         sys.exit(app.exec())
 
     splash = SplashScreen()
@@ -90,11 +94,18 @@ def main() -> None:
     # own icon first, and only falls back to the application's.
     window.setWindowIcon(icon)
     if splash.isVisible():
-        splash.finished.connect(window.show)
+        splash.finished.connect(lambda: _show(window))
     else:
-        window.show()
+        _show(window)
 
     sys.exit(app.exec())
+
+
+def _show(window: MainWindow) -> None:
+    """Put the window up, then offer back anything a crash left unsaved.
+    Queued, so the question lands over a window already on screen."""
+    window.show()
+    QTimer.singleShot(0, window.offer_recovery)
 
 
 if __name__ == "__main__":

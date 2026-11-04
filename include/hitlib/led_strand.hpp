@@ -3,6 +3,7 @@
 #include "platform.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <utility>
 #include <vector>
 
@@ -28,8 +29,11 @@ namespace hitlib {
  *                     level meter driven by hand, by a live value, or by a
  *                     music envelope
  * overlay buffer   <- second independent animation
- * spliceMask       <- final per-pixel override (bgColor or overlay), by
- *                     equal alternating bins or by arbitrary regions
+ * mask             <- final per-pixel override (bgColor or overlay), by
+ *                     equal alternating bins, by arbitrary regions, by a
+ *                     spreading wipe or by twinkling bits
+ * transition       <- the frame that was showing, wiped away as whatever
+ *                     replaced it comes in
  * ```
  *
  * ### Typical setup
@@ -70,6 +74,32 @@ public:
     struct ExpanderPort {
         uint8_t smartPort; ///< Smart Port the expander is connected to (1–21).
         uint8_t adiPort;   ///< ADI port on the expander (1–8).
+    };
+
+    /**
+     * @brief One physical strip in a chain: where it is plugged in and how
+     *        many LEDs it has.
+     *
+     * A chain is one LedStrand spread across several strips, so an animation
+     * runs off the end of one strip and onto the next as if they were a
+     * single long one.  See the chain constructor.
+     *
+     * @code{.cpp}
+     * hitlib::LedStrand::Segment{1, 20};          // ADI port A, 20 LEDs
+     * hitlib::LedStrand::Segment{{2, 1}, 20};     // expander on Smart Port 2, port A
+     * @endcode
+     */
+    struct Segment {
+        uint8_t smartPort; ///< Smart Port of the expander, or 0 for the brain's own ADI ports.
+        uint8_t adiPort;   ///< ADI port (1–8).
+        uint8_t length;    ///< LEDs on this strip.  Clamped to MAX_LEDS (64).
+
+        /// A strip on one of the brain's own ADI ports.
+        constexpr Segment(uint8_t adi, uint8_t len)
+            : smartPort(0), adiPort(adi), length(len) {}
+        /// A strip on an ADI expander's port.
+        constexpr Segment(ExpanderPort port, uint8_t len)
+            : smartPort(port.smartPort), adiPort(port.adiPort), length(len) {}
     };
 
     /**
@@ -208,8 +238,8 @@ public:
         uint32_t onMs      = 250;      ///< FLASH lit duration (ms).
         uint32_t offMs     = 250;      ///< FLASH blank duration (ms).
         bool     seamless  = true;     ///< FLOW only. See @c flow().
-        /// Reverse direction: a BITSCROLL scrolls the other way, a GAUGE BAR
-        /// fills from the far end of the region.
+        /// Reverse direction: a PULSE, FLOW, RAINBOW or BITSCROLL moves the
+        /// other way, a GAUGE BAR fills from the far end of the region.
         bool     invert    = false;
 
         // ---- TWINKLE only ----
@@ -240,6 +270,11 @@ public:
         /// @c color at @c emptyAt blending to @c color2 at @c fullAt, so a
         /// two-color gauge needs no stops at all.
         std::vector<GaugeStop> stops;
+
+        // ---- Added in 1.6, last so a region braced in field order before
+        // ---- it still means what it did ----
+
+        uint8_t bitWidth = 1;  ///< TWINKLE: pixels per spark.
     };
 
     /**
@@ -268,6 +303,56 @@ public:
         const uint8_t* samples;    ///< Intensity 0-255, one entry per frame.
         uint16_t       frameCount; ///< Number of samples in @p samples.
         uint16_t       frameMs;    ///< Milliseconds between consecutive samples.
+    };
+
+    /**
+     * @brief Where a spread starts: see spreadMask() and Transition.
+     *
+     * Each has a reverse, picked with the @c invert that goes with it: an
+     * EDGE spread inverted runs from the far end back to pixel 0, and a
+     * CENTER spread inverted starts at both ends and closes in on the middle.
+     */
+    enum class SpreadOrigin : uint8_t {
+        EDGE,   ///< From pixel 0 to the far end.
+        CENTER, ///< From the middle out to both ends at once.
+    };
+
+    /**
+     * @brief How a transition() wipes from the old frame to the new animation.
+     */
+    enum class TransitionKind : uint8_t {
+        CUT,     ///< No wipe: the new animation shows on the very next frame.
+        SPREAD,  ///< The new animation spreads in from an end or from the middle.
+        TWINKLE, ///< The new animation appears a bit at a time, at random, each
+                 ///< bit staying lit once it has come in.
+    };
+
+    /**
+     * @brief A wipe from whatever is showing into whatever is set up next.
+     *
+     * Handed to transition(), or carried by a Sequencer::Phase to say how that
+     * phase takes over from the one before it.  The outgoing frame holds still
+     * while the incoming animation, already running, is wiped in over it.
+     *
+     * @code{.cpp}
+     * using LS = hitlib::LedStrand;
+     * strand.transition({LS::TransitionKind::SPREAD, 600, LS::SpreadOrigin::CENTER});
+     * strand.rainbow(2);   // spreads out from the middle over 600 ms
+     * @endcode
+     *
+     * @note No default member initializers, deliberately, as for Layer: that
+     *       keeps this a C++11 aggregate, so `{}` - or leaving a Phase's
+     *       transition out altogether - is a plain cut on every platform.
+     */
+    struct Transition {
+        TransitionKind kind;       ///< CUT, the zero value, does nothing.
+        uint16_t       durationMs; ///< How long the wipe takes.  0 is a cut.
+        SpreadOrigin   origin;     ///< SPREAD: from pixel 0, or from the middle.
+        bool           invert;     ///< SPREAD: from the far end, or from both ends inward.
+        uint8_t        bitWidth;   ///< TWINKLE: pixels per bit.  0 is one.
+        /// TWINKLE: brightness each bit gains per tick as it comes in, so
+        /// bigger is quicker.  0 lights a bit all at once.
+        uint8_t        fadeStep;
     };
 
     // ========================================================================
@@ -404,6 +489,7 @@ public:
         uint8_t         paletteCount;
         uint8_t         densityPct;   ///< Share of the span lit at once (0-100). Bindable.
         uint8_t         fadeStep;     ///< Brightness step per tick, so bigger is faster.
+        uint8_t         bitWidth;     ///< Pixels per spark. 0, what a table from before 1.6 leaves it, is one.
     };
 
     struct LayerPattern {
@@ -585,6 +671,34 @@ public:
      */
     LedStrand(uint8_t smartPort, uint8_t adiPort, uint8_t length, uint32_t refreshMs);
 
+    /**
+     * @brief Construct one strand spread across several strips, chained end
+     *        to end.
+     *
+     * Every animation, mask and profile then runs across all of them as one
+     * long strand: a pulse leaves the end of the first strip and carries on
+     * at the start of the second.  Pixel 0 is the first strip's first LED,
+     * and the strips follow in the order given.
+     *
+     * @code{.cpp}
+     * // Four 20-LED strips around the chassis, as one 80-LED ring.
+     * hitlib::LedStrand ring({{1, 20}, {2, 20}, {3, 20}, {4, 20}});
+     *
+     * // Mixing the brain's ports and an expander's works the same way.
+     * hitlib::LedStrand sides({{1, 30}, {{5, 1}, 30}});
+     * @endcode
+     *
+     * Each strip still costs its own 12 ms ADI write when its part of the
+     * frame changes, the same as a strand of its own would.
+     *
+     * @param chain      The strips, in pixel order.  Up to MAX_SEGMENTS (8);
+     *                   each is clamped to MAX_LEDS (64), and the whole chain
+     *                   to MAX_CHAIN_LEDS (128), dropping whatever is past it.
+     * @param refreshMs  Refresh interval in milliseconds (default 20 ms).
+     *                   A LedGroup replaces it with its own.
+     */
+    LedStrand(std::initializer_list<Segment> chain, uint32_t refreshMs = 20);
+
     /// @}
 
     // ========================================================================
@@ -679,9 +793,10 @@ public:
     /**
      * @brief Scroll a full HSV rainbow across the strip.
      *
-     * @param speed  Pixels shifted per tick, or Speed::everyMs().
+     * @param speed   Pixels shifted per tick, or Speed::everyMs().
+     * @param invert  Scroll in the reverse direction (default @c false).
      */
-    void rainbow(Speed speed);
+    void rainbow(Speed speed, bool invert = false);
 
     /**
      * @brief Spawn randomly fading sparkles from a color palette.
@@ -693,9 +808,14 @@ public:
      * @param densityPct   Target percentage of LEDs simultaneously lit (0–100).
      * @param fadeStep     Brightness step applied each tick (higher = faster fade).
      * @param bgColor      Background color shown on unlit pixels (default black).
+     * @param bitWidth     Pixels per sparkle (default 1).  Wider bits light
+     *                     several neighbouring pixels as one, so a sparkle reads
+     *                     from further away; the strip is cut into bits from
+     *                     pixel 0, and a last bit too short to be whole is as
+     *                     wide as the pixels left.
      */
     void twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
-                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+                 uint8_t fadeStep = 16, uint32_t bgColor = 0x000000, uint8_t bitWidth = 1);
 
     /**
      * @brief Scroll a pattern of colored segments across the strip.
@@ -900,12 +1020,14 @@ public:
     /// @}
 
     // ========================================================================
-    /// @name Splice Mask
+    /// @name Masks
     ///
-    /// Overrides part of the strip, either as equal alternating bins sharing
-    /// one overlay buffer (spliceMask) or as arbitrarily placed regions that
-    /// each animate independently (spliceMaskCustom). The two are mutually
-    /// exclusive, whichever was called most recently is what's active.
+    /// Overrides part of the strip: as equal alternating bins sharing one
+    /// overlay buffer (spliceMask), as arbitrarily placed regions that each
+    /// animate independently (spliceMaskCustom), as a wipe that spreads across
+    /// the strip and back (spreadMask), or as twinkling bits (twinkleMask).
+    /// A strand has one mask at a time: whichever was called most recently is
+    /// what's active, and clearSpliceMask() removes it whichever it is.
     /// @{
 
     /**
@@ -1004,9 +1126,92 @@ public:
     static SpliceRegion motorHeatGauge(uint8_t start, uint8_t width, LevelFn read = nullptr);
 
     /**
-     * @brief Remove the active splice mask, whichever kind is active.
+     * @brief Show the animation only across a stretch that spreads over the
+     *        strip and back.
+     *
+     * The animation keeps running underneath; the spread decides how much of
+     * it shows.  Outside the spread the strip shows @p bgColor, or the overlay
+     * buffer with @p useOverlay.  The spread starts empty and grows by
+     * @p speed until it covers the whole strip.  Then, with @p bounce, it
+     * shrinks back the way it came; without, it starts over from empty.
+     *
+     * @code{.cpp}
+     * using LS = hitlib::LedStrand;
+     * strand.rainbow(1);
+     * strand.spreadMask(LS::Speed::everyMs(40), LS::SpreadOrigin::CENTER, false, true);
+     * @endcode
+     *
+     * @param speed       How far the edge moves per step, or Speed::everyMs()
+     *                    for slower.  A CENTER spread moves both of its edges
+     *                    this far.
+     * @param origin      Spread from pixel 0, or from the middle.
+     * @param invert      Spread from the far end instead, or from both ends in
+     *                    toward the middle.
+     * @param bounce      Shrink back once full, instead of starting over.
+     * @param bgColor     Color shown outside the spread when @p useOverlay is
+     *                    @c false.
+     * @param useOverlay  Show the overlay buffer outside the spread instead.
+     */
+    void spreadMask(Speed speed, SpreadOrigin origin = SpreadOrigin::EDGE, bool invert = false,
+                    bool bounce = false, uint32_t bgColor = 0x000000, bool useOverlay = false);
+
+    /**
+     * @brief Show the animation only through twinkling bits.
+     *
+     * twinkle()'s sparkles, used as a mask: each bit fades in to show the
+     * animation underneath, holds, and fades back out to @p bgColor (or the
+     * overlay buffer, with @p useOverlay).  With @p invert the bits work the
+     * other way round, punching @p bgColor through a strip that otherwise
+     * shows the animation.
+     *
+     * @param densityPct  Share of the strip showing through at once (0-100).
+     * @param fadeStep    Brightness step per tick, so bigger is faster.
+     * @param bitWidth    Pixels per bit.
+     * @param invert      Bits hide the animation instead of revealing it.
+     * @param bgColor     Color shown where the animation is masked, when
+     *                    @p useOverlay is @c false.
+     * @param useOverlay  Show the overlay buffer there instead.
+     */
+    void twinkleMask(uint8_t densityPct = 30, uint8_t fadeStep = 16, uint8_t bitWidth = 1,
+                     bool invert = false, uint32_t bgColor = 0x000000, bool useOverlay = false);
+
+    /**
+     * @brief Remove the active mask, whichever kind is active.
      */
     void clearSpliceMask();
+
+    /// @}
+
+    // ========================================================================
+    /// @name Transitions
+    /// @{
+
+    /**
+     * @brief Wipe from what is showing now into whatever is set up next.
+     *
+     * Takes a snapshot of the frame on the strip, then for the next
+     * @c durationMs wipes it away to reveal what the strand is showing by
+     * then - so call this, then start the animation the wipe should bring in.
+     * The new animation runs from the moment it is set, so it is already
+     * moving as it is revealed; the old frame holds still while it goes.
+     *
+     * A Sequencer::Phase with a transition calls this for you as it starts.
+     * Calling it again mid-wipe starts a new wipe from the frame showing
+     * then, half-wiped as it is.
+     *
+     * @code{.cpp}
+     * using LS = hitlib::LedStrand;
+     * strand.transition({LS::TransitionKind::TWINKLE, 800, LS::SpreadOrigin::EDGE, false, 2, 64});
+     * strand.setColor(0x00FF00);   // green twinkles in, two pixels at a time
+     * @endcode
+     *
+     * @param t  The wipe.  A CUT, or a zero @c durationMs, stops any wipe in
+     *           progress and does nothing else.
+     */
+    void transition(const Transition& t);
+
+    /** @brief Whether a transition() is still wiping. */
+    bool transitioning() const { return transKind != TransitionKind::CUT; }
 
     /// @}
 
@@ -1020,9 +1225,13 @@ public:
     /** @brief Set the overlay buffer to a solid color. */
     void overlaySetColor(uint32_t color);
 
-    /** @brief Animate a moving run in the overlay buffer. */
+    /**
+     * @brief Animate a moving run in the overlay buffer (see pulse()).
+     *
+     * No @c bounce, for the reason overlayBitscroll() gives.
+     */
     void overlayPulse(uint32_t color, uint8_t runLength, Speed speed,
-                      uint32_t bgColor = 0x000000);
+                      uint32_t bgColor = 0x000000, bool invert = false);
 
     /** @brief Blink the overlay buffer on and off (see flash()). */
     void overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs,
@@ -1036,15 +1245,20 @@ public:
      * @param seamless  Loop the gradient back to @p color1 instead of
      *                  cutting straight from @p color2 to @p color1 at the
      *                  wrap (default @c true). See @c flow().
+     * @param invert    Scroll in the reverse direction (default @c false).
+     *                  Last, unlike flow()'s, so a call written before it
+     *                  existed still means what it did.
      */
-    void overlayFlow(uint32_t color1, uint32_t color2, Speed speed, bool seamless = true);
+    void overlayFlow(uint32_t color1, uint32_t color2, Speed speed, bool seamless = true,
+                     bool invert = false);
 
-    /** @brief Scroll a rainbow in the overlay buffer. */
-    void overlayRainbow(Speed speed);
+    /** @brief Scroll a rainbow in the overlay buffer (see rainbow()). */
+    void overlayRainbow(Speed speed, bool invert = false);
 
     /** @brief Sparkle random pixels of the overlay buffer (see twinkle()). */
     void overlayTwinkle(const std::vector<uint32_t>& colors, uint8_t densityPct = 30,
-                        uint8_t fadeStep = 16, uint32_t bgColor = 0x000000);
+                        uint8_t fadeStep = 16, uint32_t bgColor = 0x000000,
+                        uint8_t bitWidth = 1);
 
     /**
      * @brief Scroll a repeating bit pattern in the overlay buffer (see bitscroll()).
@@ -1213,32 +1427,47 @@ public:
     /// @name Accessors
     /// @{
 
-    /** @brief Return the number of LEDs in this strand. */
+    /** @brief Return the number of LEDs in this strand, across every strip of a chain. */
     uint8_t getLength() const { return length; }
+
+    /** @brief Return how many strips this strand drives: 1, or a chain's count. */
+    uint8_t getSegmentCount() const { return segmentCount; }
 
     /// @}
 
     // ========================================================================
-    // Maximum supported LEDs per strand.
+    /// Maximum supported LEDs on one strip, i.e. one ADI port.
     static constexpr uint8_t MAX_LEDS = 64;
+    /// Most strips one chained strand can drive.
+    static constexpr uint8_t MAX_SEGMENTS = 8;
+    /// Most LEDs one strand drives across a whole chain.
+    static constexpr uint8_t MAX_CHAIN_LEDS = 128;
 
 private:
     // LedGroup sets refreshMs to the interval it actually ticks the strand at.
     friend class LedGroup;
 
     // ---- Hardware ----
-    uint8_t  adiPort;
-    uint8_t  smartPort  = 0;
+    // One entry per strip; a strand that is not a chain has one. `length` is
+    // the whole strand's, the sum of theirs.
+    struct Strip {
+        uint8_t           smartPort;
+        uint8_t           adiPort;
+        uint8_t           length;
+        uint32_t          sentMs;   ///< When its part of the frame last went out.
+        platform::AdiLed* led;
+    };
+    Strip    strips[MAX_SEGMENTS] = {};
+    uint8_t  segmentCount = 1;
     uint8_t  length;
     uint32_t refreshMs;
-    platform::AdiLed* led = nullptr;
     platform::Mutex mutex;
 
-    // The last frame actually written to the strip, and when. flushBuffer()
-    // skips a frame identical to it, since the pixels hold what they were
-    // sent, and every write costs a 12 ms slot on the shared ADI.
-    uint32_t lastSent[MAX_LEDS] = {0};
-    uint32_t lastSentMs         = 0;
+    // The last frame actually written to the strips. flushBuffer() skips a
+    // strip whose part of the frame is identical to it, since the pixels hold
+    // what they were sent, and every write costs a 12 ms slot on the shared
+    // ADI. It is also what a transition() wipes away from.
+    uint32_t lastSent[MAX_CHAIN_LEDS] = {0};
     bool     lastSentValid      = false;
 
     // Called by LedGroup, which ticks the strand at its own interval: every
@@ -1295,6 +1524,8 @@ private:
     // Twinkle - per-pixel fade state for one buffer. A struct rather than loose
     // members because three different buffers animate this way: the base
     // strand, the overlay, and any number of custom regions.
+    // The per-bit arrays hold one entry per bit, not per pixel: a bit is
+    // `bitWidth` pixels wide, and pixel i belongs to bit i / bitWidth.
     struct TwinkleState {
         std::vector<uint8_t>  level;
         std::vector<uint8_t>  target;
@@ -1303,17 +1534,23 @@ private:
         std::vector<uint32_t> palette;
         uint8_t  densityPct = 30;
         uint8_t  fadeStep   = 16;
+        uint8_t  bitWidth   = 1;
         uint32_t bgColor    = 0x000000;
 
         void reset(uint8_t width, const std::vector<uint32_t>& colors, uint8_t density,
-                   uint8_t fade, uint32_t bg);
+                   uint8_t fade, uint32_t bg, uint8_t bits = 1);
+        // Bits it takes to cover @p width pixels, the last one possibly short.
+        uint8_t bitsFor(uint8_t width) const {
+            return (uint8_t)(((uint16_t)width + bitWidth - 1) / bitWidth);
+        }
     };
     static void advanceTwinkleInto(TwinkleState& t, std::vector<uint32_t>& buf);
 
     // advanceTwinkleInto() split in two, so a custom-animation layer can take
     // the per-pixel brightness in @c t.level as coverage and blend it over
     // whatever is beneath instead of over a single background color.
-    // advanceTwinkleInto() is exactly these two in sequence.
+    // advanceTwinkleInto() is exactly these two in sequence. Both take a
+    // width in pixels.
     static void stepTwinkle(TwinkleState& t, uint8_t width);
     static void paintTwinkleInto(const TwinkleState& t, std::vector<uint32_t>& buf, uint8_t width);
 
@@ -1347,8 +1584,8 @@ private:
     bool     musicLoop             = false;
     uint8_t  musicSensitivity      = 100;
 
-    // Splice mask
-    enum class SpliceMode : uint8_t { SPLIT, CUSTOM };
+    // Splice mask, and the spread and twinkle masks, which take its place
+    enum class SpliceMode : uint8_t { SPLIT, CUSTOM, SPREAD, TWINKLE };
 
     // Runtime animation state for one CUSTOM-mode region, a scaled-down
     // version of the overlay buffer (buffer + shift step/speed), but one per
@@ -1416,6 +1653,36 @@ private:
     // are gone.
     uint32_t spliceGeneration = 0;
 
+    // Spread mask - how many ranks (see spreadRank()) the spread covers, and
+    // which way it is going. spliceBgColor/spliceUseOverlay above say what
+    // shows outside it.
+    SpreadOrigin spreadOrigin = SpreadOrigin::EDGE;
+    bool         spreadInvert = false;
+    bool         spreadBounce = false;
+    uint8_t      spreadPos    = 0;
+    int8_t       spreadDir    = 1;
+    uint8_t      spreadSpeed  = 1;
+    StepPacer    spreadPacer;
+
+    // Twinkle mask - a twinkle whose levels are how much of the animation
+    // shows, rather than how bright a spark is. spliceInvert swaps that round.
+    TwinkleState maskTwinkle;
+
+    // Transition - the frame that was showing when transition() was called,
+    // and how far the wipe away from it has got. transKind is CUT whenever no
+    // wipe is running.
+    TransitionKind        transKind     = TransitionKind::CUT;
+    SpreadOrigin          transOrigin   = SpreadOrigin::EDGE;
+    bool                  transInvert   = false;
+    uint8_t               transBitWidth = 1;
+    uint8_t               transFadeStep = 255;
+    uint16_t              transTicks    = 1;
+    uint16_t              transElapsed  = 0;
+    std::vector<uint32_t> transFrom;
+    // TWINKLE: the tick each bit starts coming in on, drawn at random so the
+    // last bit is fully in by transTicks.
+    std::vector<uint16_t> transBitStart;
+
     // Overlay buffer
     AnimMode              overlayAnimMode   = AnimMode::STATIC;
     int                   overlayShiftStep  = 0;
@@ -1452,19 +1719,19 @@ private:
     void pulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg, bool invert, bool bounce);
     void flashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
     void flowNL(uint32_t c1, uint32_t c2, Speed speed, bool invert, bool seamless);
-    void rainbowNL(Speed speed);
+    void rainbowNL(Speed speed, bool invert);
     void twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
-                   uint8_t fadeStep, uint32_t bgColor);
+                   uint8_t fadeStep, uint32_t bgColor, uint8_t bitWidth);
     void bitscrollNL(const std::vector<BitScrollSegment>& segments, Speed speed, bool invert,
                      uint32_t bgColor, bool bounce, uint8_t spacing, bool repeating);
 
     void overlaySetColorNL(uint32_t color);
-    void overlayPulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg);
+    void overlayPulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg, bool invert);
     void overlayFlashNL(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bg);
-    void overlayFlowNL(uint32_t c1, uint32_t c2, Speed speed, bool seamless);
-    void overlayRainbowNL(Speed speed);
+    void overlayFlowNL(uint32_t c1, uint32_t c2, Speed speed, bool seamless, bool invert);
+    void overlayRainbowNL(Speed speed, bool invert);
     void overlayTwinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
-                          uint8_t fadeStep, uint32_t bgColor);
+                          uint8_t fadeStep, uint32_t bgColor, uint8_t bitWidth);
     void overlayBitscrollNL(const std::vector<BitScrollSegment>& segments, Speed speed,
                             bool invert, uint32_t bgColor, uint8_t spacing, bool repeating);
 
@@ -1502,8 +1769,22 @@ private:
     void fillBitscrollFromMaster();
     void advanceSpliceAlternating(uint32_t nowMs);
     void advanceSpliceRegions();
+    void advanceSpreadMask();
     void paintGaugeRegion(SpliceRegionState& state);
     void rebuildSpliceMask();
+    // How much of the animation a SPREAD or TWINKLE mask lets through at
+    // pixel @p i, 0-255.
+    uint8_t maskCoverage(uint8_t i) const;
+    // How much of the new frame a transition shows at pixel @p i, 0-255,
+    // given the cutoff the SPREAD kind works out once per frame.
+    uint8_t transitionCoverage(uint8_t i, uint32_t full, uint8_t frac) const;
+
+    // A spread covers a strip of @p len pixels in spreadRanks() steps, and
+    // pixel @p i is covered once the spread has reached spreadRank(). EDGE
+    // has a rank per pixel; CENTER one per pair of pixels equally far from
+    // the middle (and a lone middle pixel, on an odd strip).
+    static uint8_t spreadRanks(uint8_t len, SpreadOrigin origin);
+    static uint8_t spreadRank(uint8_t i, uint8_t len, SpreadOrigin origin, bool invert);
 
     void     shiftBuffer();
     void     shiftOverlayBuffer();

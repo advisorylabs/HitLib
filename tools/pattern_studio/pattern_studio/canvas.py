@@ -110,8 +110,10 @@ class StripCanvas(QWidget):
 
     def _frame_ms(self) -> int:
         """The fastest strand's refresh interval. No strand has a newer frame
-        to show any sooner than that."""
-        return max(1, min((s.config.refresh_ms for s in self.sessions), default=1))
+        to show any sooner than that. Heads only: a chained strip runs at its
+        head's rate, and its own unused setting stopped frames coalescing."""
+        return max(1, min((s.config.refresh_ms for s in self.sessions
+                           if getattr(s, "head", None) is None), default=1))
 
     def set_selected(self, indices) -> None:
         """Rows to outline as the current group-edit selection. Only drawn
@@ -224,8 +226,10 @@ class StripCanvas(QWidget):
         pulse = self._pulse() if highlight else 0.0
 
         for row, session in enumerate(self.sessions):
-            strand = session.strand
-            n = max(strand.length, 1)
+            # Through the session, not its engine strand: a chained strand
+            # draws its own strip's slice of the chain's frame.
+            pixels = session.pixels()
+            n = max(session.length, 1)
             available_w = self.width() - 2 * self.MARGIN
             led_w = available_w / n
             pad = min(3.0, led_w * 0.15)
@@ -239,7 +243,12 @@ class StripCanvas(QWidget):
                 accent.setAlpha(int(165 + 90 * pulse))
 
             painter.setPen(accent if selected else QColor(theme.CANVAS_LABEL))
-            label = f"{session.config.name}  (group)" if selected else session.config.name
+            label = session.config.name
+            head = getattr(session, "head", None)
+            if head is not None:
+                label += f"  ← chained after {head.config.name}"
+            if selected:
+                label += "  (group)"
             painter.drawText(
                 QRectF(self.MARGIN, y, available_w, self.LABEL_H - self.TRACK_PAD),
                 Qt.AlignLeft | Qt.AlignVCenter,
@@ -257,11 +266,11 @@ class StripCanvas(QWidget):
             )
 
             self._paint_spill(
-                painter, strand.pixels, track, self.MARGIN, self.MARGIN + available_w
+                painter, pixels, track, self.MARGIN, self.MARGIN + available_w
             )
             self._paint_track(painter, track, accent if selected else None, pulse)
 
-            self._paint_leds(painter, strand.pixels, row_top, led_w, pad, row_h)
+            self._paint_leds(painter, pixels, row_top, led_w, pad, row_h)
 
             y += self.LABEL_H + row_h + self.ROW_GAP
 

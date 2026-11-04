@@ -23,7 +23,9 @@ from .composition import (
 from .profile import Profile, ProfileMode
 from .sequencer import Phase, Sequencer
 from .strand import (
+    MAX_CHAIN_LEDS,
     MAX_LEDS,
+    MAX_SEGMENTS,
     MOTOR_HEAT_STOPS,
     AnimMode,
     BitScrollSegment,
@@ -31,11 +33,15 @@ from .strand import (
     GaugeStop,
     GaugeStyle,
     MusicTrack,
+    Segment,
     SpliceMode,
     Speed,
     SpliceRegion,
     SpliceRegionAnimKind,
+    SpreadOrigin,
     Strand,
+    Transition,
+    TransitionKind,
     as_speed,
 )
 
@@ -54,6 +60,12 @@ __all__ = [
     "GaugeBlend",
     "MOTOR_HEAT_STOPS",
     "MAX_LEDS",
+    "MAX_SEGMENTS",
+    "MAX_CHAIN_LEDS",
+    "Segment",
+    "SpreadOrigin",
+    "Transition",
+    "TransitionKind",
     "Sequencer",
     "Phase",
     "Profile",

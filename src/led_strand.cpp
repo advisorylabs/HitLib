@@ -27,8 +27,24 @@ constexpr uint8_t  LedStrand::MAX_DRIVERS;
 constexpr uint8_t  LedStrand::MAX_BINDINGS;
 constexpr uint8_t  LedStrand::CURVE_POINTS;
 constexpr uint8_t  LedStrand::MAX_LEDS;
+constexpr uint8_t  LedStrand::MAX_SEGMENTS;
+constexpr uint8_t  LedStrand::MAX_CHAIN_LEDS;
 constexpr uint32_t LedStrand::COVER_OPAQUE;
 #endif
+
+// std::rand() is shared by every strand, so it is seeded once, the first time
+// anything here draws from it.
+static void seedRandOnce() {
+    // Aligned to 4 for PROS's sake, not ours. A PROS cold image packs every
+    // 1- and 2-byte-aligned .bss variable from every library together, in
+    // link order, ahead of LVGL's display buffers, which declare no alignment
+    // of their own. hitlib.a links before liblvgl.a, so a lone 1-byte bool
+    // here pushed those buffers off 4-byte alignment: LVGL then asserts in
+    // display_initialize() and spins forever, before the PROS scheduler
+    // starts (HitLib 1.5.1). tools/check_cold_bss.py keeps it from coming back.
+    alignas(4) static bool seeded = false;
+    if (!seeded) { std::srand(platform::millis()); seeded = true; }
+}
 
 // lerpColor() and wheel() were file-local helpers here until 1.5. They are
 // private statics of LedStrand now so led_custom.cpp can call the same bodies
@@ -66,8 +82,26 @@ LedStrand::LedStrand(ExpanderPort port, uint8_t length_, uint32_t refreshMs_)
     : LedStrand(port.smartPort, port.adiPort, length_, refreshMs_) {}
 
 LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint32_t refreshMs_)
-    : adiPort(adiPort_), smartPort(smartPort_),
-      length(std::max<uint8_t>(1, std::min<uint8_t>(length_, MAX_LEDS))), refreshMs(refreshMs_) {
+    : LedStrand({Segment(ExpanderPort{smartPort_, adiPort_}, length_)}, refreshMs_) {}
+
+// A strand of its own is a chain of one, so this is where every constructor
+// ends up. Strips past MAX_SEGMENTS, and pixels past MAX_CHAIN_LEDS, are
+// dropped rather than wrapped: the strand is only ever as long as what it
+// can address.
+LedStrand::LedStrand(std::initializer_list<Segment> chain, uint32_t refreshMs_)
+    : length(0), refreshMs(refreshMs_) {
+    segmentCount = 0;
+    for (const Segment& seg : chain) {
+        if (segmentCount >= MAX_SEGMENTS || length >= MAX_CHAIN_LEDS) break;
+        uint8_t len = std::max<uint8_t>(1, std::min<uint8_t>(seg.length, MAX_LEDS));
+        len = std::min<uint8_t>(len, (uint8_t)(MAX_CHAIN_LEDS - length));
+        strips[segmentCount++] = {seg.smartPort, seg.adiPort, len, 0, nullptr};
+        length = (uint8_t)(length + len);
+    }
+    // An empty chain drives nothing, but still has a pixel to animate, so
+    // nothing downstream has to allow for a zero-length buffer.
+    if (length == 0) length = 1;
+
     buffer.assign(length, 0);
     overlayBuffer.assign(length, 0);
     spliceShowAnim.assign(length, true);
@@ -77,8 +111,15 @@ LedStrand::LedStrand(uint8_t smartPort_, uint8_t adiPort_, uint8_t length_, uint
 }
 
 void LedStrand::init() {
-    if (led != nullptr) return;
-    led = new platform::AdiLed(smartPort, adiPort, length);
+    if (segmentCount == 0 || strips[0].led != nullptr) return;
+    // Last strip first: tick() takes strips[0].led as the sign the strand is
+    // ready, so it has to be the last one set. A group's task already
+    // ticking - start() before init(), or a strand add()ed late - could
+    // otherwise flush in between and write through a strip not built yet.
+    for (uint8_t s = segmentCount; s-- > 0;) {
+        strips[s].led = new platform::AdiLed(strips[s].smartPort, strips[s].adiPort,
+                                             strips[s].length);
+    }
     lastSentValid = false;  // a new strip has been sent nothing yet
 }
 
@@ -96,7 +137,7 @@ void LedStrand::setRefreshMs(uint32_t ms) {
 // ============================================================================
 
 void LedStrand::tick() {
-    if (!led) return;
+    if (segmentCount == 0 || !strips[0].led) return;
     mutex.take();
 
     uint32_t now = platform::millis();
@@ -120,10 +161,19 @@ void LedStrand::tick() {
 
     advanceSpliceAlternating(now);
     advanceSpliceRegions();
+    advanceSpreadMask();
+    if (spliceActive && spliceMode == SpliceMode::TWINKLE) stepTwinkle(maskTwinkle, length);
 
     int16_t effectiveIdx = computeEffectiveMode();
     bool modeChanged = (effectiveIdx != lastModeIdx);
     lastModeIdx = effectiveIdx;
+
+    // A wipe already under way belongs to what was showing, so a new mode
+    // cuts it short rather than coming in over its stale frame. One asked for
+    // since the last tick - transition() just before activateMode() - is the
+    // way into this mode, and stays.
+    if (modeChanged && transKind != TransitionKind::CUT && transElapsed > 0)
+        transKind = TransitionKind::CUT;
 
     const ProfileMode* mode =
         (effectiveIdx >= 0 && activeProfile) ? &activeProfile->modes[effectiveIdx] : nullptr;
@@ -272,57 +322,50 @@ void LedStrand::flowNL(uint32_t c1, uint32_t c2, Speed speed, bool invert, bool 
     animMode = AnimMode::SHIFT;
 }
 
-void LedStrand::rainbow(Speed speed) {
+void LedStrand::rainbow(Speed speed, bool invert) {
     mutex.take();
-    rainbowNL(speed);
+    rainbowNL(speed, invert);
     mutex.give();
 }
 
-void LedStrand::rainbowNL(Speed speed) {
+void LedStrand::rainbowNL(Speed speed, bool invert) {
     dropCompositionNL();  // a preset takes the base buffer over
     pulseRunLen = 0;
     bitscrollMaster.clear();
     buffer = genRainbow(length);
     shiftStep = 0;
     shiftPacer.reset(stepTicks(speed));
-    shiftVariant = speed.pixels;
+    shiftVariant = shiftFor(speed.pixels, length, invert);
     animMode = AnimMode::SHIFT;
 }
 
 void LedStrand::twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct, uint8_t fadeStep,
-                         uint32_t bgColor) {
+                         uint32_t bgColor, uint8_t bitWidth) {
     mutex.take();
-    twinkleNL(colors, densityPct, fadeStep, bgColor);
+    twinkleNL(colors, densityPct, fadeStep, bgColor, bitWidth);
     mutex.give();
 }
 
 void LedStrand::TwinkleState::reset(uint8_t width, const std::vector<uint32_t>& colors,
-                                    uint8_t density, uint8_t fade, uint32_t bg) {
+                                    uint8_t density, uint8_t fade, uint32_t bg, uint8_t bits) {
     palette = colors;
-    level.assign(width, 0);
-    target.assign(width, 0);
-    colorIdx.assign(width, 0);
-    holdTicks.assign(width, 0);
+    bitWidth = std::max<uint8_t>(bits, 1);
+    uint8_t count = bitsFor(width);
+    level.assign(count, 0);
+    target.assign(count, 0);
+    colorIdx.assign(count, 0);
+    holdTicks.assign(count, 0);
     densityPct = std::min<uint8_t>(density, 100);
     fadeStep = std::max<uint8_t>(fade, 1);
     bgColor = bg;
-
-    // Aligned to 4 for PROS's sake, not ours. A PROS cold image packs every
-    // 1- and 2-byte-aligned .bss variable from every library together, in
-    // link order, ahead of LVGL's display buffers, which declare no alignment
-    // of their own. hitlib.a links before liblvgl.a, so a lone 1-byte bool
-    // here pushed those buffers off 4-byte alignment: LVGL then asserts in
-    // display_initialize() and spins forever, before the PROS scheduler
-    // starts (HitLib 1.5.1). tools/check_cold_bss.py keeps it from coming back.
-    alignas(4) static bool seeded = false;
-    if (!seeded) { std::srand(platform::millis()); seeded = true; }
+    seedRandOnce();
 }
 
 // Repaints `buf` from `t` every tick. The buffer is passed in rather than read
 // off the strand so the base strand, the overlay, and each custom region can
 // all sparkle at once, each over its own pixels.
 void LedStrand::advanceTwinkleInto(TwinkleState& t, std::vector<uint32_t>& buf) {
-    uint8_t width = (uint8_t)std::min(t.level.size(), buf.size());
+    uint8_t width = (uint8_t)std::min(t.level.size() * t.bitWidth, buf.size());
     if (width == 0) return;
     stepTwinkle(t, width);
     paintTwinkleInto(t, buf, width);
@@ -331,19 +374,22 @@ void LedStrand::advanceTwinkleInto(TwinkleState& t, std::vector<uint32_t>& buf) 
 void LedStrand::stepTwinkle(TwinkleState& t, uint8_t width) {
     constexpr uint8_t HOLD_TICKS = 8;
 
-    if (width == 0) return;
+    // Everything below walks bits, not pixels: a wide bit spawns, holds and
+    // fades as one.
+    uint8_t bits = (uint8_t)std::min<size_t>(t.bitsFor(width), t.level.size());
+    if (bits == 0) return;
 
     uint8_t activeCount = 0;
-    for (uint8_t i = 0; i < width; ++i) {
+    for (uint8_t i = 0; i < bits; ++i) {
         if (t.level[i] > 0 || t.holdTicks[i] > 0) activeCount++;
     }
-    uint8_t targetCount = (uint8_t)(((uint16_t)width * t.densityPct + 50) / 100);
+    uint8_t targetCount = (uint8_t)(((uint16_t)bits * t.densityPct + 50) / 100);
 
     if (activeCount < targetCount && !t.palette.empty()) {
-        // Reservoir-sample one idle pixel to spawn, at most one per tick.
+        // Reservoir-sample one idle bit to spawn, at most one per tick.
         int chosen = -1;
         int idleSeen = 0;
-        for (uint8_t i = 0; i < width; ++i) {
+        for (uint8_t i = 0; i < bits; ++i) {
             if (t.level[i] == 0 && t.holdTicks[i] == 0) {
                 idleSeen++;
                 if ((std::rand() % idleSeen) == 0) chosen = i;
@@ -355,7 +401,7 @@ void LedStrand::stepTwinkle(TwinkleState& t, uint8_t width) {
         }
     }
 
-    for (uint8_t i = 0; i < width; ++i) {
+    for (uint8_t i = 0; i < bits; ++i) {
         if (t.holdTicks[i] > 0) {
             if (--t.holdTicks[i] == 0) t.target[i] = 0;
         } else if (t.level[i] < t.target[i]) {
@@ -372,17 +418,19 @@ void LedStrand::stepTwinkle(TwinkleState& t, uint8_t width) {
 void LedStrand::paintTwinkleInto(const TwinkleState& t, std::vector<uint32_t>& buf,
                                  uint8_t width) {
     for (uint8_t i = 0; i < width; ++i) {
-        uint32_t fg = t.palette.empty() ? 0 : t.palette[t.colorIdx[i]];
-        buf[i] = lerpColor(t.bgColor, fg, t.level[i]);
+        size_t b = i / t.bitWidth;
+        if (b >= t.level.size()) break;
+        uint32_t fg = t.palette.empty() ? 0 : t.palette[t.colorIdx[b]];
+        buf[i] = lerpColor(t.bgColor, fg, t.level[b]);
     }
 }
 
 void LedStrand::twinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct, uint8_t fadeStep,
-                           uint32_t bgColor) {
+                           uint32_t bgColor, uint8_t bitWidth) {
     dropCompositionNL();  // a preset takes the base buffer over
     pulseRunLen = 0;
     bitscrollMaster.clear();
-    twinkleState.reset(length, colors, densityPct, fadeStep, bgColor);
+    twinkleState.reset(length, colors, densityPct, fadeStep, bgColor, bitWidth);
     // Every spark starts at level 0, so this is exactly the first paint. A
     // call from a ProfileMode callback is flushed before the next advance, and
     // would otherwise show the previous animation for a frame.
@@ -811,7 +859,7 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                     state.buffer.assign(regionWidth, r.bgColor);
                     uint8_t rl = std::min<uint8_t>(r.runLength, regionWidth);
                     std::fill_n(state.buffer.begin(), rl, r.color);
-                    state.shiftSpeed = r.speed.pixels;
+                    state.shiftSpeed = shiftFor(r.speed.pixels, regionWidth, r.invert);
                     state.shiftPacer.reset(stepTicks(r.speed));
                     break;
                 }
@@ -831,12 +879,12 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                 }
                 case SpliceRegionAnimKind::FLOW:
                     state.buffer = genGradient(r.color, r.color2, regionWidth, r.seamless);
-                    state.shiftSpeed = r.speed.pixels;
+                    state.shiftSpeed = shiftFor(r.speed.pixels, regionWidth, r.invert);
                     state.shiftPacer.reset(stepTicks(r.speed));
                     break;
                 case SpliceRegionAnimKind::RAINBOW:
                     state.buffer = genRainbow(regionWidth);
-                    state.shiftSpeed = r.speed.pixels;
+                    state.shiftSpeed = shiftFor(r.speed.pixels, regionWidth, r.invert);
                     state.shiftPacer.reset(stepTicks(r.speed));
                     break;
                 case SpliceRegionAnimKind::TWINKLE:
@@ -845,7 +893,8 @@ void LedStrand::spliceMaskCustom(const std::vector<SpliceRegion>& regions) {
                     state.buffer.assign(regionWidth, r.bgColor);
                     state.shiftSpeed = 0;
                     state.twinkling = true;
-                    state.twinkle.reset(regionWidth, r.palette, r.densityPct, r.fadeStep, r.bgColor);
+                    state.twinkle.reset(regionWidth, r.palette, r.densityPct, r.fadeStep, r.bgColor,
+                                        r.bitWidth);
                     break;
                 case SpliceRegionAnimKind::BITSCROLL: {
                     // No bounce: a region's buffer scrolls, and bouncing needs a
@@ -955,10 +1004,145 @@ LedStrand::SpliceRegion LedStrand::motorHeatGauge(uint8_t start, uint8_t width, 
     return r;
 }
 
+void LedStrand::spreadMask(Speed speed, SpreadOrigin origin, bool invert, bool bounce,
+                           uint32_t bgColor, bool useOverlay) {
+    mutex.take();
+    spliceMode        = SpliceMode::SPREAD;
+    spliceAlternating = false;
+    spliceRegions.clear();
+    ++spliceGeneration;
+    spliceBgColor     = bgColor;
+    spliceUseOverlay  = useOverlay;
+    spreadOrigin      = origin;
+    spreadInvert      = invert;
+    spreadBounce      = bounce;
+    spreadSpeed       = std::max<uint8_t>(speed.pixels, 1);
+    spreadPacer.reset(stepTicks(speed));
+    spreadPos         = 0;   // starts empty, and grows from there
+    spreadDir         = 1;
+    spliceActive      = true;
+    mutex.give();
+}
+
+void LedStrand::twinkleMask(uint8_t densityPct, uint8_t fadeStep, uint8_t bitWidth, bool invert,
+                            uint32_t bgColor, bool useOverlay) {
+    mutex.take();
+    spliceMode        = SpliceMode::TWINKLE;
+    spliceAlternating = false;
+    spliceRegions.clear();
+    ++spliceGeneration;
+    spliceInvert      = invert;
+    spliceBgColor     = bgColor;
+    spliceUseOverlay  = useOverlay;
+    // Only the levels are ever read. The palette just has to be non-empty,
+    // since an empty one is what tells a twinkle never to spawn.
+    maskTwinkle.reset(length, std::vector<uint32_t>(1, 0xFFFFFF), densityPct, fadeStep, 0, bitWidth);
+    spliceActive      = true;
+    mutex.give();
+}
+
 void LedStrand::clearSpliceMask() {
     mutex.take();
     spliceActive = false;
     mutex.give();
+}
+
+uint8_t LedStrand::spreadRanks(uint8_t len, SpreadOrigin origin) {
+    return origin == SpreadOrigin::CENTER ? (uint8_t)((len + 1) / 2) : len;
+}
+
+uint8_t LedStrand::spreadRank(uint8_t i, uint8_t len, SpreadOrigin origin, bool invert) {
+    if (origin == SpreadOrigin::EDGE) return invert ? (uint8_t)(len - 1 - i) : i;
+    // How far from the middle, a pair at a time: |2i - (len - 1)| / 2 puts the
+    // middle pixel, or the middle two, at 0 and both end pixels at the last
+    // rank, whichever way round len's parity falls.
+    uint8_t fromMiddle = (uint8_t)(std::abs(2 * (int)i - ((int)len - 1)) / 2);
+    return invert ? (uint8_t)(spreadRanks(len, origin) - 1 - fromMiddle) : fromMiddle;
+}
+
+// Moves the spread's edge on its own clock, the same way a bouncing pulse
+// moves its run: a whole step at a time, held at each end for exactly one.
+void LedStrand::advanceSpreadMask() {
+    if (!spliceActive || spliceMode != SpliceMode::SPREAD || !spreadPacer.due()) return;
+    int16_t ranks = spreadRanks(length, spreadOrigin);
+    if (spreadBounce) {
+        int16_t pos = (int16_t)(spreadPos + spreadDir * spreadSpeed);
+        if (pos >= ranks) { pos = ranks; spreadDir = -1; }
+        if (pos <= 0)     { pos = 0;     spreadDir = 1; }
+        spreadPos = (uint8_t)pos;
+    } else {
+        // Full for one step, then empty again, rather than stepping past full:
+        // a speed that does not divide the strip would otherwise never show
+        // it covered.
+        spreadPos = (spreadPos >= ranks)
+                  ? (uint8_t)0
+                  : (uint8_t)std::min<int16_t>((int16_t)(spreadPos + spreadSpeed), ranks);
+    }
+}
+
+uint8_t LedStrand::maskCoverage(uint8_t i) const {
+    if (spliceMode == SpliceMode::SPREAD)
+        return spreadRank(i, length, spreadOrigin, spreadInvert) < spreadPos ? 255 : 0;
+    size_t  b     = i / maskTwinkle.bitWidth;
+    uint8_t level = b < maskTwinkle.level.size() ? maskTwinkle.level[b] : 0;
+    return spliceInvert ? (uint8_t)(255 - level) : level;
+}
+
+// ============================================================================
+// Transitions
+// ============================================================================
+
+void LedStrand::transition(const Transition& t) {
+    mutex.take();
+    if (t.kind == TransitionKind::CUT || t.durationMs == 0) {
+        transKind = TransitionKind::CUT;
+        mutex.give();
+        return;
+    }
+    // What the strip is showing right now, wipe and all, so a transition that
+    // lands on another still in progress carries on from where that one was.
+    transFrom.assign(lastSent, lastSent + length);
+    transKind     = t.kind;
+    transOrigin   = t.origin;
+    transInvert   = t.invert;
+    transBitWidth = t.bitWidth ? t.bitWidth : 1;
+    transFadeStep = t.fadeStep ? t.fadeStep : 255;
+    transTicks    = msToTicks(t.durationMs);
+    transElapsed  = 0;
+
+    if (t.kind == TransitionKind::TWINKLE) {
+        // Each bit takes fadeTicks to come in, so it has to start by
+        // transTicks - fadeTicks to be fully in when the wipe ends. Inside
+        // that window, when is down to chance.
+        uint8_t  bits      = (uint8_t)(((uint16_t)length + transBitWidth - 1) / transBitWidth);
+        uint16_t fadeTicks = (uint16_t)((255 + transFadeStep - 1) / transFadeStep);
+        // A wipe too short for its fade fades faster, taking half of it at
+        // most. Left as asked, every bit had to start at once and still never
+        // reached full - a flat crossfade that jumped the last step.
+        if (fadeTicks > transTicks / 2) {
+            fadeTicks     = transTicks >= 2 ? (uint16_t)(transTicks / 2) : 1;
+            transFadeStep = (uint8_t)((255 + fadeTicks - 1) / fadeTicks);
+        }
+        uint16_t window    = transTicks > fadeTicks ? (uint16_t)(transTicks - fadeTicks) : 0;
+        seedRandOnce();
+        transBitStart.assign(bits, 0);
+        for (uint8_t b = 0; b < bits; ++b)
+            transBitStart[b] = window ? (uint16_t)(std::rand() % (window + 1)) : 0;
+    }
+    mutex.give();
+}
+
+uint8_t LedStrand::transitionCoverage(uint8_t i, uint32_t full, uint8_t frac) const {
+    if (transKind == TransitionKind::SPREAD) {
+        uint8_t rank = spreadRank(i, length, transOrigin, transInvert);
+        if (rank < full)  return 255;
+        if (rank == full) return frac;
+        return 0;
+    }
+    size_t b = i / transBitWidth;
+    if (b >= transBitStart.size() || transElapsed <= transBitStart[b]) return 0;
+    uint32_t level = (uint32_t)(transElapsed - transBitStart[b]) * transFadeStep;
+    return level > 255 ? (uint8_t)255 : (uint8_t)level;
 }
 
 void LedStrand::rebuildSpliceMask() {
@@ -1119,9 +1303,10 @@ void LedStrand::paintGaugeRegion(SpliceRegionState& state) {
 
 void LedStrand::overlaySetColor(uint32_t color) { mutex.take(); overlaySetColorNL(color); mutex.give(); }
 
-void LedStrand::overlayPulse(uint32_t color, uint8_t runLength, Speed speed, uint32_t bgColor) {
+void LedStrand::overlayPulse(uint32_t color, uint8_t runLength, Speed speed, uint32_t bgColor,
+                             bool invert) {
     mutex.take();
-    overlayPulseNL(color, runLength, speed, bgColor);
+    overlayPulseNL(color, runLength, speed, bgColor, invert);
     mutex.give();
 }
 
@@ -1131,16 +1316,17 @@ void LedStrand::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint
     mutex.give();
 }
 
-void LedStrand::overlayFlow(uint32_t color1, uint32_t color2, Speed speed, bool seamless) {
+void LedStrand::overlayFlow(uint32_t color1, uint32_t color2, Speed speed, bool seamless,
+                            bool invert) {
     mutex.take();
-    overlayFlowNL(color1, color2, speed, seamless);
+    overlayFlowNL(color1, color2, speed, seamless, invert);
     mutex.give();
 }
 
 void LedStrand::overlayTwinkle(const std::vector<uint32_t>& colors, uint8_t densityPct,
-                               uint8_t fadeStep, uint32_t bgColor) {
+                               uint8_t fadeStep, uint32_t bgColor, uint8_t bitWidth) {
     mutex.take();
-    overlayTwinkleNL(colors, densityPct, fadeStep, bgColor);
+    overlayTwinkleNL(colors, densityPct, fadeStep, bgColor, bitWidth);
     mutex.give();
 }
 
@@ -1151,9 +1337,9 @@ void LedStrand::overlayBitscroll(const std::vector<BitScrollSegment>& segments, 
     mutex.give();
 }
 
-void LedStrand::overlayRainbow(Speed speed) {
+void LedStrand::overlayRainbow(Speed speed, bool invert) {
     mutex.take();
-    overlayRainbowNL(speed);
+    overlayRainbowNL(speed, invert);
     mutex.give();
 }
 
@@ -1164,12 +1350,13 @@ void LedStrand::overlaySetColorNL(uint32_t color) {
     overlayShiftSpeed = 0;
 }
 
-void LedStrand::overlayPulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg) {
+void LedStrand::overlayPulseNL(uint32_t color, uint8_t runLen, Speed speed, uint32_t bg,
+                               bool invert) {
     overlayBuffer.assign(length, bg);
     uint8_t rl = std::min<uint8_t>(runLen, length);
     std::fill_n(overlayBuffer.begin(), rl, color);
     overlayShiftStep = 0;
-    overlayShiftSpeed = speed.pixels;
+    overlayShiftSpeed = shiftFor(speed.pixels, length, invert);
     overlayShiftPacer.reset(stepTicks(speed));
     overlayAnimMode = AnimMode::SHIFT;
 }
@@ -1200,25 +1387,26 @@ void LedStrand::advanceOverlayFlash() {
     ++overlayFlashCounter;
 }
 
-void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, Speed speed, bool seamless) {
+void LedStrand::overlayFlowNL(uint32_t c1, uint32_t c2, Speed speed, bool seamless,
+                              bool invert) {
     overlayBuffer = genGradient(c1, c2, length, seamless);
     overlayShiftStep = 0;
-    overlayShiftSpeed = speed.pixels;
+    overlayShiftSpeed = shiftFor(speed.pixels, length, invert);
     overlayShiftPacer.reset(stepTicks(speed));
     overlayAnimMode = AnimMode::SHIFT;
 }
 
-void LedStrand::overlayRainbowNL(Speed speed) {
+void LedStrand::overlayRainbowNL(Speed speed, bool invert) {
     overlayBuffer = genRainbow(length);
     overlayShiftStep = 0;
-    overlayShiftSpeed = speed.pixels;
+    overlayShiftSpeed = shiftFor(speed.pixels, length, invert);
     overlayShiftPacer.reset(stepTicks(speed));
     overlayAnimMode = AnimMode::SHIFT;
 }
 
 void LedStrand::overlayTwinkleNL(const std::vector<uint32_t>& colors, uint8_t densityPct,
-                                 uint8_t fadeStep, uint32_t bgColor) {
-    overlayTwinkleState.reset(length, colors, densityPct, fadeStep, bgColor);
+                                 uint8_t fadeStep, uint32_t bgColor, uint8_t bitWidth) {
+    overlayTwinkleState.reset(length, colors, densityPct, fadeStep, bgColor, bitWidth);
     overlayBuffer.assign(length, bgColor);
     overlayShiftStep = 0;
     overlayShiftSpeed = 0;
@@ -1375,7 +1563,10 @@ void LedStrand::flushBuffer(uint32_t now) {
     uint32_t levelFull = litQ8 / 255;
     uint8_t  levelFrac = (uint8_t)(litQ8 % 255);
 
-    uint32_t frame[MAX_LEDS];
+    bool wipeMask = spliceActive &&
+                    (spliceMode == SpliceMode::SPREAD || spliceMode == SpliceMode::TWINKLE);
+
+    uint32_t frame[MAX_CHAIN_LEDS];
     for (uint8_t i = 0; i < length; ++i) {
         uint32_t baseColor;
         if (animMode == AnimMode::LEVEL) {
@@ -1399,7 +1590,11 @@ void LedStrand::flushBuffer(uint32_t now) {
 
         uint32_t color = baseColor;
 
-        if (spliceActive && !spliceShowAnim[i]) {
+        if (wipeMask) {
+            // A soft mask: a half-faded twinkle bit shows half the animation.
+            uint32_t masked = spliceUseOverlay ? overlayColor : spliceBgColor;
+            color = lerpColor(masked, baseColor, maskCoverage(i));
+        } else if (spliceActive && !spliceShowAnim[i]) {
             int16_t regionIdx = splicePixelRegionIdx[i];
             if (regionIdx >= 0) {
                 const SpliceRegionState& state = spliceRegions[regionIdx];
@@ -1418,27 +1613,64 @@ void LedStrand::flushBuffer(uint32_t now) {
         frame[i] = applyBrightness(color);
     }
 
-    // Compared after brightness, so a setBrightness() alone still goes out.
-    bool send = !lastSentValid || now - lastSentMs >= RESEND_MS ||
-                !std::equal(frame, frame + length, lastSent);
-    if (send) {
-        std::copy(frame, frame + length, lastSent);
-        lastSentMs    = now;
-        lastSentValid = true;
+    // A transition wipes the finished frame in over the one it started from,
+    // after brightness on both sides, since what it started from is what was
+    // sent.
+    if (transKind != TransitionKind::CUT) {
+        ++transElapsed;
+        // The SPREAD cutoff, as the meter's: whole ranks covered, and a
+        // fraction of the next, so the edge glides rather than steps.
+        uint32_t coverQ8 = (uint32_t)transElapsed * spreadRanks(length, transOrigin) * 255u /
+                           transTicks;
+        uint32_t full = coverQ8 / 255;
+        uint8_t  frac = (uint8_t)(coverQ8 % 255);
+        for (uint8_t i = 0; i < length && i < transFrom.size(); ++i)
+            frame[i] = lerpColor(transFrom[i], frame[i], transitionCoverage(i, full, frac));
+        if (transElapsed >= transTicks) transKind = TransitionKind::CUT;
     }
 
-    // frame[] is a local copy and `led` never changes after init(), so the
-    // write needs nothing the lock protects. Holding it through the 12 ms
-    // below would stall any setLevel() or setColor() from the control loop
-    // that landed meanwhile.
-    mutex.give();
-    if (!send) return;
+    // Compared after brightness, so a setBrightness() alone still goes out.
+    // Strip by strip: a chain whose second strip is holding still does not
+    // pay for its 12 ms because the first one moved.
+    // One keep-alive resend a flush at most: strips sent together come due
+    // together, and a chain of four holding still paid 48 ms in one tick
+    // every second - a hitch on any strip of it still moving. Taken one a
+    // tick, they spread themselves out and stay that way.
+    bool    send[MAX_SEGMENTS] = {};
+    bool    resent = false;
+    uint8_t at = 0;
+    for (uint8_t s = 0; s < segmentCount; ++s) {
+        uint8_t n = strips[s].length;
+        bool changed = !lastSentValid || !std::equal(frame + at, frame + at + n, lastSent + at);
+        bool due     = now - strips[s].sentMs >= RESEND_MS;
+        send[s] = changed || (due && !resent);
+        if (send[s] && !changed) resent = true;
+        if (send[s]) strips[s].sentMs = now;
+        at = (uint8_t)(at + n);
+    }
+    // The strips not sent already hold exactly this, so the whole frame is
+    // what the chain now shows.
+    std::copy(frame, frame + length, lastSent);
+    lastSentValid = true;
 
-    s_adiMutex.take();
-    led->write(frame, length);
-    // Give the ADI LED driver some breathing room between updates.
-    platform::delay(12);
-    s_adiMutex.give();
+    // frame[] is a local copy and no strip's `led` changes after init(), so
+    // the writes need nothing the lock protects. Holding it through the
+    // 12 ms below would stall any setLevel() or setColor() from the control
+    // loop that landed meanwhile.
+    mutex.give();
+
+    at = 0;
+    for (uint8_t s = 0; s < segmentCount; ++s) {
+        uint8_t n = strips[s].length;
+        if (send[s] && strips[s].led) {
+            s_adiMutex.take();
+            strips[s].led->write(frame + at, n);
+            // Give the ADI LED driver some breathing room between updates.
+            platform::delay(12);
+            s_adiMutex.give();
+        }
+        at = (uint8_t)(at + n);
+    }
 }
 
 // ============================================================================

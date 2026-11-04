@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 if TYPE_CHECKING:
-    from .strand import Strand
+    from .strand import Strand, Transition
 
 StartFn = Callable[["Strand"], None]
 
@@ -26,6 +26,11 @@ StartFn = Callable[["Strand"], None]
 class Phase:
     duration_ms: int
     start_fn: StartFn
+    #: Times round the loop this phase plays before it is skipped; 0 is every
+    #: time. Mirrors Sequencer::Phase::plays.
+    plays: int = 0
+    #: How it takes over from whatever showed before it. None cuts.
+    transition: Optional["Transition"] = None
 
 
 @dataclass
@@ -36,6 +41,7 @@ class _Run:
     phase: int
     phase_start_ms: int
     last_touch: int
+    lap: int = 0  # times round the loop since start(), up to 255
 
 
 class Sequencer:
@@ -85,10 +91,41 @@ class Sequencer:
                 stale = min(range(len(self._runs)), key=lambda i: self._runs[i].last_touch)
                 self._runs[stale] = run
         run.phase = 0
+        run.lap = 0
         run.phase_start_ms = strand.now_ms
         run.last_touch = self._touch()
         if self.phases:
-            self.phases[0].start_fn(strand)
+            # No wipe: there is no phase before the first one to come in over.
+            self._begin(self.phases[0], strand, wipe=False)
+
+    @staticmethod
+    def _begin(phase: Phase, strand: "Strand", wipe: bool) -> None:
+        """The transition first, so it snapshots what the strand is showing
+        before start_fn replaces it - when `wipe` says there is a different
+        phase to wipe away from. Mirrors Sequencer::begin()."""
+        if wipe:
+            # A cut too: it cuts short a wipe the phase before was still in.
+            from .strand import Transition
+
+            strand.transition(phase.transition or Transition())
+        if phase.start_fn is not None:
+            phase.start_fn(strand)
+
+    def _advance(self, run: _Run) -> bool:
+        """Move `run` on to the next phase still due to play, counting a lap
+        each time it wraps. False, with the run left where it was, when every
+        phase has run out of plays. Mirrors Sequencer::advance()."""
+        idx, lap = run.phase, run.lap
+        for _ in range(len(self.phases)):
+            idx += 1
+            if idx >= len(self.phases):
+                idx = 0
+                lap = min(lap + 1, 255)
+            plays = self.phases[idx].plays
+            if plays == 0 or lap < plays:
+                run.phase, run.lap = idx, lap
+                return True
+        return False
 
     def stop(self, strand: Optional["Strand"] = None) -> None:
         """Stop on @p strand, or on every strand when none is given. The
@@ -107,6 +144,10 @@ class Sequencer:
         run.last_touch = self._touch()
         now = strand.now_ms
         if now - run.phase_start_ms >= self.phases[run.phase].duration_ms:
-            run.phase = (run.phase + 1) % len(self.phases)
+            # A run with nothing left to play holds its last phase.
+            was = run.phase
+            advanced = self._advance(run)
             run.phase_start_ms = now
-            self.phases[run.phase].start_fn(strand)
+            if advanced:
+                # A phase going round into itself restarts without a wipe.
+                self._begin(self.phases[run.phase], strand, wipe=run.phase != was)

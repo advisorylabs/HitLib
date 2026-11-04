@@ -20,12 +20,12 @@ previews patterns live and exports them as ready-to-include C++.
 
 ## Install
 
-Download `hitlib@1.5.2.zip` from the
-[1.5.2 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.2)
+Download `hitlib@1.6.0.zip` from the
+[1.6.0 release](https://github.com/advisorylabs/hitlib/releases/tag/1.6.0)
 into your Downloads folder, then, from your project folder:
 
 ```bash
-pros c fetch $HOME/Downloads/hitlib@1.5.2.zip
+pros c fetch $HOME/Downloads/hitlib@1.6.0.zip
 pros c apply HitLib
 ```
 
@@ -33,7 +33,7 @@ That works as it is in PowerShell and in macOS and Linux terminals. If the zip
 is somewhere else, point `pros c fetch` there instead.
 
 Or paste the zip's URL,
-`https://github.com/advisorylabs/hitlib/releases/download/1.5.2/hitlib@1.5.2.zip`,
+`https://github.com/advisorylabs/hitlib/releases/download/1.6.0/hitlib@1.6.0.zip`,
 into **Install Template** in the PROS VS Code extension.
 
 The name is case-sensitive: `pros c apply hitlib` fails with "hitlib does not
@@ -42,11 +42,11 @@ See [troubleshooting](https://advisorylabs.github.io/HitLib/install_page.html#in
 if `HitLib` gets that message too.
 
 **PROS kernel 4.1.x**, including EZ-Template 3.x projects: fetch
-`hitlib@1.5.2-softfp.zip` from the same release instead. Kernel 4.2.0 switched
+`hitlib@1.6.0-softfp.zip` from the same release instead. Kernel 4.2.0 switched
 PROS to hard-float code, and the two don't link together.
 
 **VEXcode** (V5, Pro V5, or the VS Code extension): download
-`hitlib-vexcode@1.5.2.zip` from the Releases page and copy its `include/hitlib/`
+`hitlib-vexcode@1.6.0.zip` from the Releases page and copy its `include/hitlib/`
 and `src/hitlib/` folders into your project. Its headers end in `.h`, since
 VEXcode Pro V5 only shows `.h` files, so VEXcode code includes
 `hitlib/hitapi.h`. See the

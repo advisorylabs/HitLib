@@ -123,13 +123,13 @@ void LedGroup::flow(uint32_t color1, uint32_t color2, LedStrand::Speed speed, bo
     forEach([&](LedStrand& s) { s.flow(color1, color2, speed, invert, seamless); });
 }
 
-void LedGroup::rainbow(LedStrand::Speed speed) {
-    forEach([&](LedStrand& s) { s.rainbow(speed); });
+void LedGroup::rainbow(LedStrand::Speed speed, bool invert) {
+    forEach([&](LedStrand& s) { s.rainbow(speed, invert); });
 }
 
 void LedGroup::twinkle(const std::vector<uint32_t>& colors, uint8_t densityPct,
-                        uint8_t fadeStep, uint32_t bgColor) {
-    forEach([&](LedStrand& s) { s.twinkle(colors, densityPct, fadeStep, bgColor); });
+                        uint8_t fadeStep, uint32_t bgColor, uint8_t bitWidth) {
+    forEach([&](LedStrand& s) { s.twinkle(colors, densityPct, fadeStep, bgColor, bitWidth); });
 }
 
 void LedGroup::bitscroll(const std::vector<LedStrand::BitScrollSegment>& segments, LedStrand::Speed speed,
@@ -188,8 +188,24 @@ void LedGroup::spliceMaskCustom(const std::vector<LedStrand::SpliceRegion>& regi
     forEach([&](LedStrand& s) { s.spliceMaskCustom(regions); });
 }
 
+void LedGroup::spreadMask(LedStrand::Speed speed, LedStrand::SpreadOrigin origin, bool invert,
+                          bool bounce, uint32_t bgColor, bool useOverlay) {
+    forEach([&](LedStrand& s) { s.spreadMask(speed, origin, invert, bounce, bgColor, useOverlay); });
+}
+
+void LedGroup::twinkleMask(uint8_t densityPct, uint8_t fadeStep, uint8_t bitWidth, bool invert,
+                           uint32_t bgColor, bool useOverlay) {
+    forEach([&](LedStrand& s) {
+        s.twinkleMask(densityPct, fadeStep, bitWidth, invert, bgColor, useOverlay);
+    });
+}
+
 void LedGroup::clearSpliceMask() {
     forEach([&](LedStrand& s) { s.clearSpliceMask(); });
+}
+
+void LedGroup::transition(const LedStrand::Transition& t) {
+    forEach([&](LedStrand& s) { s.transition(t); });
 }
 
 void LedGroup::setBrightness(uint8_t pct) {
@@ -200,20 +216,22 @@ void LedGroup::overlaySetColor(uint32_t color) {
     forEach([&](LedStrand& s) { s.overlaySetColor(color); });
 }
 
-void LedGroup::overlayPulse(uint32_t color, uint8_t runLength, LedStrand::Speed speed, uint32_t bgColor) {
-    forEach([&](LedStrand& s) { s.overlayPulse(color, runLength, speed, bgColor); });
+void LedGroup::overlayPulse(uint32_t color, uint8_t runLength, LedStrand::Speed speed, uint32_t bgColor,
+                            bool invert) {
+    forEach([&](LedStrand& s) { s.overlayPulse(color, runLength, speed, bgColor, invert); });
 }
 
 void LedGroup::overlayFlash(uint32_t color, uint32_t onMs, uint32_t offMs, uint32_t bgColor) {
     forEach([&](LedStrand& s) { s.overlayFlash(color, onMs, offMs, bgColor); });
 }
 
-void LedGroup::overlayFlow(uint32_t color1, uint32_t color2, LedStrand::Speed speed, bool seamless) {
-    forEach([&](LedStrand& s) { s.overlayFlow(color1, color2, speed, seamless); });
+void LedGroup::overlayFlow(uint32_t color1, uint32_t color2, LedStrand::Speed speed, bool seamless,
+                           bool invert) {
+    forEach([&](LedStrand& s) { s.overlayFlow(color1, color2, speed, seamless, invert); });
 }
 
-void LedGroup::overlayRainbow(LedStrand::Speed speed) {
-    forEach([&](LedStrand& s) { s.overlayRainbow(speed); });
+void LedGroup::overlayRainbow(LedStrand::Speed speed, bool invert) {
+    forEach([&](LedStrand& s) { s.overlayRainbow(speed, invert); });
 }
 
 void LedGroup::attachProfile(const Profile* profile) {

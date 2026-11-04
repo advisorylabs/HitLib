@@ -8,7 +8,7 @@ there.
 
 What it is instead: two checkable buttons in a QButtonGroup, placed in the
 caption row right of the menus, where there is already empty space. Flat
-fills only, per the house rule - the selected tab is marked with a cyan
+fills only, per the house rule - the selected tab is marked with a violet
 underline rather than a graded fill. No glow and no press movement: these
 sit beside the menu bar, which has neither.
 """
@@ -55,7 +55,7 @@ class WorkspaceTabs(QWidget):
             # No bloom and no press movement. These sit in the caption row
             # next to the menus, which do neither, and a tab that glows and
             # sinks reads as a toy beside them. The selected one is marked
-            # by a cyan underline in the stylesheet instead.
+            # by a violet underline in the stylesheet instead.
             self.group.addButton(button, index)
             self.buttons.append(button)
             layout.addWidget(button)
