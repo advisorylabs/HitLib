@@ -13,25 +13,25 @@
 
 ## Install via PROS CLI
 
-Download `hitlib@1.6.0.zip` from the
-[1.6.0 release](https://github.com/advisorylabs/hitlib/releases/tag/1.6.0)
+Download `hitlib@1.6.1.zip` from the
+[1.6.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.6.1)
 into your Downloads folder, then, from your project folder:
 
 ```bash
-pros c fetch $HOME/Downloads/hitlib@1.6.0.zip
+pros c fetch $HOME/Downloads/hitlib@1.6.1.zip
 pros c apply HitLib
 ```
 
 Those run as they are in PowerShell, the VS Code terminal's default on
 Windows, and in a macOS or Linux terminal. If you saved the zip somewhere
 else, give `pros c fetch` that path instead. In Command Prompt, the path is
-`%USERPROFILE%\Downloads\hitlib@1.6.0.zip`. Safari unzips downloads by
-itself, into a `hitlib@1.6.0` folder, and `pros c fetch` takes that folder
+`%USERPROFILE%\Downloads\hitlib@1.6.1.zip`. Safari unzips downloads by
+itself, into a `hitlib@1.6.1` folder, and `pros c fetch` takes that folder
 too: leave off the `.zip`.
 
 The CLI fetches a template from a file, not a URL, and template names are
 case-sensitive: it's `HitLib`. Or paste the zip's URL,
-`https://github.com/advisorylabs/hitlib/releases/download/1.6.0/hitlib@1.6.0.zip`,
+`https://github.com/advisorylabs/hitlib/releases/download/1.6.1/hitlib@1.6.1.zip`,
 into the **Install Template** dialog in the PROS VS Code extension.
 
 Check the [Releases page](https://github.com/advisorylabs/hitlib/releases) for the
@@ -45,10 +45,10 @@ kernel can't use the download above: `pros c apply` reports that HitLib does
 not support the project's kernel version, or the build fails with
 `hitlib.a(...) uses VFP register arguments, ... does not`. Kernel 4.1.x
 projects, which includes every EZ-Template 3.x project, use the softfp build,
-`hitlib@1.6.0-softfp.zip` from the same release:
+`hitlib@1.6.1-softfp.zip` from the same release:
 
 ```bash
-pros c fetch $HOME/Downloads/hitlib@1.6.0-softfp.zip
+pros c fetch $HOME/Downloads/hitlib@1.6.1-softfp.zip
 pros c apply HitLib
 ```
 
@@ -69,7 +69,7 @@ message as a real kernel mismatch. On kernel 4.2.0 or later, check:
   "hitlib does not support kernel version 4.2.2". It's `pros c apply HitLib`.
 - **Which build you fetched.** `pros c ls-templates HitLib` lists every HitLib
   you have fetched. If the only one there ends in `-softfp`, that's the kernel
-  4.1.x build: fetch `hitlib@1.6.0.zip` as well.
+  4.1.x build: fetch `hitlib@1.6.1.zip` as well.
 - **That the fetch worked.** `pros c apply` doesn't download HitLib by
   itself. If `pros c fetch` printed `Template not found: path/to/hitlib`, or
   any other path, it found no zip there and fetched nothing. Pasting both
@@ -124,7 +124,7 @@ then run `make clean` and upload again.
 ## Install into a VEXcode project
 
 VEXcode has no template system, so HitLib ships as source for it. Download
-`hitlib-vexcode@1.6.0.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+`hitlib-vexcode@1.6.1.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
 and copy its two folders into your project:
 
 ```
@@ -212,6 +212,28 @@ A chain is up to 8 strips and 128 LEDs. Each strip still costs its own 12 ms ADI
 write when its part of the frame changes. In Pattern Studio, select strands that
 sit next to each other in the list and press **Chain**. To run an animation the
 other way along the chain, use its **Invert** option.
+
+#### Strips wired backwards {#install_chain_reversed}
+
+A strip mounted the other way round, with its data-in end (LED 0) at the far
+end of its run, would play its part of the chain backwards: a pulse would come
+off one strip and jump to the far end of the next instead of carrying on. Add
+`true` after that strip's length and HitLib sends it its part of every frame
+back to front:
+
+```cpp
+// The back strip's wire comes in at the far end, so it runs the other way.
+hitlib::LedStrand loop({{1, 30}, {2, 30, true}});
+
+// Same for a strip on an expander.
+hitlib::LedStrand sides({{1, 30}, {{5, 1}, 30, true}});
+```
+
+Pixel numbers still count along the chain, so masks, regions and fills land
+where they would if every strip were wired the usual way. A strand of its own
+can use it too, as a chain of one: `hitlib::LedStrand strand({{6, 63, true}});`.
+In Pattern Studio, tick **Reversed** next to the strand's Length; the preview
+keeps showing the chain in order, the way it will look on the robot.
 
 ---
 
@@ -315,7 +337,7 @@ make
 python tools/package_template.py
 ```
 
-This produces `hitlib@1.6.0.zip` in the project root (matching the `version`
+This produces `hitlib@1.6.1.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.
 The archive goes in `firmware/` because that is the only place a PROS project
 links archives from, and only `include/hitlib/` is packaged: the rest of
@@ -331,7 +353,7 @@ make softfp SOFTFP_KERNEL=path/to/unzipped/kernel
 python tools/package_template.py --softfp
 ```
 
-That builds `bin/softfp/hitlib.a` and packages it as `hitlib@1.6.0-softfp.zip`.
+That builds `bin/softfp/hitlib.a` and packages it as `hitlib@1.6.1-softfp.zip`.
 The packager checks each archive's float ABI and refuses one built for the
 other template.
 

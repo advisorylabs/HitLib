@@ -50,7 +50,7 @@ LedGroup
 | **Overlay system** | A second animation layer, shown in a splice mask's masked bins |
 | **Masks** | Alternating sections sharing the overlay, custom regions that each run their own animation, a spread that wipes across and back, or twinkling bits |
 | **Transitions** | Spread or twinkle from one animation into the next, by hand or between sequenced phases |
-| **Chains** | Several strips on separate ports driven as one long strand |
+| **Chains** | Several strips on separate ports driven as one long strand, including strips wired backwards |
 | **Level meter** | Fill the strip in proportion to a value - by hand, or tracking a motor, sensor or the battery on its own |
 | **Music sync** | Fill in time with a song - MP3/M4A/FLAC/OGG/WAV or MIDI, analysed by Pattern Studio |
 | **Gauges** | Several independent meters on one strip, each colored off its own scale - motorHeatGauge() ships with the V5's derating schedule |

@@ -88,10 +88,15 @@ from .models import (
 # an older file can hold one left over from a kind it used to be; loading it
 # clears those, or the design would come back running the other way.
 #
+# 9 gave every strand a `reversed` flag, for a strip wired backwards in a
+# chain. A file without it means wired the usual way, so an older file loads
+# unchanged. A schema-8 reader would drop the flag without a word and export
+# that strip running the wrong way, which is why it is a bump.
+#
 # A file newer than SCHEMA_VERSION is refused rather than read. Its additions
 # may be nothing but new keys, which would load without complaint - and the
 # next Save would write it back as this version with them gone.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 # ============================================================================
@@ -477,6 +482,7 @@ def strand_to_dict(cfg: StrandConfig) -> dict:
         "profile_modes": [_mode_to_dict(m) for m in cfg.profile_modes],
         "active_mode_indices": list(cfg.active_mode_indices),
         "chained": cfg.chained,
+        "reversed": cfg.reversed,
     }
 
 
@@ -495,6 +501,7 @@ def strand_from_dict(d: dict) -> StrandConfig:
         profile_modes=[_mode_from_dict(m) for m in _objs(d, "profile_modes")],
         active_mode_indices=_ints(d, "active_mode_indices", []),
         chained=_bool(d, "chained", default.chained),
+        reversed=_bool(d, "reversed", default.reversed),
     )
 
 

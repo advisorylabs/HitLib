@@ -84,22 +84,29 @@ public:
      * runs off the end of one strip and onto the next as if they were a
      * single long one.  See the chain constructor.
      *
+     * A strip mounted the other way round - its data-in end, LED 0, at the
+     * far end of the chain's run - takes @c true as a third value.  Its part
+     * of every frame is then sent back to front, so the chain still reads in
+     * one direction from end to end instead of doubling back on that strip.
+     *
      * @code{.cpp}
      * hitlib::LedStrand::Segment{1, 20};          // ADI port A, 20 LEDs
      * hitlib::LedStrand::Segment{{2, 1}, 20};     // expander on Smart Port 2, port A
+     * hitlib::LedStrand::Segment{3, 20, true};    // ADI port C, wired backwards
      * @endcode
      */
     struct Segment {
         uint8_t smartPort; ///< Smart Port of the expander, or 0 for the brain's own ADI ports.
         uint8_t adiPort;   ///< ADI port (1–8).
         uint8_t length;    ///< LEDs on this strip.  Clamped to MAX_LEDS (64).
+        bool    reversed;  ///< Wired backwards: LED 0 is the last pixel of this strip's part of the chain.
 
         /// A strip on one of the brain's own ADI ports.
-        constexpr Segment(uint8_t adi, uint8_t len)
-            : smartPort(0), adiPort(adi), length(len) {}
+        constexpr Segment(uint8_t adi, uint8_t len, bool rev = false)
+            : smartPort(0), adiPort(adi), length(len), reversed(rev) {}
         /// A strip on an ADI expander's port.
-        constexpr Segment(ExpanderPort port, uint8_t len)
-            : smartPort(port.smartPort), adiPort(port.adiPort), length(len) {}
+        constexpr Segment(ExpanderPort port, uint8_t len, bool rev = false)
+            : smartPort(port.smartPort), adiPort(port.adiPort), length(len), reversed(rev) {}
     };
 
     /**
@@ -686,7 +693,16 @@ public:
      *
      * // Mixing the brain's ports and an expander's works the same way.
      * hitlib::LedStrand sides({{1, 30}, {{5, 1}, 30}});
+     *
+     * // The back strip was mounted with its data-in at the far end, so
+     * // without the true a pulse would run toward the front along it.
+     * hitlib::LedStrand loop({{1, 30}, {2, 30, true}});
      * @endcode
+     *
+     * A strip wired backwards takes @c true as its third value (see Segment).
+     * Pixel numbers stay in chain order either way, so a mask, region or
+     * fill placed along the chain lands where it would on a strip wired the
+     * usual way; only what that strip is sent is turned round.
      *
      * Each strip still costs its own 12 ms ADI write when its part of the
      * frame changes, the same as a strand of its own would.
@@ -1454,6 +1470,7 @@ private:
         uint8_t           smartPort;
         uint8_t           adiPort;
         uint8_t           length;
+        bool              reversed; ///< Sent its part of the frame back to front.
         uint32_t          sentMs;   ///< When its part of the frame last went out.
         platform::AdiLed* led;
     };

@@ -1184,10 +1184,12 @@ def _constructor_args(config: StrandConfig) -> str:
 
 def _segment_literal(config: StrandConfig) -> str:
     """One LedStrand::Segment: `{adi, length}`, or `{{smart, adi}, length}`
-    for a strip on an ADI expander."""
+    for a strip on an ADI expander, with `true` after the length for a strip
+    wired backwards."""
     port = (f"{{{config.smart_port}, {config.adi_port}}}" if config.smart_port
             else str(config.adi_port))
-    return f"{{{port}, {config.length}}}"
+    reversed_arg = ", true" if config.reversed else ""
+    return f"{{{port}, {config.length}{reversed_arg}}}"
 
 
 def _strand_initializer(config: StrandConfig, chained: list[StrandConfig]) -> str:
@@ -1196,9 +1198,15 @@ def _strand_initializer(config: StrandConfig, chained: list[StrandConfig]) -> st
 
     The chain is written in parentheses: braced, `strand{{...}, refreshMs}`
     reads as one more level of list than it is.
+
+    A strand on its own that is wired backwards is a chain of one, since
+    only a Segment can say so - still built from the namespace's constants.
     """
     if not chained:
-        return f"{{{_constructor_args(config)}}}"
+        if not config.reversed:
+            return f"{{{_constructor_args(config)}}}"
+        port = "{smartPort, adiPort}" if config.smart_port else "adiPort"
+        return f"({{{{{port}, length, true}}}}, refreshMs)"
     segments = ", ".join(_segment_literal(m) for m in [config, *chained])
     return f"({{{segments}}}, refreshMs)"
 
@@ -1376,7 +1384,8 @@ def _render_strand(
         for m in members:
             where = f"ADI port {m.adi_port}" + (f" of the expander on Smart Port {m.smart_port}"
                                                if m.smart_port else "")
-            lines.append(f'//   "{_escape(m.name)}": {m.length} LEDs on {where}')
+            wiring = ", wired reversed" if m.reversed else ""
+            lines.append(f'//   "{_escape(m.name)}": {m.length} LEDs on {where}{wiring}')
         lines.append(f"constexpr uint8_t  length     = {sum(m.length for m in members)};"
                      f"  // across all {len(members)}")
     else:
@@ -1384,7 +1393,8 @@ def _render_strand(
         if config.smart_port:
             lines.append(f"constexpr uint8_t  smartPort  = {config.smart_port};  // ADI expander")
         lines.append(f"constexpr uint8_t  adiPort    = {config.adi_port};")
-        lines.append(f"constexpr uint8_t  length     = {config.length};")
+        wiring = "  // wired reversed: LED 0 at the far end" if config.reversed else ""
+        lines.append(f"constexpr uint8_t  length     = {config.length};{wiring}")
     lines.append(f"constexpr uint32_t refreshMs  = {config.refresh_ms};")
     lines.append(f"constexpr uint8_t  brightness = {config.brightness};")
     lines.append("")

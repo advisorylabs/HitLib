@@ -95,7 +95,7 @@ LedStrand::LedStrand(std::initializer_list<Segment> chain, uint32_t refreshMs_)
         if (segmentCount >= MAX_SEGMENTS || length >= MAX_CHAIN_LEDS) break;
         uint8_t len = std::max<uint8_t>(1, std::min<uint8_t>(seg.length, MAX_LEDS));
         len = std::min<uint8_t>(len, (uint8_t)(MAX_CHAIN_LEDS - length));
-        strips[segmentCount++] = {seg.smartPort, seg.adiPort, len, 0, nullptr};
+        strips[segmentCount++] = {seg.smartPort, seg.adiPort, len, seg.reversed, 0, nullptr};
         length = (uint8_t)(length + len);
     }
     // An empty chain drives nothing, but still has a pixel to animate, so
@@ -1663,6 +1663,12 @@ void LedStrand::flushBuffer(uint32_t now) {
     for (uint8_t s = 0; s < segmentCount; ++s) {
         uint8_t n = strips[s].length;
         if (send[s] && strips[s].led) {
+            // A strip wired backwards has its LED 0 at the far end of its
+            // part of the chain, so it is sent that part back to front.
+            // Turned round here, after the lastSent copy, so everything above
+            // - the comparison included - stays in chain order. Each strip's
+            // part is its own, so turning one round in place touches no other.
+            if (strips[s].reversed) std::reverse(frame + at, frame + at + n);
             s_adiMutex.take();
             strips[s].led->write(frame + at, n);
             // Give the ADI LED driver some breathing room between updates.

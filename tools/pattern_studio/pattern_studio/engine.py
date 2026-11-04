@@ -138,7 +138,7 @@ def make_strand(config: StrandConfig, music: MusicBinding | None = None,
         length=config.length,
         refresh_ms=config.refresh_ms,
         smart_port=config.smart_port,
-        chain=[Segment(m.adi_port, m.length, m.smart_port) for m in members],
+        chain=[Segment(m.adi_port, m.length, m.smart_port, m.reversed) for m in members],
     )
     apply_strand_config(strand, config, music, compositions)
     return strand

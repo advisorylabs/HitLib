@@ -427,6 +427,13 @@ class StrandConfig:
     #: unchained.
     chained: bool = False
 
+    #: The strip is mounted with its data-in end - LED 0 - at the far end of
+    #: its run, so it is sent its part of the frame back to front
+    #: (LedStrand::Segment's `reversed`). Pixel positions still count along
+    #: the chain, so the preview, masks and regions are unchanged by it; only
+    #: what goes down the wire is turned round.
+    reversed: bool = False
+
     # Profile mode: when use_profile is True, `animation`/`splice` above are
     # ignored in favor of `profile_modes`, with `active_mode_indices` driving
     # the same activate_mode()/priority-stack behavior LedStrand uses on

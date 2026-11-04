@@ -213,7 +213,7 @@ class StrandSession(QObject):
     def _chain_shape(self) -> tuple:
         """What the engine strand is built from, so a relink that changes
         nothing about it costs nothing."""
-        return tuple((c.adi_port, c.smart_port, c.length)
+        return tuple((c.adi_port, c.smart_port, c.length, c.reversed)
                      for c in [self.config, *self.chained])
 
     def lead(self, chained: list[StrandConfig]) -> bool:

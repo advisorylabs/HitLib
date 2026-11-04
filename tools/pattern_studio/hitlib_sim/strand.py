@@ -66,6 +66,9 @@ class Segment:
     adi_port: int
     length: int
     smart_port: int = 0
+    #: Wired backwards: LED 0 is the last pixel of this strip's part of the
+    #: chain, so it is sent that part back to front.
+    reversed: bool = False
 
 
 class SpreadOrigin(Enum):
@@ -524,7 +527,7 @@ class Strand:
             if len(self.segments) >= MAX_SEGMENTS or total >= MAX_CHAIN_LEDS:
                 break
             n = min(max(1, min(seg.length, MAX_LEDS)), MAX_CHAIN_LEDS - total)
-            self.segments.append(Segment(seg.adi_port, n, seg.smart_port))
+            self.segments.append(Segment(seg.adi_port, n, seg.smart_port, seg.reversed))
             total += n
         first = self.segments[0] if self.segments else Segment(adi_port, 1, smart_port)
         self.adi_port = first.adi_port
@@ -1767,11 +1770,14 @@ class Strand:
 
     def segment_pixels(self, index: int) -> list[int]:
         """What strip `index` of a chain is sent, LED 0 first: its slice of
-        `pixels` - what the firmware hands that strip's AdiLed::write()."""
+        `pixels`, back to front for a strip wired backwards - what the
+        firmware hands that strip's AdiLed::write()."""
         if index >= len(self.segments):
             return []
-        start = sum(seg.length for seg in self.segments[:index])
-        return self.pixels[start:start + self.segments[index].length]
+        seg = self.segments[index]
+        start = sum(s.length for s in self.segments[:index])
+        part = self.pixels[start:start + seg.length]
+        return part[::-1] if seg.reversed else part
 
     # ========================================================================
     # Custom animations (Compositions) - mirror of src/led_custom.cpp

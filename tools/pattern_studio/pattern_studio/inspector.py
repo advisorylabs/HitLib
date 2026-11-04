@@ -167,6 +167,9 @@ class StrandSettingsPanel(QWidget):
         # "100 %") with room to spare.
         self.name_edit = QLineEdit()
         self.name_edit.setMaximumWidth(120)
+        # A floor too: in a narrow window the row scrolls rather than
+        # squeezing the name down to its first couple of letters.
+        self.name_edit.setMinimumWidth(80)
         self.adi_port_spin = QSpinBox()
         self.adi_port_spin.setRange(1, 8)
         self.adi_port_spin.setFixedWidth(62)
@@ -177,6 +180,14 @@ class StrandSettingsPanel(QWidget):
         self.length_spin = QSpinBox()
         self.length_spin.setRange(1, 64)
         self.length_spin.setFixedWidth(66)
+        # The box alone, labeled by add_field() like every other field in the
+        # row: with its own text beside it, "Reversed" ran into the next label.
+        self.reversed_check = QCheckBox()
+        self.reversed_check.setToolTip(
+            "This strip is wired backwards: its data-in end (LED 0) is at the "
+            "far end of its run. It is sent its part of the animation back to "
+            "front, so a chain reads one way from end to end."
+        )
         self.refresh_spin = QSpinBox()
         self.refresh_spin.setRange(5, 500)
         self.refresh_spin.setSuffix(" ms")
@@ -186,14 +197,18 @@ class StrandSettingsPanel(QWidget):
         self.brightness_spin.setSuffix(" %")
         self.brightness_spin.setFixedWidth(86)
 
-        def add_field(label_text: str, widget) -> None:
-            layout.addWidget(QLabel(label_text))
+        def add_field(label_text: str, widget) -> QLabel:
+            label = QLabel(label_text)
+            layout.addWidget(label)
             layout.addWidget(widget)
+            return label
 
         add_field("Name", self.name_edit)
         add_field("ADI", self.adi_port_spin)
         add_field("Smart", self.smart_port_spin)
         add_field("Length", self.length_spin)
+        # Its label takes the tooltip too, being the larger thing to hover.
+        add_field("Reversed", self.reversed_check).setToolTip(self.reversed_check.toolTip())
         add_field("Refresh Rate", self.refresh_spin)
         add_field("Brightness", self.brightness_spin)
         layout.addStretch(1)
@@ -202,6 +217,7 @@ class StrandSettingsPanel(QWidget):
         self.adi_port_spin.valueChanged.connect(self._emit_changed)
         self.smart_port_spin.valueChanged.connect(self._emit_changed)
         self.length_spin.valueChanged.connect(self._emit_changed)
+        self.reversed_check.toggled.connect(self._emit_changed)
         self.refresh_spin.valueChanged.connect(self._emit_changed)
         self.brightness_spin.valueChanged.connect(self._emit_changed)
 
@@ -224,6 +240,7 @@ class StrandSettingsPanel(QWidget):
         self.adi_port_spin.setValue(cfg.adi_port)
         self.smart_port_spin.setValue(cfg.smart_port)
         self.length_spin.setValue(cfg.length)
+        self.reversed_check.setChecked(cfg.reversed)
         self.refresh_spin.setValue(cfg.refresh_ms)
         self.brightness_spin.setValue(cfg.brightness)
         self._suspend = False
@@ -233,6 +250,7 @@ class StrandSettingsPanel(QWidget):
         cfg.adi_port = self.adi_port_spin.value()
         cfg.smart_port = self.smart_port_spin.value()
         cfg.length = self.length_spin.value()
+        cfg.reversed = self.reversed_check.isChecked()
         cfg.refresh_ms = self.refresh_spin.value()
         cfg.brightness = self.brightness_spin.value()
 

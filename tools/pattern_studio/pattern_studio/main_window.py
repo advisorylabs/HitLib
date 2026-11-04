@@ -95,11 +95,11 @@ _MODIFIED_MARK = " •"
 
 #: The StrandConfig fields an engine strand is built from. Changing one needs
 #: a new strand (StrandSession.rebuild); the rest of the settings strip does not.
-_STRAND_BUILD_FIELDS = ("length", "adi_port", "smart_port", "refresh_ms")
+_STRAND_BUILD_FIELDS = ("length", "adi_port", "smart_port", "reversed", "refresh_ms")
 
 #: The StrandConfig fields that describe a strip itself rather than what it
 #: plays: all a group edit changes on a strand chained onto another in the group.
-_STRIP_FIELDS = frozenset({"length", "smart_port"})
+_STRIP_FIELDS = frozenset({"length", "smart_port", "reversed"})
 
 
 def _transport_button(label: str, icon_name: str, tooltip: str) -> QPushButton:

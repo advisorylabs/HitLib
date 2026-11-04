@@ -247,6 +247,10 @@ class StripCanvas(QWidget):
             head = getattr(session, "head", None)
             if head is not None:
                 label += f"  ← chained after {head.config.name}"
+            # Drawn in chain order all the same: that is how it looks on the
+            # robot once its frame goes out back to front.
+            if session.config.reversed:
+                label += "  (wired reversed)"
             if selected:
                 label += "  (group)"
             painter.drawText(
