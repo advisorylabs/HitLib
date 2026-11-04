@@ -97,6 +97,28 @@ EXCLUDE_COLD_LIBRARIES:= $(FWDIR)/hitlib.a
 That links HitLib into the hot image, where it can't move LVGL's buffers. The
 line can come out once the project is on 1.5.2 or later.
 
+### Black screen at startup with Arm GNU 15.2 {#install_toolchain_hang}
+
+The same black screen can show up with any HitLib version, or with no HitLib
+at all, when the project is built with Arm GNU Toolchain 15.2 instead of the
+toolchain the PROS VS Code extension installs. Other 15.x releases may do the
+same. That toolchain's C++ library pulls in a 1-byte C library variable that
+lands right in front of LVGL's display buffers and moves them off 4-byte
+alignment. Nothing in HitLib can prevent that. The fix belongs in PROS's LVGL
+template, in [liblvgl#54](https://github.com/purduesigbots/liblvgl/pull/54).
+
+To check a build, run this from the project folder:
+
+```bash
+arm-none-eabi-nm -n bin/cold.package.elf | grep display_buffer
+```
+
+On Windows, use `findstr` in place of `grep`. Both addresses have to end in
+`0`, `4`, `8` or `c`. If either doesn't, run
+`arm-none-eabi-gcc --version` in the terminal you build from. If that reports
+15.x, put the PROS extension's toolchain ahead of it on `PATH`, or remove it,
+then run `make clean` and upload again.
+
 ---
 
 ## Install into a VEXcode project

@@ -5,12 +5,13 @@
 A PROS project with hot/cold linking puts every archive in firmware/ into the
 cold image, linked with --sort-section=alignment. Within .bss that orders the
 input sections by alignment, largest first, and keeps sections of equal
-alignment in link order. So every 1- and 2-byte-aligned .bss variable from
-every library ends up packed together at the end, and LVGL's display buffers
-are among them: display_buffer_1 and display_buffer_2 in liblvgl's display.c
-are byte arrays that declare no alignment of their own. hitlib.a sorts ahead
-of liblvgl.a in firmware/, so each byte HitLib puts there moves both buffers
-by a byte.
+alignment in link order. LVGL's display buffers, display_buffer_1 and
+display_buffer_2 in liblvgl's display.c, are lv_color_t arrays that declare
+no alignment of their own, so they open the 1-byte-aligned group. They start
+where the 4-aligned group ends, plus every 2-aligned section, plus every
+1-aligned section from an archive that links ahead of liblvgl.a. hitlib.a
+sorts ahead of liblvgl.a in firmware/, so each byte HitLib puts in that group
+moves both buffers by a byte.
 
 LVGL 9 asserts in lv_display_set_buffers() that the buffers are 4-byte
 aligned, and the assert spins forever. display_initialize() makes that call
@@ -18,9 +19,21 @@ from pros_init(), before the scheduler starts, so the brain sits on a black
 screen: no PROS banner, no initialize(), nothing to say why. HitLib 1.5.1
 shipped exactly that, from a single function-local `static bool`.
 
-A .bss section aligned to 4 or more can't do this, because whatever follows
-it is realigned. So every non-empty .bss section in the archive has to be
-aligned to at least 4. Fix a failure with alignas(4) on the variable it names.
+So every non-empty .bss section in the archive has to be aligned to at least
+4, which keeps HitLib out of the 1- and 2-aligned groups. Fix a failure with
+alignas(4) on the variable it names. That leaves 4-aligned sections smaller
+than 4 bytes, such as a 4-aligned bool. Alignment pads before a section, not
+after it, so one of those leaves the next section off 4-byte alignment
+unless that section is aligned too. That only matters for the last section in the
+4-aligned group, and HitLib's never are: liblvgl.a and libpros.a link after
+hitlib.a and bring 4-aligned .bss of their own.
+
+This can't catch the same hang from outside HitLib. With Arm GNU 15.2, the
+cold image's libstdc++ (format.o) pulls in newlib's lmonetary.o, whose
+1-byte, 4-aligned `empty` ends the 4-aligned group and misaligns the buffers
+in a project with no HitLib at all. The PROS-bundled 14.3 toolchain doesn't
+pull it in. Only aligning the buffers in liblvgl fixes that:
+https://github.com/purduesigbots/liblvgl/pull/54
 
 Needs arm-none-eabi-objdump and arm-none-eabi-c++filt on PATH.
 """
