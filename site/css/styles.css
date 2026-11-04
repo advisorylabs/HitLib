@@ -1051,6 +1051,505 @@
     .stack-sheet { transition: none; }
   }
 
+  /* ---------- 1.6: four strips chained into a ring ---------- */
+
+  .chain-lab {
+    margin-top: 30px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-sunken);
+    overflow: hidden;
+  }
+
+  .chain-body {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  .chain-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 34px 26px;
+  }
+
+  /* Four strips round a chassis, pixel 0 at the top-left corner and running
+     clockwise. Square, so the side strips' dots come out the same size as
+     the top and bottom ones. */
+  .ring {
+    --t: 15px; /* strip thickness */
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--t) minmax(0, 1fr) var(--t);
+    grid-template-rows: var(--t) minmax(0, 1fr) var(--t);
+    gap: 9px;
+    width: min(100%, 420px);
+    aspect-ratio: 1;
+  }
+
+  /* The chain itself: one line through every LED, there only while the
+     strips are one strand. */
+  .ring::before {
+    content: "";
+    position: absolute;
+    inset: calc(var(--t) / 2);
+    border: 1px solid rgba(155, 77, 255, 0.4);
+    border-radius: 4px;
+    box-shadow: 0 0 18px -4px rgba(155, 77, 255, 0.55);
+    transition: opacity 0.4s ease;
+  }
+  .chain-lab.is-unchained .ring::before { opacity: 0; }
+
+  .ring-side {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+  }
+  .ring-top { grid-area: 1 / 2; align-items: center; }
+  .ring-right { grid-area: 2 / 3; }
+  .ring-bottom { grid-area: 3 / 2; align-items: center; }
+  .ring-left { grid-area: 2 / 1; }
+  .ring-side .leds { flex: 1; --gap: 3px; }
+
+  .leds.leds-vert {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(var(--n, 20), minmax(0, 1fr));
+    justify-items: center;
+    height: 100%;
+  }
+  .leds-vert .led-dot {
+    width: auto;
+    height: 100%;
+    max-width: none;
+    max-height: 16px;
+  }
+
+  .ring-port {
+    position: relative;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    width: calc(100% + 8px);
+    height: calc(100% + 8px);
+    margin: -4px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--bg);
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .ring-port-tl { grid-area: 1 / 1; }
+  .ring-port-tr { grid-area: 1 / 3; }
+  .ring-port-br { grid-area: 3 / 3; }
+  .ring-port-bl { grid-area: 3 / 1; }
+  .ring-port.is-sending {
+    color: var(--text);
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px -3px var(--cyan);
+  }
+
+  .ring-core {
+    grid-area: 2 / 2;
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-width: 0;
+    min-height: 0;
+    border: 1px dashed var(--line);
+    border-radius: 16px;
+  }
+
+  .ring-wires {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .ring-wire {
+    stroke: var(--line-strong);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 4;
+    transition: stroke 0.25s ease;
+  }
+  /* Data running out to the strip, for as long as it's being sent a frame. */
+  .ring-wire.is-sending {
+    stroke: var(--cyan);
+    filter: drop-shadow(0 0 3px var(--cyan));
+    animation: wire-send 0.45s linear infinite;
+  }
+  @keyframes wire-send { to { stroke-dashoffset: -14; } }
+
+  .ring-brain {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 2px;
+    width: 28%;
+    aspect-ratio: 1;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: 0 0 30px -10px rgba(155, 77, 255, 0.6);
+  }
+  .ring-brain b { font-size: 16px; letter-spacing: 0.02em; }
+  .ring-brain span {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .ring-range {
+    position: absolute;
+    z-index: 2;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    color: var(--text-muted);
+    transition: color 0.3s ease;
+  }
+  .ring-range-top { top: 9px; left: 50%; transform: translateX(-50%); }
+  .ring-range-bottom { bottom: 9px; left: 50%; transform: translateX(-50%); }
+  .ring-range-right { top: 50%; right: 9px; writing-mode: vertical-rl; transform: translateY(-50%); }
+  .ring-range-left { top: 50%; left: 9px; writing-mode: vertical-rl; transform: translateY(-50%) rotate(180deg); }
+  /* Every strip starting over at 0 is the point of the unchained view. */
+  .chain-lab.is-unchained .ring-range { color: var(--amber); }
+
+  .chain-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 18px 18px 20px;
+    border-left: 1px solid var(--line);
+  }
+
+  .chain-seg { display: flex; }
+  .chain-seg .seg-btn { flex: 1; }
+
+  .chain-sub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    min-height: 40px;
+    padding: 0 2px;
+  }
+  .chain-sub .seg-toggle { margin-left: auto; }
+  .chain-sub-note { font-size: 12.5px; color: var(--text-muted); }
+
+  .chain-looks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .look-btn {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    padding: 9px 11px 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.2s ease;
+  }
+  .look-btn:hover { border-color: var(--line-strong); }
+  .look-btn:focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
+  .look-btn[aria-pressed="true"] {
+    border-color: var(--pink);
+    box-shadow: 0 0 22px -8px var(--pink);
+  }
+  .look-btn .leds { --gap: 3px; }
+  .look-btn .led-dot { max-width: 11px; }
+
+  .chain-invert {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .chain-invert input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+  .chain-invert-led {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--track);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  .chain-invert input:checked + .chain-invert-led {
+    background: var(--amber);
+    box-shadow: 0 0 6px var(--amber), 0 0 14px var(--amber);
+  }
+  .chain-invert input:focus-visible + .chain-invert-led { outline: 2px solid var(--pink); outline-offset: 3px; }
+
+  .chain-note {
+    margin: 0;
+    min-height: 4.7em;
+    padding: 0 2px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-muted);
+  }
+  .chain-note b { color: var(--text); font-weight: 600; }
+
+  .chain-code {
+    border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.22);
+  }
+
+  /* ---------- 1.6: sequencer phases ---------- */
+
+  .seq-demo {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+    gap: 28px;
+    align-items: start;
+    margin-top: 34px;
+    padding: 24px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-sunken);
+  }
+  .seq-copy p { margin: 8px 0 0; font-size: 14.5px; color: var(--text-muted); }
+  .seq-restart { margin-top: 16px; }
+
+  .seq-visual {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .seq-visual > .leds { --gap: 5px; }
+
+  .seq-track {
+    position: relative;
+    display: flex;
+    gap: 3px;
+    height: 46px;
+  }
+  .seq-phase {
+    position: relative;
+    flex: 0 0 calc(var(--w) - 2px);
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--c) 9%, var(--surface));
+    overflow: hidden;
+    transition: opacity 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .seq-phase.is-on {
+    border-color: var(--c);
+    box-shadow: 0 0 18px -6px var(--c);
+  }
+  .seq-phase.is-spent { opacity: 0.4; border-style: dashed; }
+  /* The share of the phase its transition takes to wipe in. */
+  .seq-wipe {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--wipe);
+    background: color-mix(in srgb, var(--c) 28%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--c) 60%, transparent);
+  }
+  .seq-label {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.2;
+  }
+  .seq-label b { font-size: 12px; white-space: nowrap; }
+  .seq-label i {
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10px;
+    font-style: normal;
+    white-space: nowrap;
+    color: var(--text-muted);
+  }
+  .seq-head {
+    position: absolute;
+    top: -5px;
+    bottom: -5px;
+    left: 0;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: var(--text);
+    box-shadow: 0 0 8px var(--text);
+  }
+  .seq-readout { margin: 0; min-height: 1.55em; font-size: 13px; color: var(--text-muted); }
+  .seq-code { grid-column: 1 / -1; }
+
+  /* ---------- 1.6: Pattern Studio's safety net ---------- */
+
+  .studio-mini {
+    margin-top: 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--surface-sunken);
+    overflow: hidden;
+  }
+  .studio-mini-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .studio-mini-bar .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .studio-mini-title {
+    display: flex;
+    min-width: 0;
+    margin-left: 6px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .studio-mini-app { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .studio-mini-name { flex: none; white-space: nowrap; color: var(--text); }
+
+  /* The design, a dialog and the closed window share one cell, so the
+     screen grows to whichever is tallest rather than clipping a dialog. */
+  .studio-mini-screen {
+    display: grid;
+    min-height: 136px;
+  }
+  .studio-mini-view,
+  .studio-mini-dialog,
+  .studio-mini-off { grid-area: 1 / 1; min-width: 0; }
+  .studio-mini-view { padding: 20px 16px 14px; }
+  .studio-mini-view > .leds { --gap: 4px; }
+  .studio-mini-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    min-height: 2.6em;
+    margin-top: 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .studio-mini-meter {
+    flex: 0 1 110px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .studio-mini-fill {
+    display: block;
+    width: 0;
+    height: 100%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  .studio-mini-dialog,
+  .studio-mini-off {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px 16px;
+    background: var(--surface-sunken);
+  }
+  .studio-mini-head { margin: 0; font-size: 13px; font-weight: 700; color: var(--text); }
+  .studio-mini-q { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+  .section .studio-mini-info { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+  .studio-mini-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .studio-mini-off { align-items: flex-start; }
+  .studio-mini-off p { margin: 0 0 4px; font-size: 13px; color: var(--text-muted); }
+  .studio-mini.is-crashed .studio-mini-off p { color: var(--text); }
+
+  .studio-mini-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--line);
+  }
+  .studio-mini .chip-btn:disabled { opacity: 0.4; cursor: default; }
+  .studio-mini .chip-btn:disabled:hover { color: var(--text-muted); border-color: var(--line-strong); }
+  .studio-mini kbd {
+    margin-left: 3px;
+    padding: 0 4px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 860px) {
+    .chain-body { grid-template-columns: minmax(0, 1fr); }
+    .chain-panel { border-left: 0; border-top: 1px solid var(--line); }
+    .seq-demo { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  }
+
+  @media (max-width: 560px) {
+    .chain-stage { padding: 24px 12px; }
+    .ring { --t: 11px; gap: 7px; }
+    .ring-side .leds { --gap: 2px; }
+    .ring-range { font-size: 9px; }
+    .ring-range-top { top: 6px; }
+    .ring-range-bottom { bottom: 6px; }
+    .ring-range-right { right: 6px; }
+    .ring-range-left { left: 6px; }
+    .ring-brain b { font-size: 13px; }
+    .ring-brain span { font-size: 8px; }
+    .chain-panel { padding: 16px 14px 18px; }
+    .seq-demo { padding: 18px 14px; }
+    .seq-visual > .leds { --gap: 2px; }
+    .seq-phase { padding: 0 6px; }
+    .seq-label b { font-size: 11px; }
+    .seq-label i { font-size: 9px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ring-wire.is-sending { animation: none; }
+  }
+
   /* ---------- animations specimen sheet ---------- */
 
   .specimen { margin-top: 26px; border-top: 1px solid var(--line); }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HitLib 1.5.2 · Pattern Studio 1.2.2</title>
+<title>HitLib 1.6.0 · Pattern Studio 1.3.0</title>
 <meta name="description" content="HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode. Build your own animations out of layers, design them in Pattern Studio, and deploy them into your robot project.">
 <link rel="canonical" href="https://www.hitlib.org/">
 <meta name="theme-color" content="#9b4dff">
@@ -60,7 +60,7 @@
 <nav class="rail" id="rail" aria-label="Page sections">
   <a class="rail-item" href="#whats-new" data-target="whats-new">What's new</a>
   <a class="rail-item" href="#start" data-target="start">Get started</a>
-  <a class="rail-item" href="#animations" data-target="animations" data-also="zones">Animations</a>
+  <a class="rail-item" href="#animations" data-target="animations" data-also="zones layers">Animations</a>
   <a class="rail-item" href="#gauges" data-target="gauges">Gauges</a>
   <a class="rail-item" href="#modes" data-target="modes">Modes</a>
   <a class="rail-item" href="#music" data-target="music" data-also="engine">Music</a>
@@ -109,20 +109,21 @@
 
     <div class="hero-meta">
       <span class="team-id">96671H · Hitmen</span>
-      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.2</a>
-      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.2.2</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.6.0</a>
+      <a class="release-chip" href="#whats-new"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.3.0</a>
     </div>
     <h1>Build your own <span class="grad-text">animations</span>.</h1>
     <p class="lede">
       HitLib is an LED animation library for VEX V5 robots, for PROS and VEXcode,
-      and Pattern Studio is the desktop app that designs for it. This release
-      lets you stack the looks into layers and build animations of your own.
+      and Pattern Studio is the desktop app that designs for it. Stack the looks
+      into layers and build animations of your own, then run them right round
+      the robot: 1.6 chains your strips into one strand.
     </p>
 
     <div class="cta-row">
       <a class="btn btn-green" href="#in-action">See it in action!</a>
       <a class="btn primary btn-buy" href="#/order">Buy the Kit</a>
-      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.2">1.5.2 release notes <span class="arrow">↗</span></a>
+      <a class="btn" href="https://github.com/advisorylabs/HitLib/releases/tag/1.6.0">1.6.0 release notes <span class="arrow">↗</span></a>
       <a class="btn" href="https://advisorylabs.github.io/HitLib/">Documentation <span class="arrow">↗</span></a>
       <a class="btn" href="https://github.com/advisorylabs/HitLib">HitLib on GitHub <span class="arrow">↗</span></a>
     </div>
@@ -132,114 +133,210 @@
 
   <section class="section reveal" id="whats-new">
     <div class="section-head">
-      <span class="eyebrow">// what's new</span>
-      <h2>Animations, built from layers</h2>
+      <span class="eyebrow">// what's new in 1.6</span>
+      <h2>Four strips, one strand</h2>
       <p>
-        HitLib 1.5 plays custom animations: up to eight layers, each one a look you
-        already know, blended onto the layers below it and moved by a sensor, a song,
-        an oscillator or your own code. Pattern Studio 1.2 builds them in its new
-        Animate tab. Take this one apart: switch layers off, change how they blend,
-        and drag the alert driver.
+        HitLib 1.6 chains strips on separate ports into one long strand, so a look
+        runs all the way round the robot instead of starting over on every strip.
+        Looks don't have to cut any more either: a transition spreads or twinkles
+        the next one in, and two new masks reveal a look the same ways while it
+        plays. Pattern Studio 1.3 builds all of it. Unchain the ring below, then
+        wipe between looks.
       </p>
     </div>
 
-    <div class="stack-lab" id="stack-lab">
+    <div class="chain-lab" id="chain-lab">
       <div class="code-window-bar">
         <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
-        <span class="code-window-title">animate · underglow</span>
-        <div class="seg-toggle" role="group" aria-label="View">
-          <button type="button" class="seg-btn active" data-stack-view="exploded" aria-pressed="true">Exploded</button>
-          <button type="button" class="seg-btn" data-stack-view="stacked" aria-pressed="false">On the strip</button>
+        <span class="code-window-title">underglow · four 20-LED strips</span>
+        <div class="seg-toggle" role="group" aria-label="How the strips are driven">
+          <button type="button" class="seg-btn active" data-chain="on" aria-pressed="true">One chain</button>
+          <button type="button" class="seg-btn" data-chain="off" aria-pressed="false">Four strands</button>
         </div>
       </div>
 
-      <div class="stack-body">
-        <div class="stack-scene" aria-hidden="true">
-          <div class="stack-world">
-            <div class="stack-sheet" data-layer="alert" style="--depth: 4; --c: #ffb000"><span class="stack-tag"><b>Alert</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
-            <div class="stack-sheet" data-layer="sparkle" style="--depth: 3; --c: #fff1c2"><span class="stack-tag"><b>Sparkle</b> <span class="stack-tag-blend">ADD</span></span><div class="leds" data-n="20"></div></div>
-            <div class="stack-sheet" data-layer="scanner" style="--depth: 2; --c: #ff2d6e"><span class="stack-tag"><b>Scanner</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
-            <div class="stack-sheet" data-layer="wash" style="--depth: 1; --c: #6a3bff"><span class="stack-tag"><b>Wash</b> <span class="stack-tag-blend">OVER</span></span><div class="leds" data-n="20"></div></div>
-            <div class="stack-sheet stack-result" style="--depth: 0"><span class="stack-tag"><b>On the strip</b></span><div class="leds" data-demo="stack" data-n="20"></div></div>
+      <div class="chain-body">
+        <div class="chain-stage">
+          <div class="ring" id="chain-ring" aria-hidden="true">
+            <svg class="ring-wires" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <line class="ring-wire" data-wire="0" x1="50" y1="50" x2="3" y2="3" vector-effect="non-scaling-stroke" />
+              <line class="ring-wire" data-wire="1" x1="50" y1="50" x2="97" y2="3" vector-effect="non-scaling-stroke" />
+              <line class="ring-wire" data-wire="2" x1="50" y1="50" x2="97" y2="97" vector-effect="non-scaling-stroke" />
+              <line class="ring-wire" data-wire="3" x1="50" y1="50" x2="3" y2="97" vector-effect="non-scaling-stroke" />
+            </svg>
+            <div class="ring-side ring-top"><div class="leds" data-n="20"></div></div>
+            <div class="ring-side ring-right"><div class="leds leds-vert" data-n="20"></div></div>
+            <div class="ring-side ring-bottom"><div class="leds" data-n="20"></div></div>
+            <div class="ring-side ring-left"><div class="leds leds-vert" data-n="20"></div></div>
+            <span class="ring-port ring-port-tl" data-port="0">A</span>
+            <span class="ring-port ring-port-tr" data-port="1">B</span>
+            <span class="ring-port ring-port-br" data-port="2">C</span>
+            <span class="ring-port ring-port-bl" data-port="3">D</span>
+            <div class="ring-core">
+              <span class="ring-range ring-range-top" data-range="0">A · 0–19</span>
+              <span class="ring-range ring-range-right" data-range="1">B · 20–39</span>
+              <span class="ring-range ring-range-bottom" data-range="2">C · 40–59</span>
+              <span class="ring-range ring-range-left" data-range="3">D · 60–79</span>
+              <div class="ring-brain"><b>V5</b><span>ADI A–D</span></div>
+            </div>
           </div>
         </div>
 
-        <div class="stack-panel">
-          <div class="stack-panel-head"><span>Layers</span><span class="mode-hint">top draws last</span></div>
-          <div class="stack-layers">
-            <div class="stack-row" data-layer="alert" style="--c: #ffb000">
-              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Alert layer"><span class="stack-eye-led"></span></button>
-              <span class="stack-row-name">Alert<span class="stack-kind">FLASH</span></span>
-              <select class="stack-blend" aria-label="Alert blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
-            </div>
-            <div class="stack-row" data-layer="sparkle" style="--c: #fff1c2">
-              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Sparkle layer"><span class="stack-eye-led"></span></button>
-              <span class="stack-row-name">Sparkle<span class="stack-kind">TWINKLE</span></span>
-              <select class="stack-blend" aria-label="Sparkle blend"><option>OVER</option><option>KEY</option><option selected>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
-            </div>
-            <div class="stack-row" data-layer="scanner" style="--c: #ff2d6e">
-              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Scanner layer"><span class="stack-eye-led"></span></button>
-              <span class="stack-row-name">Scanner<span class="stack-kind">PULSE</span></span>
-              <select class="stack-blend" aria-label="Scanner blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
-            </div>
-            <div class="stack-row" data-layer="wash" style="--c: #6a3bff">
-              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Wash layer"><span class="stack-eye-led"></span></button>
-              <span class="stack-row-name">Wash<span class="stack-kind">FLOW</span></span>
-              <select class="stack-blend" aria-label="Wash blend"><option selected>OVER</option><option>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+        <div class="chain-panel">
+          <div class="stack-panel-head"><span>Transition</span><span class="mode-hint">how the next look comes in</span></div>
+          <div class="seg-toggle chain-seg" role="group" aria-label="Transition">
+            <button type="button" class="seg-btn" data-trans="CUT" aria-pressed="false">Cut</button>
+            <button type="button" class="seg-btn active" data-trans="SPREAD" aria-pressed="true">Spread</button>
+            <button type="button" class="seg-btn" data-trans="TWINKLE" aria-pressed="false">Twinkle</button>
+          </div>
+          <div class="chain-sub" data-trans-opts="SPREAD">
+            <span class="kind-label">From</span>
+            <div class="seg-toggle" role="group" aria-label="Spread from">
+              <button type="button" class="seg-btn active" data-origin="EDGE" aria-pressed="true">Pixel 0</button>
+              <button type="button" class="seg-btn" data-origin="CENTER" aria-pressed="false">The middle</button>
             </div>
           </div>
-          <p class="stack-blend-note" id="stack-blend-note" aria-live="polite"></p>
+          <div class="chain-sub" data-trans-opts="TWINKLE" hidden>
+            <span class="kind-label">Bit width</span>
+            <div class="seg-toggle" role="group" aria-label="Pixels per bit">
+              <button type="button" class="seg-btn" data-bits="1" aria-pressed="false">1 px</button>
+              <button type="button" class="seg-btn active" data-bits="2" aria-pressed="true">2 px</button>
+              <button type="button" class="seg-btn" data-bits="4" aria-pressed="false">4 px</button>
+            </div>
+          </div>
+          <div class="chain-sub" data-trans-opts="CUT" hidden>
+            <span class="chain-sub-note">No wipe: the next look shows on the very next frame.</span>
+          </div>
 
-          <div class="stack-panel-head"><span>Drivers</span><span class="mode-hint">one byte each, every tick</span></div>
-          <label class="stack-driver">
-            <span class="stack-driver-name">alert<span class="stack-kind">CONSTANT</span></span>
-            <span class="stack-driver-target">Alert opacity</span>
-            <input type="range" id="stack-alert" min="0" max="255" step="1" value="0" aria-label="Alert driver, 0 to 255" />
+          <div class="stack-panel-head"><span>Next look</span><span class="mode-hint">tap one to wipe it in</span></div>
+          <div class="chain-looks" role="group" aria-label="Next look">
+            <button type="button" class="look-btn" data-look="pulse" aria-pressed="true"><span class="look-name">Pulse</span><span class="leds" data-n="8"></span></button>
+            <button type="button" class="look-btn" data-look="rainbow" aria-pressed="false"><span class="look-name">Rainbow</span><span class="leds" data-n="8"></span></button>
+            <button type="button" class="look-btn" data-look="flow" aria-pressed="false"><span class="look-name">Flow</span><span class="leds" data-n="8"></span></button>
+            <button type="button" class="look-btn" data-look="twinkle" aria-pressed="false"><span class="look-name">Twinkle</span><span class="leds" data-n="8"></span></button>
+          </div>
+
+          <div class="stack-panel-head"><span>Mask</span><span class="mode-hint">how much of the look shows</span></div>
+          <div class="seg-toggle chain-seg" role="group" aria-label="Mask">
+            <button type="button" class="seg-btn active" data-mask="NONE" aria-pressed="true">None</button>
+            <button type="button" class="seg-btn" data-mask="SPREAD" aria-pressed="false">Spread</button>
+            <button type="button" class="seg-btn" data-mask="TWINKLE" aria-pressed="false">Twinkle</button>
+          </div>
+
+          <label class="chain-invert">
+            <input type="checkbox" id="chain-invert" />
+            <span class="chain-invert-led" aria-hidden="true"></span>
+            <span>Invert: run it the other way round</span>
           </label>
-          <div class="stack-driver">
-            <span class="stack-driver-name">breathe<span class="stack-kind">LFO · SINE · 4 S</span></span>
-            <span class="stack-driver-target">Wash opacity</span>
-            <span class="stack-meter" aria-hidden="true"><span class="stack-meter-fill" id="stack-breathe"></span></span>
-          </div>
+
+          <p class="chain-note" id="chain-note" aria-live="polite"></p>
         </div>
       </div>
-<pre class="code stack-code" id="stack-code"><code></code></pre>
+<pre class="code chain-code" id="chain-code"><code></code></pre>
     </div>
-    <p class="demo-caption">A browser port of the layer blending in HitLib's own evaluator, slowed down like the other demos. Each layer is a look from the animation reference below.</p>
+    <p class="demo-caption">A browser port of HitLib 1.6's chain, transition and mask code, slowed down like the other demos. A wire lights while its strip is being sent a new frame: a strip whose part of the frame holds still sends nothing.</p>
+
+    <div class="seq-demo" id="seq-demo">
+      <div class="seq-copy">
+        <h3>Intros, then the loop</h3>
+        <p>
+          A Sequencer phase can now play a set number of times, and wipe in over the
+          phase before it. This endgame opens on an intro that plays once per
+          activation, then trades rainbow and pulse for as long as the mode is
+          winning, each wiping in its own way.
+        </p>
+        <button type="button" class="btn mode-score seq-restart" id="seq-restart">Activate again <code>activateMode(endgame)</code></button>
+      </div>
+      <div class="seq-visual">
+        <div class="leds" id="seq-strip" data-n="20" aria-hidden="true"></div>
+        <div class="seq-track" aria-hidden="true">
+          <span class="seq-phase" data-phase="0" style="--w: 15.8%; --c: #ffb000"><span class="seq-label"><b>Intro</b><i>plays 1</i></span></span>
+          <span class="seq-phase" data-phase="1" style="--w: 42.1%; --c: #b04dff; --wipe: 12.5%"><span class="seq-wipe"></span><span class="seq-label"><b>Rainbow</b><i>spreads in</i></span></span>
+          <span class="seq-phase" data-phase="2" style="--w: 42.1%; --c: #ff2d6e; --wipe: 20%"><span class="seq-wipe"></span><span class="seq-label"><b>Pulse</b><i>twinkles in</i></span></span>
+          <span class="seq-head" id="seq-head"></span>
+        </div>
+        <p class="seq-readout" id="seq-readout" aria-live="polite"></p>
+      </div>
+<pre class="code code-compact seq-code"><code><span class="t-kw">using</span> LS = hitlib::LedStrand;
+<span class="t-kw">static const</span> hitlib::Sequencer::Phase phases[] = {
+    {<span class="t-num">1500</span>, intro,   <span class="t-num">1</span>},   <span class="t-com">// once per activation, then skipped</span>
+    {<span class="t-num">4000</span>, rainbow, <span class="t-num">0</span>, {LS::TransitionKind::SPREAD,  <span class="t-num">500</span>, LS::SpreadOrigin::CENTER}},
+    {<span class="t-num">4000</span>, pulse,   <span class="t-num">0</span>, {LS::TransitionKind::TWINKLE, <span class="t-num">800</span>, LS::SpreadOrigin::EDGE, <span class="t-kw">false</span>, <span class="t-num">2</span>}},
+};</code></pre>
+    </div>
 
     <div class="new-grid">
       <div class="new-col">
-        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.5.2</div>
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--blue)"></span>HitLib 1.6.0</div>
         <div class="new-item">
-          <h3>Custom animations</h3>
-          <p><code>strand.compose()</code> plays a layer stack exported from Pattern Studio, and <code>setDriverLevel()</code> moves it from your code. Brightness, overlays, splice masks and profiles all keep working on top.</p>
+          <h3>Chains</h3>
+          <p><code>LedStrand ring({{1, 20}, {2, 20}, {3, 20}, {4, 20}})</code> drives four strips on four ports as one 80-LED strand. Up to eight strips and 128 LEDs, brain and expander ports mixed, and every animation, mask and profile runs across all of them.</p>
         </div>
         <div class="new-item">
-          <h3>Slower than a pixel a tick</h3>
-          <p>A bare speed still means pixels per tick. <code>Speed::everyMs(100)</code> moves one pixel every 100 ms instead, for any animation that moves.</p>
+          <h3>Transitions</h3>
+          <p><code>transition()</code>, then the next animation: it spreads in from an end or the middle, or twinkles in a bit at a time, over the last frame. It's already moving as it's revealed.</p>
         </div>
         <div class="new-item">
-          <h3>Profiles on a whole group</h3>
-          <p>One Sequencer now runs every strand in a group, each at its own phase, so the built-in endgames light every strip. Strands can also join a group after <code>init()</code>.</p>
+          <h3>Spread and twinkle masks</h3>
+          <p><code>spreadMask()</code> shows the animation across a stretch that grows over the strip and starts over or bounces back. <code>twinkleMask()</code> shows it through bits that fade in and out.</p>
         </div>
         <div class="new-item">
-          <h3>Lighter on the ADI link</h3>
-          <p>A strand whose frame hasn't changed sends nothing, calls from your control loop never wait for a frame to go out, and PROS sends each frame in one transfer.</p>
+          <h3>Intros and phase transitions</h3>
+          <p>A Sequencer phase can play a set number of times, so <code>1</code> makes an intro, and can carry a transition of its own.</p>
+        </div>
+        <div class="new-item">
+          <h3>Wider sparkles, either direction</h3>
+          <p><code>twinkle()</code> takes a <code>bitWidth</code>, so a sparkle lights several pixels and reads from across the field. <code>rainbow()</code>, the overlays and custom regions' <code>PULSE</code>, <code>FLOW</code> and <code>RAINBOW</code> take <code>invert</code>.</p>
         </div>
       </div>
       <div class="new-col">
-        <div class="new-col-head"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.2.2</div>
-        <div class="new-item">
-          <h3>The Animate tab</h3>
-          <p>Stack layers, drag their spans and timing along the strip, draw frames pixel by pixel, and bind any of it to a sensor, the song or an oscillator. It opens on a gallery of starting points.</p>
+        <div class="new-col-head"><span class="chip-led" style="--c: var(--purple)"></span>Pattern Studio 1.3.0</div>
+        <div class="studio-mini" id="studio-mini">
+          <div class="studio-mini-bar">
+            <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+            <span class="studio-mini-title"><span class="studio-mini-app">HitLib Pattern Studio v1.3.0 -&nbsp;</span><span class="studio-mini-name" id="studio-mini-name">underglow.hlprofile</span></span>
+          </div>
+          <div class="studio-mini-screen">
+            <div class="studio-mini-view">
+              <div class="leds" id="studio-mini-strip" data-n="20" aria-hidden="true"></div>
+              <div class="studio-mini-status">
+                <span id="studio-mini-state" aria-live="polite">Saved</span>
+                <span class="studio-mini-meter" id="studio-mini-meter" hidden><span class="studio-mini-fill" id="studio-mini-fill"></span></span>
+              </div>
+            </div>
+            <div class="studio-mini-dialog" id="studio-mini-dialog" role="dialog" aria-labelledby="studio-mini-q" hidden>
+              <p class="studio-mini-head" id="studio-mini-head"></p>
+              <p class="studio-mini-q" id="studio-mini-q"></p>
+              <p class="studio-mini-info" id="studio-mini-info"></p>
+              <div class="studio-mini-btns" id="studio-mini-btns"></div>
+            </div>
+            <div class="studio-mini-off" id="studio-mini-off" hidden>
+              <p id="studio-mini-off-text"></p>
+              <button type="button" class="chip-btn" id="studio-mini-launch">Open Pattern Studio</button>
+            </div>
+          </div>
+          <div class="studio-mini-actions" role="group" aria-label="Try the safety net">
+            <button type="button" class="chip-btn" data-studio="edit">Change the color</button>
+            <button type="button" class="chip-btn" data-studio="save">Save <kbd>Ctrl+S</kbd></button>
+            <button type="button" class="chip-btn" data-studio="close">Close</button>
+            <button type="button" class="chip-btn" data-studio="crash">Crash it</button>
+          </div>
         </div>
         <div class="new-item">
-          <h3>Open as Custom</h3>
-          <p>Turns whatever preset a strand is playing into a one-layer custom animation, one Add Layer away from something the presets can't do.</p>
+          <h3>Nothing lost</h3>
+          <p>Unsaved changes put a dot after the file name, closing or opening another design asks to save first, and unsaved work is autosaved every 30 seconds, ready to restore after a crash. Try it above, with autosave sped up.</p>
         </div>
         <div class="new-item">
-          <h3>Undo and redo</h3>
-          <p>Every edit to every strand and custom animation can be undone, and a held-down spin box or a dragged color is one step, not fifty.</p>
+          <h3>Chain and Transitions</h3>
+          <p>Select strands that sit next to each other in the list and press Chain. A phase gets a play count and a transition, and the preview plays the wipe for you.</p>
+        </div>
+        <div class="new-item">
+          <h3>Open Recent, and shortcuts that work</h3>
+          <p>File &gt; Open Recent remembers your last eight designs, and Ctrl+S and the other File shortcuts now work on Windows.</p>
+        </div>
+        <div class="new-item">
+          <h3>Smaller fixes</h3>
+          <p>Scrolling past a number box or a dropdown no longer changes it, custom animation rainbows match the Rainbow preset, and designs save as schema 8. Older files still open.</p>
         </div>
       </div>
     </div>
@@ -306,22 +403,22 @@ hitlib::LedGroup  group;
       <div class="install-line" data-platform-pane="pros">
         <span class="install-label">Download</span>
         <p>
-          <code>hitlib@1.5.2.zip</code> from the
-          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.2">release</a>
-          into your Downloads folder, or <code>hitlib@1.5.2-softfp.zip</code> for
+          <code>hitlib@1.6.0.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.6.0">release</a>
+          into your Downloads folder, or <code>hitlib@1.6.0-softfp.zip</code> for
           EZ-Template 3.x and other kernel 4.1.x projects.
         </p>
       </div>
       <div class="install-line" data-platform-pane="pros">
         <span class="install-label">Install</span>
-        <pre><code>pros c fetch $HOME/Downloads/hitlib@1.5.2.zip
+        <pre><code>pros c fetch $HOME/Downloads/hitlib@1.6.0.zip
 pros c apply HitLib</code></pre>
       </div>
       <div class="install-line" data-platform-pane="vexcode" hidden>
         <span class="install-label">Install</span>
         <p>
-          Download <code>hitlib-vexcode@1.5.2.zip</code> from the
-          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.2">release</a>
+          Download <code>hitlib-vexcode@1.6.0.zip</code> from the
+          <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.6.0">release</a>
           and copy its <code>include/hitlib/</code> and <code>src/hitlib/</code> folders
           into your project. Don't also add the LED port in VEXcode's device menu.
         </p>
@@ -424,6 +521,86 @@ strand.spliceMask(<span class="t-num">3</span>, <span class="t-kw">false</span>,
                   <span class="t-num">400</span>, <span class="t-num">0x000000</span>, <span class="t-kw">true</span>);  <span class="t-com">// every 400 ms, overlay</span></code></pre>
       </div>
     </div>
+  </section>
+
+  <!-- ===================== custom animations ===================== -->
+
+  <section class="section reveal" id="layers">
+    <div class="section-head">
+      <span class="eyebrow">// custom animations</span>
+      <h2>Animations, built from layers</h2>
+      <p>
+        A custom animation is up to eight layers, each one a look you already
+        know, blended onto the layers below it and moved by a sensor, a song, an
+        oscillator or your own code. Pattern Studio builds them in its Animate
+        tab. Take this one apart: switch layers off, change how they blend, and
+        drag the alert driver.
+      </p>
+    </div>
+
+    <div class="stack-lab" id="stack-lab">
+      <div class="code-window-bar">
+        <span class="dot dot-blue"></span><span class="dot dot-purple"></span><span class="dot dot-pink"></span>
+        <span class="code-window-title">animate · underglow</span>
+        <div class="seg-toggle" role="group" aria-label="View">
+          <button type="button" class="seg-btn active" data-stack-view="exploded" aria-pressed="true">Exploded</button>
+          <button type="button" class="seg-btn" data-stack-view="stacked" aria-pressed="false">On the strip</button>
+        </div>
+      </div>
+
+      <div class="stack-body">
+        <div class="stack-scene" aria-hidden="true">
+          <div class="stack-world">
+            <div class="stack-sheet" data-layer="alert" style="--depth: 4; --c: #ffb000"><span class="stack-tag"><b>Alert</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="sparkle" style="--depth: 3; --c: #fff1c2"><span class="stack-tag"><b>Sparkle</b> <span class="stack-tag-blend">ADD</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="scanner" style="--depth: 2; --c: #ff2d6e"><span class="stack-tag"><b>Scanner</b> <span class="stack-tag-blend">KEY</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet" data-layer="wash" style="--depth: 1; --c: #6a3bff"><span class="stack-tag"><b>Wash</b> <span class="stack-tag-blend">OVER</span></span><div class="leds" data-n="20"></div></div>
+            <div class="stack-sheet stack-result" style="--depth: 0"><span class="stack-tag"><b>On the strip</b></span><div class="leds" data-demo="stack" data-n="20"></div></div>
+          </div>
+        </div>
+
+        <div class="stack-panel">
+          <div class="stack-panel-head"><span>Layers</span><span class="mode-hint">top draws last</span></div>
+          <div class="stack-layers">
+            <div class="stack-row" data-layer="alert" style="--c: #ffb000">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Alert layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Alert<span class="stack-kind">FLASH</span></span>
+              <select class="stack-blend" aria-label="Alert blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="sparkle" style="--c: #fff1c2">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Sparkle layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Sparkle<span class="stack-kind">TWINKLE</span></span>
+              <select class="stack-blend" aria-label="Sparkle blend"><option>OVER</option><option>KEY</option><option selected>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="scanner" style="--c: #ff2d6e">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Scanner layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Scanner<span class="stack-kind">PULSE</span></span>
+              <select class="stack-blend" aria-label="Scanner blend"><option>OVER</option><option selected>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+            <div class="stack-row" data-layer="wash" style="--c: #6a3bff">
+              <button type="button" class="stack-eye" aria-pressed="true" aria-label="Wash layer"><span class="stack-eye-led"></span></button>
+              <span class="stack-row-name">Wash<span class="stack-kind">FLOW</span></span>
+              <select class="stack-blend" aria-label="Wash blend"><option selected>OVER</option><option>KEY</option><option>ADD</option><option>SCREEN</option><option>MULTIPLY</option><option>MASK</option></select>
+            </div>
+          </div>
+          <p class="stack-blend-note" id="stack-blend-note" aria-live="polite"></p>
+
+          <div class="stack-panel-head"><span>Drivers</span><span class="mode-hint">one byte each, every tick</span></div>
+          <label class="stack-driver">
+            <span class="stack-driver-name">alert<span class="stack-kind">CONSTANT</span></span>
+            <span class="stack-driver-target">Alert opacity</span>
+            <input type="range" id="stack-alert" min="0" max="255" step="1" value="0" aria-label="Alert driver, 0 to 255" />
+          </label>
+          <div class="stack-driver">
+            <span class="stack-driver-name">breathe<span class="stack-kind">LFO · SINE · 4 S</span></span>
+            <span class="stack-driver-target">Wash opacity</span>
+            <span class="stack-meter" aria-hidden="true"><span class="stack-meter-fill" id="stack-breathe"></span></span>
+          </div>
+        </div>
+      </div>
+<pre class="code stack-code" id="stack-code"><code></code></pre>
+    </div>
+    <p class="demo-caption">A browser port of the layer blending in HitLib's own evaluator, slowed down like the other demos. Each layer is a look from the animation reference below.</p>
   </section>
 
   <!-- ===================== gauges ===================== -->
@@ -646,8 +823,8 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
         </div>
       </div>
       <div class="hood-tile">
-        <h3>Up to 64 LEDs a strand</h3>
-        <p>Any WS2812B-compatible strip, on one of the brain's 3-wire ports or an ADI expander.</p>
+        <h3>Up to 64 LEDs a strip</h3>
+        <p>Any WS2812B-compatible strip, on one of the brain's 3-wire ports or an ADI expander. Chain up to eight into one strand of 128.</p>
       </div>
     </div>
   </section>
@@ -656,7 +833,7 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
 
   <section class="section reveal" id="pattern-studio">
     <div class="section-head">
-      <span class="eyebrow">// pattern studio 1.2.2</span>
+      <span class="eyebrow">// pattern studio 1.3.0</span>
       <h2>Design against a live preview, not the robot</h2>
       <p>Pattern Studio draws every strand as a row of glowing LEDs and animates it with a Python port of HitLib's own engine. Get the look right on a laptop, then send it to your robot as one header.</p>
     </div>
@@ -741,7 +918,7 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
 
     <p class="download-line">
       <span class="chip-led" style="--c: var(--green)"></span>
-      Windows: <code>HitLibPatternStudio-1.2.2-windows.zip</code> on the
+      Windows: <code>HitLibPatternStudio-1.3.0-windows.zip</code> on the
       <a href="https://github.com/advisorylabs/HitLib/releases">Releases page</a>.
     </p>
     <p class="download-line">
@@ -843,9 +1020,9 @@ group.activateModeTimed(<span class="t-num">4</span>, <span class="t-num">1500</
         <span class="name">HitLib repository</span>
         <span class="url">github.com/advisorylabs/HitLib</span>
       </a>
-      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.5.2">
-        <span class="name">HitLib 1.5.2 · Pattern Studio 1.2.2 release</span>
-        <span class="url">.../releases/tag/1.5.2</span>
+      <a href="https://github.com/advisorylabs/HitLib/releases/tag/1.6.0">
+        <span class="name">HitLib 1.6.0 · Pattern Studio 1.3.0 release</span>
+        <span class="url">.../releases/tag/1.6.0</span>
       </a>
       <a href="#/order">
         <span class="name">Buy the Kit</span>

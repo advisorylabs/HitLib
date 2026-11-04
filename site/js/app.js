@@ -1087,6 +1087,808 @@
     renderStackCode();
   }
 
+  /* 1.6: chains, transitions and wipe masks */
+
+  // LedStrand::spreadRanks() and spreadRank(): how many steps a spread takes
+  // to cover a strip, and on which step it reaches pixel i. From the middle,
+  // the middle pixel (or middle two) come first and both ends last.
+  function spreadRanks(len, center) { return center ? Math.floor((len + 1) / 2) : len; }
+  function spreadRank(i, len, center, invert) {
+    if (!center) return invert ? len - 1 - i : i;
+    var fromMiddle = Math.floor(Math.abs(2 * i - (len - 1)) / 2);
+    return invert ? spreadRanks(len, true) - 1 - fromMiddle : fromMiddle;
+  }
+
+  // twinkle() with a bitWidth: the strip is cut into bits from pixel 0, a bit
+  // lights, holds and fades as one, and the density counts bits, not pixels.
+  function BitTwinkle(densityPct, fadeStep, bitWidth, palette) {
+    this.density = densityPct;
+    this.fade = fadeStep;
+    this.width = Math.max(1, bitWidth);
+    this.palette = palette || [0xFFFFFF];
+    this.bits = [];
+  }
+  BitTwinkle.prototype.step = function (len) {
+    var count = Math.ceil(len / this.width), i, active = 0;
+    if (this.bits.length !== count) {
+      this.bits = [];
+      for (i = 0; i < count; i++) this.bits.push({ state: 0, level: 0, hold: 0, color: this.palette[0] });
+    }
+    for (i = 0; i < count; i++) if (this.bits[i].state) active++;
+    if (active < Math.round(count * this.density / 100)) {
+      for (var tries = 0; tries < 6; tries++) {
+        var cand = this.bits[Math.floor(Math.random() * count)];
+        if (!cand.state) {
+          cand.state = 1;
+          cand.level = 0;
+          cand.color = this.palette[Math.floor(Math.random() * this.palette.length)];
+          break;
+        }
+      }
+    }
+    for (i = 0; i < count; i++) {
+      var s = this.bits[i];
+      if (s.state === 1) {
+        s.level = Math.min(255, s.level + this.fade);
+        if (s.level === 255) { s.state = 2; s.hold = 8; }
+      } else if (s.state === 2) {
+        if (--s.hold <= 0) s.state = 3;
+      } else if (s.state === 3) {
+        s.level = Math.max(0, s.level - this.fade);
+        if (s.level === 0) s.state = 0;
+      }
+    }
+  };
+  BitTwinkle.prototype.level = function (i) {
+    var b = this.bits[Math.floor(i / this.width)];
+    return b ? b.level : 0;
+  };
+
+  // A look is { advance(len), render(t, frame) }: advance moves any state on
+  // by one tick, and render draws tick t without changing anything, so a
+  // control can repaint mid-tick without speeding the look up.
+  function pureLook(step) { return { advance: null, render: step }; }
+  function bitTwinkleLook(palette, densityPct, fadeStep, bitWidth) {
+    var tw = new BitTwinkle(densityPct, fadeStep, bitWidth, palette);
+    return {
+      advance: function (len) { tw.step(len); },
+      render: function (t, frame) {
+        for (var i = 0; i < frame.length; i++) {
+          var b = tw.bits[Math.floor(i / tw.width)];
+          frame[i] = b ? lerp8(0x000000, b.color, b.level) : 0;
+        }
+      }
+    };
+  }
+
+  // One LedStrand, as far as 1.6's additions go: a look, a spread or twinkle
+  // mask over it, and a transition wiping the last frame sent away.
+  function WipeStrand(len) {
+    this.len = len;
+    this.look = null;
+    this.lookStart = 0;
+    this.base = new Array(len).fill(0);
+    this.sent = new Array(len).fill(0);
+    this.mask = null;
+    this.trans = null;
+  }
+  WipeStrand.prototype.setLook = function (look, t) {
+    this.look = look;
+    this.lookStart = t;
+  };
+  // spreadMask(1, CENTER, false, true) or twinkleMask(40, 24, 2), as the demo's code shows.
+  WipeStrand.prototype.setMask = function (kind) {
+    if (kind === 'SPREAD') this.mask = { kind: kind, pos: 0, dir: 1 };
+    else if (kind === 'TWINKLE') this.mask = { kind: kind, tw: new BitTwinkle(40, 24, 2) };
+    else this.mask = null;
+  };
+  // transition(): a snapshot of what was last sent, wiped away over the
+  // duration. A cut, or nothing, stops any wipe in progress.
+  WipeStrand.prototype.transition = function (t) {
+    if (!t || t.kind === 'CUT' || !t.ms) { this.trans = null; return; }
+    var tr = {
+      kind: t.kind, ticks: msToTicks(t.ms), elapsed: 0,
+      center: t.origin === 'CENTER', invert: !!t.invert,
+      width: t.bitWidth || 1, fade: t.fadeStep || 255,
+      from: this.sent.slice(), starts: []
+    };
+    if (tr.kind === 'TWINKLE') {
+      // Each bit needs fadeTicks to come in, so it starts by ticks - fadeTicks
+      // to be all the way in when the wipe ends. A wipe too short for its fade
+      // fades faster, taking half of it at most.
+      var bits = Math.ceil(this.len / tr.width);
+      var fadeTicks = Math.ceil(255 / tr.fade);
+      if (fadeTicks > Math.floor(tr.ticks / 2)) {
+        fadeTicks = tr.ticks >= 2 ? Math.floor(tr.ticks / 2) : 1;
+        tr.fade = Math.ceil(255 / fadeTicks);
+      }
+      var win = tr.ticks > fadeTicks ? tr.ticks - fadeTicks : 0;
+      for (var b = 0; b < bits; b++) tr.starts.push(win ? Math.floor(Math.random() * (win + 1)) : 0);
+    }
+    this.trans = tr;
+  };
+  WipeStrand.prototype.advance = function () {
+    if (this.look && this.look.advance) this.look.advance(this.len);
+    var m = this.mask;
+    if (m && m.kind === 'SPREAD') {
+      // A bouncing spread a pixel a tick, held at each end for one step.
+      var ranks = spreadRanks(this.len, true), pos = m.pos + m.dir;
+      if (pos >= ranks) { pos = ranks; m.dir = -1; }
+      if (pos <= 0) { pos = 0; m.dir = 1; }
+      m.pos = pos;
+    } else if (m) {
+      m.tw.step(this.len);
+    }
+    if (this.trans) this.trans.elapsed++;
+  };
+  WipeStrand.prototype.render = function (t, out, at) {
+    var n = this.len, m = this.mask, tr = this.trans, full = 0, frac = 0, i;
+    if (this.look) this.look.render(t - this.lookStart, this.base);
+    else fillFrame(this.base, 0);
+    if (tr && tr.kind === 'SPREAD') {
+      // Whole ranks covered and a fraction of the next, so the edge glides.
+      var q = Math.floor(tr.elapsed * spreadRanks(n, tr.center) * 255 / tr.ticks);
+      full = Math.floor(q / 255);
+      frac = q % 255;
+    }
+    for (i = 0; i < n; i++) {
+      var c = this.base[i];
+      if (m) {
+        // A soft mask: a half-faded twinkle bit shows half the look.
+        var cov = m.kind === 'SPREAD' ? (spreadRank(i, n, true, false) < m.pos ? 255 : 0) : m.tw.level(i);
+        c = lerp8(0x000000, c, cov);
+      }
+      if (tr) {
+        var k;
+        if (tr.kind === 'SPREAD') {
+          var r = spreadRank(i, n, tr.center, tr.invert);
+          k = r < full ? 255 : r === full ? frac : 0;
+        } else {
+          var st = tr.starts[Math.floor(i / tr.width)];
+          k = tr.elapsed <= st ? 0 : Math.min(255, (tr.elapsed - st) * tr.fade);
+        }
+        c = lerp8(tr.from[i], c, k);
+      }
+      this.sent[i] = c;
+      out[at + i] = c;
+    }
+    if (tr && tr.elapsed >= tr.ticks) this.trans = null;
+  };
+
+  function hexToken(c) { return ['0x' + ('000000' + c.toString(16).toUpperCase()).slice(-6), 't-num']; }
+  function numToken(v) { return [String(v), 't-num']; }
+
+  /* the chained ring */
+
+  var CHAIN_LOOKS = {
+    pulse: {
+      name: 'Pulse',
+      make: function (inv) { return pureLook(ANIM.pulse(0xFF2D6E, 8, inv ? -1 : 1, 0x000000, false)); },
+      preview: function () { return ANIM.pulse(0xFF2D6E, 2, 1, 0x000000, false); },
+      code: function (inv) {
+        return ['ring.pulse(', hexToken(0xFF2D6E), ', ', numToken(8), ', ', numToken(1)]
+          .concat(inv ? [', ', hexToken(0x000000), ', ', ['true', 't-kw']] : [], [');\n']);
+      }
+    },
+    rainbow: {
+      name: 'Rainbow',
+      make: function (inv) { return pureLook(ANIM.rainbow(inv ? -1 : 1)); },
+      preview: function () { return ANIM.rainbow(1); },
+      code: function (inv) {
+        return ['ring.rainbow(', numToken(1)].concat(inv ? [', ', ['true', 't-kw']] : [], [');\n']);
+      }
+    },
+    flow: {
+      name: 'Flow',
+      make: function (inv) { return pureLook(ANIM.flow(0x3AA8FF, 0xFF3FAE, inv ? -1 : 1, true)); },
+      preview: function () { return ANIM.flow(0x3AA8FF, 0xFF3FAE, 1, true); },
+      code: function (inv) {
+        return ['ring.flow(', hexToken(0x3AA8FF), ', ', hexToken(0xFF3FAE), ', ', numToken(1)]
+          .concat(inv ? [', ', ['true', 't-kw']] : [], [');\n']);
+      }
+    },
+    twinkle: {
+      name: 'Twinkle',
+      noDirection: true,
+      make: function () { return bitTwinkleLook([0xFFFFFF, 0xFFDD88], 30, 16, 2); },
+      preview: function () { return ANIM.twinkle([0xFFFFFF, 0xFFDD88], 30, 16, 0x000000); },
+      code: function () {
+        return ['ring.twinkle({', hexToken(0xFFFFFF), ', ', hexToken(0xFFDD88), '}, ', numToken(30), ', ',
+          numToken(16), ', ', hexToken(0x000000), ', ', numToken(2), ');   ', ['// two pixels a sparkle', 't-com'], '\n'];
+      }
+    }
+  };
+
+  var chainLab = document.getElementById('chain-lab');
+  var chainRing = document.getElementById('chain-ring');
+  if (chainLab && chainRing) {
+    var RING_SIDE = 20, RING_SIDES = 4, RING_N = RING_SIDE * RING_SIDES;
+    var TRANS_MS = 1200;
+    var chain = { chained: true, look: 'pulse', trans: 'SPREAD', origin: 'EDGE', bits: 2, mask: 'NONE', invert: false };
+    var chainStrands = [];
+    var chainTick = -1, chainSentTick = -1;
+    var chainNote = document.getElementById('chain-note');
+    var chainCode = document.getElementById('chain-code');
+    var chainInvert = document.getElementById('chain-invert');
+    var ringWires = chainRing.querySelectorAll('.ring-wire');
+    var ringPorts = chainRing.querySelectorAll('.ring-port');
+    var ringRanges = chainRing.querySelectorAll('.ring-range');
+
+    // Top, right, bottom, left, in that order in the page. Pixel 0 is the
+    // top-left corner and the ring runs clockwise from there, so the bottom
+    // and left strips list their dots against the ring's own order.
+    var ringSides = Array.prototype.map.call(chainRing.querySelectorAll('.ring-side .leds'), function (el, s) {
+      var map = [];
+      for (var k = 0; k < RING_SIDE; k++) map.push(s * RING_SIDE + (s >= 2 ? RING_SIDE - 1 - k : k));
+      return { strip: new LedStrip(el, RING_SIDE), map: map, last: [] };
+    });
+
+    var buildChainStrands = function () {
+      var count = chain.chained ? 1 : RING_SIDES;
+      chainStrands = [];
+      for (var s = 0; s < count; s++) {
+        var strand = new WipeStrand(RING_N / count);
+        strand.setLook(CHAIN_LOOKS[chain.look].make(chain.invert), demoTick);
+        strand.setMask(chain.mask);
+        chainStrands.push(strand);
+      }
+    };
+
+    var paintRing = function (frame) {
+      // A wire lights while its strip is being sent something new, which
+      // only happens when that strip's part of the frame has changed.
+      var fresh = chainTick !== chainSentTick;
+      chainSentTick = chainTick;
+      ringSides.forEach(function (side, s) {
+        var changed = false;
+        for (var k = 0; k < RING_SIDE; k++) {
+          var c = frame[s * RING_SIDE + k];
+          if (c !== side.last[k]) changed = true;
+          side.last[k] = c;
+          side.strip.frame[k] = frame[side.map[k]];
+        }
+        side.strip.paint();
+        if (fresh) {
+          ringWires[s].classList.toggle('is-sending', changed);
+          ringPorts[s].classList.toggle('is-sending', changed);
+        }
+      });
+    };
+
+    var ringFrame = new Array(RING_N).fill(0);
+    var ringDemo = {
+      el: chainRing,
+      visible: false,
+      strip: { frame: ringFrame, paint: function () { paintRing(ringFrame); } },
+      step: function (tick, frame) {
+        if (tick !== chainTick) {
+          chainTick = tick;
+          chainStrands.forEach(function (s) { s.advance(); });
+        }
+        var at = 0;
+        chainStrands.forEach(function (s) { s.render(tick, frame, at); at += s.len; });
+      }
+    };
+    demos.push(ringDemo);
+
+    chainLab.querySelectorAll('.look-btn').forEach(function (btn) {
+      var look = CHAIN_LOOKS[btn.getAttribute('data-look')];
+      var el = btn.querySelector('.leds');
+      if (look && el) addDemo(el, look.preview());
+    });
+
+    var transSpec = function () {
+      if (chain.trans === 'SPREAD') return { kind: 'SPREAD', ms: TRANS_MS, origin: chain.origin };
+      if (chain.trans === 'TWINKLE') return { kind: 'TWINKLE', ms: TRANS_MS, origin: 'EDGE', bitWidth: chain.bits, fadeStep: 64 };
+      return null;
+    };
+
+    var renderChainCode = function () {
+      var T = [['using', 't-kw'], ' LS = hitlib::LedStrand;\n'];
+      if (chain.chained) {
+        T.push('LS ring({{', numToken(1), ', ', numToken(20), '}, {', numToken(2), ', ', numToken(20), '}, {',
+          numToken(3), ', ', numToken(20), '}, {', numToken(4), ', ', numToken(20), '}});   ',
+          ['// ports A-D, one 80-LED strand', 't-com'], '\n\n');
+      } else {
+        T.push('LS a(', numToken(1), ', ', numToken(20), '), b(', numToken(2), ', ', numToken(20), '), c(',
+          numToken(3), ', ', numToken(20), '), d(', numToken(4), ', ', numToken(20), ');   ',
+          ['// ports A-D, a strand each', 't-com'], '\n');
+        T.push('hitlib::LedGroup ring;                          ', ['// a, b, c and d added', 't-com'], '\n\n');
+      }
+      if (chain.trans === 'SPREAD') {
+        T.push('ring.transition({LS::TransitionKind::SPREAD, ', numToken(TRANS_MS), ', LS::SpreadOrigin::',
+          chain.origin, '});\n');
+      } else if (chain.trans === 'TWINKLE') {
+        T.push('ring.transition({LS::TransitionKind::TWINKLE, ', numToken(TRANS_MS), ', LS::SpreadOrigin::EDGE, ',
+          ['false', 't-kw'], ', ', numToken(chain.bits), ', ', numToken(64), '});\n');
+      } else {
+        T.push(['// no transition(): the next look cuts straight in', 't-com'], '\n');
+      }
+      T = T.concat(CHAIN_LOOKS[chain.look].code(chain.invert));
+      if (chain.mask === 'SPREAD') {
+        T.push('ring.spreadMask(', numToken(1), ', LS::SpreadOrigin::CENTER, ', ['false', 't-kw'], ', ',
+          ['true', 't-kw'], ');   ', ['// bounce', 't-com'], '\n');
+      } else if (chain.mask === 'TWINKLE') {
+        T.push('ring.twinkleMask(', numToken(40), ', ', numToken(24), ', ', numToken(2), ');\n');
+      }
+      T[T.length - 1] = T[T.length - 1].replace(/\n$/, '');
+      renderCode(chainCode, T);
+    };
+
+    var setPressed = function (attr, value) {
+      chainLab.querySelectorAll('[' + attr + ']').forEach(function (b) {
+        var on = b.getAttribute(attr) === String(value);
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    };
+
+    var renderChainUi = function () {
+      setPressed('data-chain', chain.chained ? 'on' : 'off');
+      setPressed('data-trans', chain.trans);
+      setPressed('data-origin', chain.origin);
+      setPressed('data-bits', chain.bits);
+      setPressed('data-mask', chain.mask);
+      chainLab.querySelectorAll('.look-btn').forEach(function (b) {
+        b.setAttribute('aria-pressed', b.getAttribute('data-look') === chain.look ? 'true' : 'false');
+      });
+      chainLab.querySelectorAll('[data-trans-opts]').forEach(function (el) {
+        el.hidden = el.getAttribute('data-trans-opts') !== chain.trans;
+      });
+      chainLab.classList.toggle('is-unchained', !chain.chained);
+      ringRanges.forEach(function (el, s) {
+        var first = chain.chained ? s * RING_SIDE : 0;
+        el.textContent = 'ABCD'.charAt(s) + ' · ' + first + '–' + (first + RING_SIDE - 1);
+      });
+      if (chainInvert) chainInvert.checked = chain.invert;
+      renderChainCode();
+    };
+
+    var setChainNote = function (html) { if (chainNote) chainNote.innerHTML = html; };
+
+    var transPhrase = function () {
+      if (chain.trans === 'SPREAD') {
+        return chain.origin === 'CENTER'
+          ? (chain.chained ? 'spreads out from the middle of the chain, the corner between strips B and C'
+            : 'spreads out from the middle of every strip at once')
+          : (chain.chained ? 'spreads in from pixel 0 and right round the ring' : 'spreads in from each strip\'s own pixel 0');
+      }
+      if (chain.trans === 'TWINKLE') {
+        return 'twinkles in, ' + (chain.bits === 1 ? 'a pixel' : chain.bits + ' pixels') + ' at a time, each bit staying once it\'s in';
+      }
+      return 'cuts straight in, the way every look changed before 1.6';
+    };
+
+    var playLook = function (name) {
+      chain.look = name;
+      var t = transSpec();
+      chainStrands.forEach(function (s) {
+        s.transition(t); // first, so it snapshots what is showing now
+        s.setLook(CHAIN_LOOKS[name].make(chain.invert), demoTick);
+      });
+      renderChainUi();
+      setChainNote('<b>' + CHAIN_LOOKS[name].name + '</b> ' + transPhrase() + '. The old frame holds still while the new look, already moving, is wiped in over it.');
+      refreshDemo(ringDemo);
+    };
+
+    var chainTouched = false;
+    var touchChain = function () { chainTouched = true; };
+    chainLab.addEventListener('pointerdown', touchChain);
+    chainLab.addEventListener('keydown', touchChain);
+
+    chainLab.querySelectorAll('[data-chain]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var on = btn.getAttribute('data-chain') === 'on';
+        if (on === chain.chained) return;
+        chain.chained = on;
+        buildChainStrands();
+        renderChainUi();
+        setChainNote(on
+          ? '<b>One chain.</b> Pixel 20 is the first LED of strip B, so the look carries on round the corner instead of starting over. Each strip is still its own port and its own write.'
+          : '<b>Four strands.</b> Each strip runs its own copy of the look from its own pixel 0, and masks and wipes work strip by strip.');
+        refreshDemo(ringDemo);
+      });
+    });
+
+    chainLab.querySelectorAll('[data-trans]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        chain.trans = btn.getAttribute('data-trans');
+        renderChainUi();
+        setChainNote('Now pick a look: it ' + transPhrase() + '.');
+      });
+    });
+    chainLab.querySelectorAll('[data-origin]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        chain.origin = btn.getAttribute('data-origin');
+        renderChainUi();
+        setChainNote('Now pick a look: it ' + transPhrase() + '.');
+      });
+    });
+    chainLab.querySelectorAll('[data-bits]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        chain.bits = parseInt(btn.getAttribute('data-bits'), 10) || 1;
+        renderChainUi();
+        setChainNote('Now pick a look: it ' + transPhrase() + '.');
+      });
+    });
+
+    chainLab.querySelectorAll('.look-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { playLook(btn.getAttribute('data-look')); });
+    });
+
+    chainLab.querySelectorAll('[data-mask]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        chain.mask = btn.getAttribute('data-mask');
+        chainStrands.forEach(function (s) { s.setMask(chain.mask); });
+        renderChainUi();
+        setChainNote(chain.mask === 'SPREAD'
+          ? '<b>spreadMask()</b> shows the look only across a stretch that grows out from the middle, then bounces back. ' +
+            (chain.chained ? 'On the chain, the middle is one corner.' : 'Unchained, every strip has a middle of its own.')
+          : chain.mask === 'TWINKLE'
+            ? '<b>twinkleMask()</b> shows the look through bits that fade in, hold and fade out again, two pixels a bit.'
+            : 'No mask: the whole look shows.');
+        refreshDemo(ringDemo);
+      });
+    });
+
+    if (chainInvert) {
+      chainInvert.addEventListener('change', function () {
+        chain.invert = chainInvert.checked;
+        chainStrands.forEach(function (s) { s.setLook(CHAIN_LOOKS[chain.look].make(chain.invert), demoTick); });
+        renderChainUi();
+        setChainNote(CHAIN_LOOKS[chain.look].noDirection
+          ? 'Twinkle has no direction, so <b>invert</b> leaves it alone. Try it on Pulse, Rainbow or Flow.'
+          : '<b>invert</b> runs ' + CHAIN_LOOKS[chain.look].name.toLowerCase() + ' the other way round the ' +
+            (chain.chained ? 'chain' : 'strips') + '. New in 1.6 on <code>rainbow()</code>, the overlays and custom regions.');
+        refreshDemo(ringDemo);
+      });
+    }
+
+    // Until someone takes the controls, the ring runs through a few wipes
+    // on its own, and only while it's on screen.
+    var CHAIN_TOUR = [
+      { look: 'rainbow', trans: 'SPREAD', origin: 'EDGE' },
+      { look: 'flow', trans: 'TWINKLE', bits: 2 },
+      { look: 'pulse', trans: 'SPREAD', origin: 'CENTER' },
+      { look: 'twinkle', trans: 'TWINKLE', bits: 4 },
+      { look: 'rainbow', trans: 'SPREAD', origin: 'CENTER' },
+      { look: 'pulse', trans: 'SPREAD', origin: 'EDGE' }
+    ];
+    var tourAt = 0, tourWait = 0, TOUR_TICKS = msToTicks(4200);
+    demoHooks.push(function () {
+      if (chainTouched || !ringDemo.visible) return;
+      if (++tourWait < TOUR_TICKS) return;
+      tourWait = 0;
+      var stop = CHAIN_TOUR[tourAt];
+      tourAt = (tourAt + 1) % CHAIN_TOUR.length;
+      chain.trans = stop.trans;
+      if (stop.origin) chain.origin = stop.origin;
+      if (stop.bits) chain.bits = stop.bits;
+      playLook(stop.look);
+    });
+
+    buildChainStrands();
+    renderChainUi();
+    setChainNote('<b>One strand across four ports:</b> the run leaves strip A and carries on into B. ' +
+      'Watch the wires too: only a strip whose part of the frame changed is sent anything.');
+  }
+
+  /* sequencer phases: intros and transitions */
+
+  var seqStripEl = document.getElementById('seq-strip');
+  if (seqStripEl) {
+    var SEQ = [
+      { ms: 1500, plays: 1, name: 'Intro', look: function () { return pureLook(ANIM.flash(0xFFB000, 250, 250, 0x000000)); } },
+      { ms: 4000, plays: 0, name: 'Rainbow', wiping: 'spreading in from the middle',
+        trans: { kind: 'SPREAD', ms: 500, origin: 'CENTER' },
+        look: function () { return pureLook(ANIM.rainbow(1)); } },
+      { ms: 4000, plays: 0, name: 'Pulse', wiping: 'twinkling in, two pixels a bit',
+        trans: { kind: 'TWINKLE', ms: 800, origin: 'EDGE', bitWidth: 2 },
+        look: function () { return pureLook(ANIM.pulse(0xFF2D6E, 5, 1, 0x000000, false)); } }
+    ];
+    var seqTotal = SEQ.reduce(function (n, p) { return n + p.ms; }, 0);
+    var seqOffsets = [];
+    SEQ.reduce(function (at, p) { seqOffsets.push(at / seqTotal); return at + p.ms; }, 0);
+
+    var seqStrand = new WipeStrand(parseInt(seqStripEl.getAttribute('data-n'), 10) || 20);
+    var seqRun = { phase: 0, lap: 0, start: 0 };
+    var seqT = 0, seqLastTick = -1, seqShown = '';
+    var seqHead = document.getElementById('seq-head');
+    var seqReadout = document.getElementById('seq-readout');
+    var seqBlocks = document.querySelectorAll('.seq-phase');
+
+    // Sequencer::advance(): on to the next phase still due to play, counting
+    // a lap each time round. A phase with plays left is due; 0 is every lap.
+    var seqAdvance = function () {
+      var idx = seqRun.phase, lap = seqRun.lap;
+      for (var tries = 0; tries < SEQ.length; tries++) {
+        if (++idx >= SEQ.length) { idx = 0; if (lap < 255) lap++; }
+        if (SEQ[idx].plays === 0 || lap < SEQ[idx].plays) {
+          seqRun.phase = idx;
+          seqRun.lap = lap;
+          return true;
+        }
+      }
+      return false;
+    };
+    // Sequencer::begin(): the transition first, so it snapshots what was showing.
+    var seqBegin = function (p, wipe) {
+      if (wipe) seqStrand.transition(p.trans || null);
+      seqStrand.setLook(p.look(), seqT);
+    };
+    var seqStart = function () {
+      seqRun = { phase: 0, lap: 0, start: seqT };
+      seqStrand.transition(null);
+      seqBegin(SEQ[0], false); // no wipe: there's no phase before the first
+    };
+
+    var renderSeq = function () {
+      var p = SEQ[seqRun.phase];
+      var into = Math.min(1, (seqT - seqRun.start) / msToTicks(p.ms));
+      if (seqHead) seqHead.style.left = ((seqOffsets[seqRun.phase] + into * p.ms / seqTotal) * 100).toFixed(2) + '%';
+      var spent = seqRun.lap >= SEQ[0].plays;
+      var shown = seqRun.phase + '|' + spent + '|' + !!seqStrand.trans;
+      if (shown === seqShown) return;
+      seqShown = shown;
+      seqBlocks.forEach(function (b) {
+        var i = parseInt(b.getAttribute('data-phase'), 10);
+        b.classList.toggle('is-on', i === seqRun.phase);
+        if (i === 0) {
+          b.classList.toggle('is-spent', spent);
+          var note = b.querySelector('i');
+          if (note) note.textContent = spent ? 'skipped' : 'plays 1';
+        }
+      });
+      if (seqReadout) {
+        seqReadout.textContent = seqRun.phase === 0
+          ? 'Intro: once per activation, then skipped.'
+          : p.name + (seqStrand.trans ? ', ' + p.wiping + '.' : (spent ? ', looping without the intro.' : '.'));
+      }
+    };
+
+    var seqDemo = addDemo(seqStripEl, function (tick, frame) {
+      if (tick !== seqLastTick) {
+        seqLastTick = tick;
+        seqT++;
+        // Sequencer::update(): a phase that has run its time hands over, with
+        // a wipe only when the phase it hands to is a different one.
+        if (seqT - seqRun.start >= msToTicks(SEQ[seqRun.phase].ms)) {
+          var was = seqRun.phase;
+          if (seqAdvance()) seqBegin(SEQ[seqRun.phase], seqRun.phase !== was);
+          seqRun.start = seqT;
+        }
+        seqStrand.advance();
+      }
+      seqStrand.render(seqT, frame, 0);
+      renderSeq();
+    });
+
+    var seqRestart = document.getElementById('seq-restart');
+    if (seqRestart) {
+      seqRestart.addEventListener('click', function () {
+        seqStart();
+        seqShown = '';
+        refreshDemo(seqDemo);
+      });
+    }
+    seqStart();
+  }
+
+  /* Pattern Studio 1.3's safety net */
+
+  var studio = document.getElementById('studio-mini');
+  if (studio) {
+    var STUDIO_FILE = 'underglow.hlprofile';
+    var STUDIO_COLORS = [0x9B4DFF, 0xFF3FAE, 0x2FD0E0, 0x2FE0A0, 0xFFB648];
+    var STUDIO_AUTOSAVE_MS = 4000; // every 30 s in the app, sped up here
+    var studioEls = {
+      name: document.getElementById('studio-mini-name'),
+      state: document.getElementById('studio-mini-state'),
+      meter: document.getElementById('studio-mini-meter'),
+      fill: document.getElementById('studio-mini-fill'),
+      dialog: document.getElementById('studio-mini-dialog'),
+      head: document.getElementById('studio-mini-head'),
+      q: document.getElementById('studio-mini-q'),
+      info: document.getElementById('studio-mini-info'),
+      btns: document.getElementById('studio-mini-btns'),
+      off: document.getElementById('studio-mini-off'),
+      offText: document.getElementById('studio-mini-off-text'),
+      launch: document.getElementById('studio-mini-launch'),
+      actions: studio.querySelectorAll('[data-studio]')
+    };
+    // edits counts changes and autosavedAt is the count the autosave holds,
+    // as Pattern Studio counts them rather than comparing designs.
+    var sd = {
+      open: true, saved: 0, color: 0, edits: 0, autosavedAt: 0, autosave: null,
+      orphan: null, dialog: false, clockStart: 0, timer: null
+    };
+    var studioLook = ANIM.flow(STUDIO_COLORS[0], 0x000000, 1, true);
+    var studioDemo = addDemo(document.getElementById('studio-mini-strip'), function (tick, frame) {
+      if (sd.open) studioLook(tick, frame);
+      else fillFrame(frame, 0);
+    });
+
+    var studioWhen = function (d) {
+      var h = d.getHours(), m = d.getMinutes();
+      return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + d.getDate() + ' ' +
+        ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()] + ', ' +
+        (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'AM' : 'PM');
+    };
+    var studioModified = function () { return sd.edits > 0; };
+
+    var setStudioColor = function (idx) {
+      sd.color = idx;
+      studioLook = ANIM.flow(STUDIO_COLORS[idx], 0x000000, 1, true);
+    };
+
+    var renderStudio = function (stateText) {
+      var modified = sd.open && studioModified();
+      studioEls.name.textContent = STUDIO_FILE + (modified ? ' •' : '');
+      studio.classList.toggle('is-modified', modified);
+      studioEls.meter.hidden = !modified;
+      if (stateText) studioEls.state.textContent = stateText;
+      var busy = !sd.open || sd.dialog;
+      studioEls.actions.forEach(function (b) { b.disabled = busy; });
+      studioEls.off.hidden = sd.open;
+      refreshDemo(studioDemo);
+    };
+
+    var studioClock = function () {
+      var p = (Date.now() - sd.clockStart) / STUDIO_AUTOSAVE_MS;
+      if (p >= 1) {
+        sd.clockStart = Date.now();
+        p = 0;
+        // Only what has changed since the last autosave is written again.
+        if (studioModified() && sd.autosavedAt !== sd.edits) {
+          sd.autosavedAt = sd.edits;
+          sd.autosave = { color: sd.color, at: new Date() };
+          renderStudio('Unsaved, autosaved ' + studioWhen(sd.autosave.at).split(', ')[1] + '. The file itself is unchanged.');
+        }
+      }
+      studioEls.fill.style.width = (p * 100).toFixed(1) + '%';
+    };
+    var startStudioClock = function () {
+      if (sd.timer || reduceMotion) return;
+      sd.clockStart = Date.now();
+      sd.timer = setInterval(studioClock, 100);
+    };
+    var stopStudioClock = function () {
+      clearInterval(sd.timer);
+      sd.timer = null;
+      studioEls.fill.style.width = '0';
+    };
+    // Reduced motion: no running clock, so an edit is autosaved on the spot.
+    var autosaveNow = function () {
+      if (!reduceMotion) return;
+      sd.autosavedAt = sd.edits;
+      sd.autosave = { color: sd.color, at: new Date() };
+    };
+
+    var showStudioDialog = function (head, q, info, buttons) {
+      sd.dialog = true;
+      studioEls.head.textContent = head;
+      studioEls.q.textContent = q;
+      studioEls.info.textContent = info;
+      while (studioEls.btns.firstChild) studioEls.btns.removeChild(studioEls.btns.firstChild);
+      var first = null;
+      buttons.forEach(function (spec, i) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip-btn' + (i === 0 ? ' lit' : '');
+        b.textContent = spec[0];
+        b.addEventListener('click', function () {
+          sd.dialog = false;
+          studioEls.dialog.hidden = true;
+          spec[1]();
+        });
+        studioEls.btns.appendChild(b);
+        if (i === 0) first = b;
+      });
+      studioEls.dialog.hidden = false;
+      renderStudio();
+      if (first) first.focus({ preventScroll: true });
+    };
+
+    var studioSave = function () {
+      sd.saved = sd.color;
+      sd.edits = 0;
+      sd.autosavedAt = 0;
+      sd.autosave = null; // saved work has nothing left to recover
+      stopStudioClock();
+      renderStudio('Saved ' + STUDIO_FILE + '.');
+    };
+
+    var studioShutDown = function (crashed) {
+      // A crash leaves the autosave behind. Closing on purpose, saved or
+      // not, leaves nothing new to recover.
+      if (crashed && studioModified() && sd.autosave) sd.orphan = sd.autosave;
+      var lost = crashed && studioModified() && sd.autosavedAt !== sd.edits;
+      sd.open = false;
+      sd.edits = 0;
+      sd.autosavedAt = 0;
+      sd.autosave = null;
+      stopStudioClock();
+      studioEls.offText.textContent = crashed
+        ? 'Pattern Studio quit unexpectedly.' + (lost ? ' The last change was newer than the last autosave, so it\'s gone.' : '')
+        : 'Pattern Studio is closed.';
+      studio.classList.toggle('is-crashed', crashed);
+      studioEls.state.textContent = '';
+      renderStudio();
+    };
+
+    var studioLaunch = function () {
+      sd.open = true;
+      studio.classList.remove('is-crashed');
+      setStudioColor(sd.saved);
+      if (!sd.orphan) {
+        renderStudio('Opened ' + STUDIO_FILE + ' from File > Open Recent.');
+        return;
+      }
+      var orphan = sd.orphan;
+      renderStudio('');
+      showStudioDialog('Restore Unsaved Work?',
+        'Pattern Studio closed without saving the changes to ' + STUDIO_FILE + '. They were autosaved ' + studioWhen(orphan.at) + '.',
+        'Restore brings them back as unsaved changes. Discard deletes them for good. Not Now asks again next launch.',
+        [
+          ['Restore', function () {
+            sd.orphan = null;
+            setStudioColor(orphan.color);
+            sd.edits = 1;
+            startStudioClock();
+            autosaveNow();
+            renderStudio('Restored, as unsaved changes.');
+          }],
+          ['Discard', function () {
+            sd.orphan = null;
+            renderStudio('Autosave discarded. Opened ' + STUDIO_FILE + '.');
+          }],
+          ['Not Now', function () {
+            renderStudio('Opened ' + STUDIO_FILE + '. The autosave waits for next launch.');
+          }]
+        ]);
+    };
+
+    var studioDo = {
+      edit: function () {
+        setStudioColor((sd.color + 1) % STUDIO_COLORS.length);
+        sd.edits++;
+        startStudioClock();
+        autosaveNow();
+        renderStudio(sd.autosavedAt === sd.edits ? 'Unsaved, autosaved.' : 'Unsaved changes. Next autosave:');
+      },
+      save: studioSave,
+      close: function () {
+        if (!studioModified()) { studioShutDown(false); return; }
+        showStudioDialog('Unsaved Changes',
+          'Save the changes to ' + STUDIO_FILE + ' before closing?',
+          'If you don\'t save, the changes are lost.',
+          [
+            ['Save', function () { studioSave(); studioShutDown(false); }],
+            ['Discard', function () { studioShutDown(false); }],
+            ['Cancel', function () { renderStudio(); }]
+          ]);
+      },
+      crash: function () { studioShutDown(true); }
+    };
+
+    studioEls.actions.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (!sd.open || sd.dialog) return;
+        studioDo[btn.getAttribute('data-studio')]();
+      });
+    });
+    if (studioEls.launch) studioEls.launch.addEventListener('click', studioLaunch);
+    // The File shortcuts, working: Ctrl+S (Cmd+S on a Mac) saves while
+    // anything in the window has focus.
+    studio.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        if (sd.open && !sd.dialog) studioSave();
+      }
+    });
+    renderStudio('Saved.');
+  }
+
   /* demo loop */
 
   (function startDemos() {
