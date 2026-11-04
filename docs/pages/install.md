@@ -13,25 +13,25 @@
 
 ## Install via PROS CLI
 
-Download `hitlib@1.5.1.zip` from the
-[1.5.1 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.1)
+Download `hitlib@1.5.2.zip` from the
+[1.5.2 release](https://github.com/advisorylabs/hitlib/releases/tag/1.5.2)
 into your Downloads folder, then, from your project folder:
 
 ```bash
-pros c fetch $HOME/Downloads/hitlib@1.5.1.zip
+pros c fetch $HOME/Downloads/hitlib@1.5.2.zip
 pros c apply HitLib
 ```
 
 Those run as they are in PowerShell, the VS Code terminal's default on
 Windows, and in a macOS or Linux terminal. If you saved the zip somewhere
 else, give `pros c fetch` that path instead. In Command Prompt, the path is
-`%USERPROFILE%\Downloads\hitlib@1.5.1.zip`. Safari unzips downloads by
-itself, into a `hitlib@1.5.1` folder, and `pros c fetch` takes that folder
+`%USERPROFILE%\Downloads\hitlib@1.5.2.zip`. Safari unzips downloads by
+itself, into a `hitlib@1.5.2` folder, and `pros c fetch` takes that folder
 too: leave off the `.zip`.
 
 The CLI fetches a template from a file, not a URL, and template names are
 case-sensitive: it's `HitLib`. Or paste the zip's URL,
-`https://github.com/advisorylabs/hitlib/releases/download/1.5.1/hitlib@1.5.1.zip`,
+`https://github.com/advisorylabs/hitlib/releases/download/1.5.2/hitlib@1.5.2.zip`,
 into the **Install Template** dialog in the PROS VS Code extension.
 
 Check the [Releases page](https://github.com/advisorylabs/hitlib/releases) for the
@@ -45,10 +45,10 @@ kernel can't use the download above: `pros c apply` reports that HitLib does
 not support the project's kernel version, or the build fails with
 `hitlib.a(...) uses VFP register arguments, ... does not`. Kernel 4.1.x
 projects, which includes every EZ-Template 3.x project, use the softfp build,
-`hitlib@1.5.1-softfp.zip` from the same release:
+`hitlib@1.5.2-softfp.zip` from the same release:
 
 ```bash
-pros c fetch $HOME/Downloads/hitlib@1.5.1-softfp.zip
+pros c fetch $HOME/Downloads/hitlib@1.5.2-softfp.zip
 pros c apply HitLib
 ```
 
@@ -69,7 +69,7 @@ message as a real kernel mismatch. On kernel 4.2.0 or later, check:
   "hitlib does not support kernel version 4.2.2". It's `pros c apply HitLib`.
 - **Which build you fetched.** `pros c ls-templates HitLib` lists every HitLib
   you have fetched. If the only one there ends in `-softfp`, that's the kernel
-  4.1.x build: fetch `hitlib@1.5.1.zip` as well.
+  4.1.x build: fetch `hitlib@1.5.2.zip` as well.
 - **That the fetch worked.** `pros c apply` doesn't download HitLib by
   itself. If `pros c fetch` printed `Template not found: path/to/hitlib`, or
   any other path, it found no zip there and fetched nothing. Pasting both
@@ -78,12 +78,31 @@ message as a real kernel mismatch. On kernel 4.2.0 or later, check:
 On kernel 4.1.x, the message means the project needs the
 [softfp build](#install_softfp).
 
+### Black screen at startup after installing 1.5.1 {#install_cold_hang}
+
+With HitLib 1.5.1 installed, a PROS project can stop at a black screen as soon
+as it starts: `initialize()` never runs, nothing drives, and the terminal
+doesn't even show the PROS banner. It happens whether or not the program uses
+any LEDs. One single-byte variable in 1.5.1's `hitlib.a` moves LVGL's display
+buffers off 4-byte alignment, and LVGL stops dead on that before the program
+starts. 1.5.2 fixes it: fetch it and run `pros c apply HitLib` again.
+
+To keep 1.5.1 instead, add this line to the project's `Makefile`, then run
+`make clean` and upload again:
+
+```make
+EXCLUDE_COLD_LIBRARIES:= $(FWDIR)/hitlib.a
+```
+
+That links HitLib into the hot image, where it can't move LVGL's buffers. The
+line can come out once the project is on 1.5.2 or later.
+
 ---
 
 ## Install into a VEXcode project
 
 VEXcode has no template system, so HitLib ships as source for it. Download
-`hitlib-vexcode@1.5.1.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
+`hitlib-vexcode@1.5.2.zip` from the [Releases page](https://github.com/advisorylabs/hitlib/releases)
 and copy its two folders into your project:
 
 ```
@@ -255,7 +274,7 @@ make
 python tools/package_template.py
 ```
 
-This produces `hitlib@1.5.1.zip` in the project root (matching the `version`
+This produces `hitlib@1.5.2.zip` in the project root (matching the `version`
 field in `template.pros`), which you can then fetch with the CLI as shown above.
 The archive goes in `firmware/` because that is the only place a PROS project
 links archives from, and only `include/hitlib/` is packaged: the rest of
@@ -271,7 +290,7 @@ make softfp SOFTFP_KERNEL=path/to/unzipped/kernel
 python tools/package_template.py --softfp
 ```
 
-That builds `bin/softfp/hitlib.a` and packages it as `hitlib@1.5.1-softfp.zip`.
+That builds `bin/softfp/hitlib.a` and packages it as `hitlib@1.5.2-softfp.zip`.
 The packager checks each archive's float ABI and refuses one built for the
 other template.
 

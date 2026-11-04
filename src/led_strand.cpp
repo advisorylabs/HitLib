@@ -307,7 +307,14 @@ void LedStrand::TwinkleState::reset(uint8_t width, const std::vector<uint32_t>& 
     fadeStep = std::max<uint8_t>(fade, 1);
     bgColor = bg;
 
-    static bool seeded = false;
+    // Aligned to 4 for PROS's sake, not ours. A PROS cold image packs every
+    // 1- and 2-byte-aligned .bss variable from every library together, in
+    // link order, ahead of LVGL's display buffers, which declare no alignment
+    // of their own. hitlib.a links before liblvgl.a, so a lone 1-byte bool
+    // here pushed those buffers off 4-byte alignment: LVGL then asserts in
+    // display_initialize() and spins forever, before the PROS scheduler
+    // starts (HitLib 1.5.1). tools/check_cold_bss.py keeps it from coming back.
+    alignas(4) static bool seeded = false;
     if (!seeded) { std::srand(platform::millis()); seeded = true; }
 }
 

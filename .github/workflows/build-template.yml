@@ -52,6 +52,12 @@ jobs:
           unzip -q "$RUNNER_TEMP/kernel-4.1.zip" -d "$RUNNER_TEMP/kernel-4.1"
           make softfp SOFTFP_KERNEL="$RUNNER_TEMP/kernel-4.1"
 
+      # A 1- or 2-byte-aligned variable anywhere in HitLib shifts LVGL's
+      # display buffers in a PROS cold image, and the brain then hangs on a
+      # black screen before initialize(). 1.5.1 shipped one; see the script.
+      - name: Check no .bss variable can misalign LVGL's buffers
+        run: python3 tools/check_cold_bss.py bin/hitlib.a bin/softfp/hitlib.a
+
       # hitlib@VERSION.zip for kernel 4.2.0 and later, and
       # hitlib@VERSION-softfp.zip for 4.1.x. Both have the same template name,
       # and `pros c apply` picks the one whose supported_kernels fit.
